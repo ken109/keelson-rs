@@ -12,6 +12,21 @@ authors.workspace = true
 # Exposes `keelson_core::testing`, the stand-in dialects. Dialect crates enable it
 # as a dev-dependency feature; it is never on in a normal build.
 testing = []
+# Adds the containerised PostgreSQL engine to the judge, the same way the dialect
+# crates do it. `cargo test` on its own already runs the libpg_query grammar tier
+# through keelson-sqlcheck; this is what makes a real server answer as well.
+#
+#   cargo test -p keelson-core --features live-docker
+#
+# Workspace-wide, name the judge's feature instead — or as well:
+#
+#   cargo test --workspace --features keelson-sqlcheck/live-docker
+#
+# because this crate's dependency on keelson-sqlcheck is a dev-dependency cycle,
+# and a feature cannot propagate around one when keelson-sqlcheck is also being
+# built as a package in its own right: it ends up with `live-docker` switched on
+# and the optional dependencies it implies switched off, and does not compile.
+live-docker = ["keelson-sqlcheck/live-docker"]
 
 [dependencies]
 # `Value` serialises as a bare scalar so a built argument list can be compared,
@@ -23,6 +38,11 @@ serde.workspace = true
 # item: `tests/*.rs` is a separate crate, so `#[cfg(test)]` does not cover it and
 # `dialect::testing` would otherwise be invisible to `tests/grammar_raw.rs`.
 keelson-core = { path = ".", features = ["testing"] }
+# The judge. `testing` brings the stand-in dialect that makes rendering possible
+# here at all; without it there would be nothing to hand to the grammar. This is a
+# cycle — keelson-sqlcheck depends on keelson-core — but only through a
+# dev-dependency, which is the kind Cargo resolves.
+keelson-sqlcheck = { workspace = true, features = ["live", "testing"] }
 serde_json.workspace = true
 
 [lints]

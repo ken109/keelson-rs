@@ -422,8 +422,17 @@ pub fn build_from<E: Expression + ?Sized>(
 mod tests {
     use std::fmt::Write as _;
 
+    use keelson_sqlcheck::testing::assert_frag_sql;
+
     use super::*;
     use crate::dialect::testing::{Numbered, Positional, TestDialect};
+
+    /// Where a fragment of each shape is legal, for the cases that can be judged
+    /// as part of a statement. The rest of this module is about the writer's own
+    /// mechanics — a bracketed tree, a half-written buffer, an offset placeholder
+    /// run — and those are not SQL in any position; each says so where it stands.
+    const COND: &str = r#"SELECT "id" FROM users WHERE {}"#;
+    const VALUE: &str = r#"SELECT {} FROM users"#;
 
     /// `"col" = $n`
     #[derive(Debug)]
@@ -443,7 +452,7 @@ mod tests {
 
     impl Expression for Sub {
         fn write_sql(&self, w: &mut SqlWriter<'_>) {
-            w.push_str("(SELECT 1 WHERE ");
+            w.push_str("(SELECT 1 FROM users WHERE ");
             w.write_slice(&self.0, "", " AND ", "");
             w.push_str(")");
         }
@@ -451,11 +460,15 @@ mod tests {
 
     #[test]
     fn placeholders_are_numbered_in_write_order() {
-        let (sql, args) =
-            build(&Numbered, &Sub(vec![Eq("a", 10), Eq("b", 20), Eq("c", 30)])).unwrap();
-        assert_eq!(
-            sql,
-            r#"(SELECT 1 WHERE "a" = $1 AND "b" = $2 AND "c" = $3)"#
+        let (sql, args) = build(
+            &Numbered,
+            &Sub(vec![Eq("age", 10), Eq("id", 20), Eq("name", 30)]),
+        )
+        .unwrap();
+        assert_frag_sql(
+            r#"SELECT "id" FROM users WHERE "id" IN {}"#,
+            &sql,
+            r#"(SELECT 1 FROM users WHERE "age" = $1 AND "id" = $2 AND "name" = $3)"#,
         );
         assert_eq!(args, vec![Value::I32(10), Value::I32(20), Value::I32(30)]);
     }
@@ -467,23 +480,32 @@ mod tests {
 
         impl Expression for Outer {
             fn write_sql(&self, w: &mut SqlWriter<'_>) {
-                w.write_expr(&Eq("x", 1));
+                w.write_expr(&Eq("age", 1));
+                // `EXISTS`, because a sub-select in the middle of a conjunction has
+                // to be a condition rather than the single value it returns.
+                w.push_str(" AND EXISTS ");
+                w.write_expr(&Sub(vec![Eq("id", 2), Eq("name", 3)]));
                 w.push_str(" AND ");
-                w.write_expr(&Sub(vec![Eq("a", 2), Eq("b", 3)]));
-                w.push_str(" AND ");
-                w.write_expr(&Eq("y", 4));
+                w.write_expr(&Eq("email", 4));
             }
         }
 
         let (sql, args) = build(&Numbered, &Outer).unwrap();
-        assert_eq!(
-            sql,
-            r#""x" = $1 AND (SELECT 1 WHERE "a" = $2 AND "b" = $3) AND "y" = $4"#
+        assert_frag_sql(
+            COND,
+            &sql,
+            concat!(
+                r#""age" = $1 AND EXISTS (SELECT 1 FROM users WHERE "id" = $2 AND "name" = $3)"#,
+                r#" AND "email" = $4"#
+            ),
         );
         assert_eq!(args.len(), 4);
         assert_eq!(args[3], Value::I32(4));
     }
 
+    /// Not judged: `($1 IN ($2 IN ($3)))` is a placeholder soup with nothing for
+    /// PostgreSQL to infer a type from, and the nesting is the point rather than
+    /// the SQL.
     #[test]
     fn a_subquery_three_levels_deep_never_restarts_numbering() {
         // The bug this guards against is a nested expression building its own
@@ -509,6 +531,8 @@ mod tests {
         assert_eq!(args, vec![Value::I32(3), Value::I32(2), Value::I32(1)]);
     }
 
+    /// Not judged: the brackets are the test's own notation for tree shape, not
+    /// SQL syntax.
     #[test]
     fn interleaved_siblings_and_children_stay_in_write_order() {
         #[derive(Debug)]
@@ -536,10 +560,16 @@ mod tests {
         );
     }
 
+    /// Not judged: a fragment whose lowest placeholder is `$3` has no `$1`, and no
+    /// server will prepare that. Which is what `build_from` is for — splicing into
+    /// a statement that already has two arguments.
     #[test]
     fn build_from_offsets_the_first_placeholder() {
-        let (sql, args) = build_from(&Numbered, 3, &Sub(vec![Eq("a", 1), Eq("b", 2)])).unwrap();
-        assert_eq!(sql, r#"(SELECT 1 WHERE "a" = $3 AND "b" = $4)"#);
+        let (sql, args) = build_from(&Numbered, 3, &Sub(vec![Eq("age", 1), Eq("id", 2)])).unwrap();
+        assert_eq!(
+            sql,
+            r#"(SELECT 1 FROM users WHERE "age" = $3 AND "id" = $4)"#
+        );
         assert_eq!(args.len(), 2, "args are still returned from the start");
     }
 
@@ -549,10 +579,12 @@ mod tests {
         let _ = build_from(&Numbered, 0, &Eq("a", 1));
     }
 
+    /// Not judged: `?` and backticks are MySQL's, and the judge reachable from
+    /// this crate is PostgreSQL's. `keelson-mysql` is where that dialect answers.
     #[test]
     fn positional_dialects_ignore_the_index_but_still_order_args() {
-        let (sql, args) = build(&Positional, &Sub(vec![Eq("a", 7), Eq("b", 8)])).unwrap();
-        assert_eq!(sql, "(SELECT 1 WHERE `a` = ? AND `b` = ?)");
+        let (sql, args) = build(&Positional, &Sub(vec![Eq("age", 7), Eq("id", 8)])).unwrap();
+        assert_eq!(sql, "(SELECT 1 FROM users WHERE `age` = ? AND `id` = ?)");
         assert_eq!(args, vec![Value::I32(7), Value::I32(8)]);
     }
 
@@ -571,33 +603,33 @@ mod tests {
     #[test]
     fn raw_strings_of_every_stored_form_are_expressions() {
         let (sql, args) = build(&Numbered, "id = 1").unwrap();
-        assert_eq!(sql, "id = 1");
+        assert_frag_sql(COND, &sql, "id = 1");
         assert!(args.is_empty());
 
         let (sql, _) = build(&Numbered, &String::from("id = 2")).unwrap();
-        assert_eq!(sql, "id = 2");
+        assert_frag_sql(COND, &sql, "id = 2");
 
         let borrowed: Cow<'static, str> = Cow::Borrowed("id = 3");
         let (sql, _) = build(&Numbered, &borrowed).unwrap();
-        assert_eq!(sql, "id = 3");
+        assert_frag_sql(COND, &sql, "id = 3");
 
         let owned: Cow<'static, str> = Cow::Owned(String::from("id = 4"));
         let (sql, _) = build(&Numbered, &owned).unwrap();
-        assert_eq!(sql, "id = 4");
+        assert_frag_sql(COND, &sql, "id = 4");
 
-        let boxed: Box<dyn Expression> = Box::new(Eq("a", 1));
+        let boxed: Box<dyn Expression> = Box::new(Eq("age", 1));
         let (sql, _) = build(&Numbered, &boxed).unwrap();
-        assert_eq!(sql, r#""a" = $1"#);
+        assert_frag_sql(COND, &sql, r#""age" = $1"#);
 
-        let shared: DynExpr = dyn_expr(Eq("b", 2));
+        let shared: DynExpr = dyn_expr(Eq("id", 2));
         let (sql, _) = build(&Numbered, &shared).unwrap();
-        assert_eq!(sql, r#""b" = $1"#);
+        assert_frag_sql(COND, &sql, r#""id" = $1"#);
     }
 
     #[test]
     fn numbers_render_as_literals_not_placeholders() {
         let (sql, args) = build(&Numbered, &20i64).unwrap();
-        assert_eq!(sql, "20");
+        assert_frag_sql(VALUE, &sql, "20");
         assert!(args.is_empty(), "a literal binds nothing");
     }
 
@@ -608,7 +640,7 @@ mod tests {
             w.push_arg(5i64);
         });
         let (sql, args) = build(&Numbered, &e).unwrap();
-        assert_eq!(sql, "LIMIT $1");
+        assert_frag_sql(r#"SELECT "id" FROM users {}"#, &sql, "LIMIT $1");
         assert_eq!(args, vec![Value::I64(5)]);
     }
 

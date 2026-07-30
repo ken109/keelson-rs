@@ -50,16 +50,29 @@ impl HasWhere for Where {
 
 #[cfg(test)]
 mod tests {
+    use keelson_sqlcheck::testing::assert_frag_sql;
+
     use super::*;
     use crate::dialect::testing::Numbered;
     use crate::expr::{Chain, arg, or, quote};
     use crate::value::Value;
     use crate::writer::build;
 
+    /// A `WHERE` clause is not a statement, so every case below is judged inside
+    /// the statement it belongs to. The names are `tests/schema/psql.sql`'s,
+    /// because a real engine resolves them.
+    const FRAME: &str = r#"SELECT "id" FROM users {}"#;
+
+    fn sql(e: &impl Expression) -> String {
+        build(&Numbered, e).expect("render").0
+    }
+
     #[test]
     fn an_empty_where_writes_nothing_not_even_the_keyword() {
+        // PostgreSQL 17 sql-select: `[ WHERE condition ]`. The keyword is inside
+        // the brackets, so an absent clause takes it along.
         let (sql, args) = build(&Numbered, &Where::default()).unwrap();
-        assert_eq!(sql, "");
+        assert_frag_sql(FRAME, &sql, "");
         assert!(args.is_empty());
         assert!(Where::default().is_empty());
     }
@@ -67,23 +80,27 @@ mod tests {
     #[test]
     fn conditions_are_and_joined_and_numbered_in_order() {
         let mut wh = Where::default();
-        wh.append_where(quote("a").eq(arg(1i32)));
-        wh.append_where(quote("b").eq(arg(2i32)));
+        wh.append_where(quote("age").eq(arg(30i32)));
+        wh.append_where(quote("name").eq(arg("kubo")));
         // Progressive enhancement: a hand-written fragment is a condition too.
-        wh.append_where("c IS NULL");
+        wh.append_where("email IS NULL");
 
         let (sql, args) = build(&Numbered, &wh).unwrap();
-        assert_eq!(sql, r#"WHERE ("a" = $1) AND ("b" = $2) AND c IS NULL"#);
-        assert_eq!(args, vec![Value::I32(1), Value::I32(2)]);
+        assert_frag_sql(
+            FRAME,
+            &sql,
+            r#"WHERE ("age" = $1) AND ("name" = $2) AND email IS NULL"#,
+        );
+        assert_eq!(args, vec![Value::I32(30), Value::Text("kubo".into())]);
     }
 
     #[test]
     fn a_disjunction_is_one_condition() {
         let mut wh = Where::default();
-        wh.append_where(or((quote("a").eq(arg(1i32)), quote("b").eq(arg(2i32)))));
-        assert_eq!(
-            build(&Numbered, &wh).unwrap().0,
-            r#"WHERE (("a" = $1) OR ("b" = $2))"#
-        );
+        wh.append_where(or((
+            quote("age").eq(arg(30i32)),
+            quote("name").eq(arg("kubo")),
+        )));
+        assert_frag_sql(FRAME, &sql(&wh), r#"WHERE (("age" = $1) OR ("name" = $2))"#);
     }
 }

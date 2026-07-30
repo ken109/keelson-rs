@@ -213,6 +213,8 @@ impl MaybeAbsent for NamedWindow {
 
 #[cfg(test)]
 mod tests {
+    use keelson_sqlcheck::testing::assert_frag_sql;
+
     use super::*;
     use crate::clause::frame::{FrameExclusion, FrameMode};
     use crate::clause::order_by::{OrderDef, OrderDirection};
@@ -221,75 +223,100 @@ mod tests {
     use crate::value::Value;
     use crate::writer::build;
 
+    /// A window definition is what goes inside an `OVER (…)`; a [`Windows`] is the
+    /// `WINDOW` clause that names them. Hence two frames.
+    const DEF_FRAME: &str = r#"SELECT count(*) OVER ({}) FROM users"#;
+    /// `OVER "w"` and not `OVER ("w")`: the parenthesised form *copies* the named
+    /// window, and PostgreSQL refuses to copy one that carries a frame clause
+    /// ("Omit the parentheses in this OVER clause"). Referring to it by name is
+    /// what works whatever the definition holds.
+    const CLAUSE_FRAME: &str = r#"SELECT count(*) OVER "w" FROM users {}"#;
+
+    fn sql(e: &impl Expression) -> String {
+        build(&Numbered, e).expect("render").0
+    }
+
     #[test]
     fn an_empty_window_writes_nothing_which_is_what_over_wants() {
-        assert_eq!(build(&Numbered, &Window::default()).unwrap().0, "");
+        // `OVER ()` is the whole partition, so an empty definition is legal SQL
+        // rather than an omission.
+        assert_frag_sql(DEF_FRAME, &sql(&Window::default()), "");
         assert!(Window::default().is_empty());
-        assert_eq!(build(&Numbered, &Windows::default()).unwrap().0, "");
+        assert_frag_sql(
+            r#"SELECT count(*) FROM users {}"#,
+            &sql(&Windows::default()),
+            "",
+        );
     }
 
     #[test]
     fn a_window_based_on_a_name_is_just_that_name() {
         // PostgreSQL 17: `[ existing_window_name ]` is the first thing in a window
         // definition, and it may be the only thing.
-        assert_eq!(
-            build(&Numbered, &Window::based_on("w")).unwrap().0,
-            r#""w""#
+        assert_frag_sql(
+            r#"SELECT count(*) OVER ({}) FROM users WINDOW "w" AS ()"#,
+            &sql(&Window::based_on("w")),
+            r#""w""#,
         );
     }
 
     #[test]
     fn the_parts_render_in_grammar_order_with_single_spaces() {
         let mut win = Window::based_on("w");
-        win.add_partition_by((quote("a"), quote("b")));
+        win.add_partition_by((quote("age"), quote("is_active")));
         win.order_by_mut()
             .append_order(Expr::custom(OrderDef::new(quote("created_at"))));
         win.frame_mut().set_mode(FrameMode::Rows);
         win.frame_mut().set_end("CURRENT ROW");
 
+        // Not framed. PostgreSQL's analyser refuses `PARTITION BY` on a definition
+        // that copies another window ("cannot override PARTITION BY clause of
+        // window"), so no frame makes this engine-checkable — while the ordering it
+        // pins, from PostgreSQL 17's window_definition, is
+        //   [ existing_window_name ] [ PARTITION BY … ] [ ORDER BY … ] [ frame ]
+        // and is what a query type has to get right before any of the legal
+        // combinations can be.
         assert_eq!(
             build(&Numbered, &win).unwrap().0,
-            r#""w" PARTITION BY "a", "b" ORDER BY "created_at" ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW"#
+            r#""w" PARTITION BY "age", "is_active" ORDER BY "created_at" ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW"#
         );
     }
 
     #[test]
     fn each_part_can_appear_alone_without_stray_spaces() {
         let mut partition_only = Window::default();
-        partition_only.add_partition_by(quote("a"));
-        assert_eq!(
-            build(&Numbered, &partition_only).unwrap().0,
-            r#"PARTITION BY "a""#
-        );
+        partition_only.add_partition_by(quote("age"));
+        assert_frag_sql(DEF_FRAME, &sql(&partition_only), r#"PARTITION BY "age""#);
 
         let mut order_only = Window::default();
-        order_only.order_by_mut().append_order(quote("a"));
-        assert_eq!(build(&Numbered, &order_only).unwrap().0, r#"ORDER BY "a""#);
+        order_only.order_by_mut().append_order(quote("age"));
+        assert_frag_sql(DEF_FRAME, &sql(&order_only), r#"ORDER BY "age""#);
 
         let mut frame_only = Window::default();
         frame_only.frame_mut().set_exclusion(FrameExclusion::Group);
-        assert_eq!(
-            build(&Numbered, &frame_only).unwrap().0,
-            "RANGE UNBOUNDED PRECEDING EXCLUDE GROUP"
+        assert_frag_sql(
+            DEF_FRAME,
+            &sql(&frame_only),
+            "RANGE UNBOUNDED PRECEDING EXCLUDE GROUP",
         );
     }
 
     #[test]
     fn a_partition_expression_may_bind_an_argument() {
         let mut win = Window::default();
-        win.add_partition_by(Expr::func("coalesce", (quote("a"), arg(0i32))));
-        let (sql, args) = build(&Numbered, &win).unwrap();
-        assert_eq!(sql, r#"PARTITION BY coalesce("a", $1)"#);
+        win.add_partition_by(Expr::func("coalesce", (quote("age"), arg(0i32))));
+        let (rendered, args) = build(&Numbered, &win).unwrap();
+        assert_frag_sql(DEF_FRAME, &rendered, r#"PARTITION BY coalesce("age", $1)"#);
         assert_eq!(args, vec![Value::I32(0)]);
     }
 
     #[test]
     fn named_windows_are_comma_separated_under_one_keyword() {
         let mut w1 = Window::default();
-        w1.add_partition_by(quote("dept"));
+        w1.add_partition_by(quote("is_active"));
         w1.order_by_mut().append_order(Expr::custom(OrderDef {
             direction: Some(OrderDirection::Desc),
-            ..OrderDef::new(quote("salary"))
+            ..OrderDef::new(quote("age"))
         }));
 
         let mut ws = Windows::default();
@@ -297,9 +324,10 @@ mod tests {
         // The empty definition is legal: `v AS ()` is the whole partition.
         ws.append_window(NamedWindow::new("v", Window::default()));
 
-        assert_eq!(
-            build(&Numbered, &ws).unwrap().0,
-            r#"WINDOW "w" AS (PARTITION BY "dept" ORDER BY "salary" DESC), "v" AS ()"#
+        assert_frag_sql(
+            CLAUSE_FRAME,
+            &sql(&ws),
+            r#"WINDOW "w" AS (PARTITION BY "is_active" ORDER BY "age" DESC), "v" AS ()"#,
         );
     }
 
@@ -310,23 +338,27 @@ mod tests {
         let mut ws = Windows::default();
         ws.append_window(NamedWindow::default());
         assert!(NamedWindow::default().is_empty());
-        assert_eq!(build(&Numbered, &ws).unwrap().0, "");
+        assert_frag_sql(r#"SELECT count(*) FROM users {}"#, &sql(&ws), "");
 
         ws.append_window(NamedWindow::new("w", Window::default()));
         ws.append_window(NamedWindow::default());
-        assert_eq!(build(&Numbered, &ws).unwrap().0, r#"WINDOW "w" AS ()"#);
+        assert_frag_sql(CLAUSE_FRAME, &sql(&ws), r#"WINDOW "w" AS ()"#);
     }
 
     #[test]
     fn the_window_and_frame_traits_reach_a_named_window() {
         // The nesting that matters: a mod written for a Window applies to the
         // definition inside a NamedWindow, and a frame mod applies through both.
+        // The ORDER BY is there because GROUPS mode is defined in terms of peer
+        // groups, which need one.
         let mut named = NamedWindow::new("w", Window::default());
-        named.window_mut().add_partition_by(quote("a"));
+        named.window_mut().add_partition_by(quote("is_active"));
+        named.window_mut().order_by_mut().append_order(quote("age"));
         named.window_mut().frame_mut().set_mode(FrameMode::Groups);
-        assert_eq!(
-            build(&Numbered, &named).unwrap().0,
-            r#""w" AS (PARTITION BY "a" GROUPS UNBOUNDED PRECEDING)"#
+        assert_frag_sql(
+            r#"SELECT count(*) OVER "w" FROM users WINDOW {}"#,
+            &sql(&named),
+            r#""w" AS (PARTITION BY "is_active" ORDER BY "age" GROUPS UNBOUNDED PRECEDING)"#,
         );
     }
 }

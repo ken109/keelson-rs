@@ -79,11 +79,19 @@ impl Expression for FuncExpr {
 
 #[cfg(test)]
 mod tests {
+    use keelson_sqlcheck::testing::assert_frag_sql;
+
     use super::super::{f, quote};
     use super::*;
     use crate::dialect::testing::Numbered;
     use crate::expr::Chain;
     use crate::writer::build;
+
+    /// A call is a value, so the select list is where it goes. `LEAD` and friends
+    /// are window functions and need an `OVER`, which is why some frames supply
+    /// one; and a placeholder needs a column beside it to get a type.
+    const VALUE: &str = "SELECT {} FROM posts";
+    const OVER_NOTHING: &str = "SELECT {} OVER () FROM posts";
 
     fn sql(e: Expr) -> String {
         build(&Numbered, &e).expect("render").0
@@ -91,37 +99,52 @@ mod tests {
 
     #[test]
     fn a_call_with_no_arguments_still_has_its_parentheses() {
-        assert_eq!(sql(f("NOW", ()).into_expr()), "NOW()");
+        assert_frag_sql(VALUE, &sql(f("NOW", ()).into_expr()), "NOW()");
     }
 
     #[test]
     fn arguments_are_comma_separated_and_may_be_anything() {
-        assert_eq!(
-            sql(f("LEAD", ("created_date", 1, f("NOW", ()))).into_expr()),
-            "LEAD(created_date, 1, NOW())"
+        assert_frag_sql(
+            OVER_NOTHING,
+            &sql(f("LEAD", ("published_at", 1, f("NOW", ()))).into_expr()),
+            "LEAD(published_at, 1, NOW())",
         );
     }
 
-    /// The `psql` fixtures pin both of these: a window by name and an empty one.
+    /// The `psql` fixtures pin all of these: a window by name, an empty one, and a
+    /// definition written out.
     #[test]
     fn a_window_may_be_a_definition_a_name_or_empty() {
-        assert_eq!(sql(f("avg", "salary").over("w")), "avg(salary) OVER (w)");
-        assert_eq!(sql(f("row_number", ()).over("")), "row_number() OVER ()");
-        assert_eq!(
-            sql(f("LEAD", ("created_date", 1)).over("PARTITION BY presale_id")),
-            "LEAD(created_date, 1) OVER (PARTITION BY presale_id)"
+        assert_frag_sql(
+            "SELECT {} FROM posts WINDOW w AS ()",
+            &sql(f("avg", "views").over("w")),
+            "avg(views) OVER (w)",
+        );
+        assert_frag_sql(
+            VALUE,
+            &sql(f("row_number", ()).over("")),
+            "row_number() OVER ()",
+        );
+        assert_frag_sql(
+            VALUE,
+            &sql(f("LEAD", ("published_at", 1)).over("PARTITION BY user_id")),
+            "LEAD(published_at, 1) OVER (PARTITION BY user_id)",
         );
     }
 
     #[test]
     fn a_windowed_call_continues_into_the_operator_chain() {
-        let e = f("LEAD", ("created_date", 1))
-            .over("PARTITION BY presale_id")
-            .minus(quote("created_date"))
+        let e = f("LEAD", ("published_at", 1))
+            .over("PARTITION BY user_id")
+            .minus(quote("published_at"))
             .as_("difference");
-        assert_eq!(
-            sql(e),
-            r#"(LEAD(created_date, 1) OVER (PARTITION BY presale_id) - "created_date") AS "difference""#
+        assert_frag_sql(
+            VALUE,
+            &sql(e),
+            concat!(
+                r#"(LEAD(published_at, 1) OVER (PARTITION BY user_id)"#,
+                r#" - "published_at") AS "difference""#
+            ),
         );
     }
 
@@ -129,7 +152,7 @@ mod tests {
     fn a_call_can_be_used_as_an_expression_directly() {
         // Without finishing the builder: the writer takes `&impl Expression`.
         let (s, args) = build(&Numbered, &f("count", "*")).unwrap();
-        assert_eq!(s, "count(*)");
+        assert_frag_sql(VALUE, &s, "count(*)");
         assert!(args.is_empty());
     }
 
@@ -137,7 +160,15 @@ mod tests {
     fn arguments_inside_a_call_are_numbered_in_order() {
         let e = f("coalesce", (Expr::arg(1i32), Expr::arg(2i32))).into_expr();
         let (s, args) = build(&Numbered, &e).unwrap();
-        assert_eq!(s, "coalesce($1, $2)");
+        // The cast is the frame's: `coalesce($1, $2)` has no argument of known
+        // type, so PostgreSQL cannot resolve the call at all without being told
+        // what it returns ("No operator matches the given name and argument
+        // types"). Comparing it to an integer column is not enough.
+        assert_frag_sql(
+            r#"SELECT "id" FROM posts WHERE "views" = CAST({} AS integer)"#,
+            &s,
+            "coalesce($1, $2)",
+        );
         assert_eq!(args.len(), 2);
     }
 }

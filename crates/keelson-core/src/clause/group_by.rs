@@ -157,10 +157,19 @@ impl GroupingSetKind {
 
 #[cfg(test)]
 mod tests {
+    use keelson_sqlcheck::testing::assert_frag_sql;
+
     use super::*;
     use crate::dialect::testing::Numbered;
     use crate::expr::quote;
     use crate::writer::build;
+
+    /// A `GROUP BY` needs a statement whose select list it agrees with.
+    const FRAME: &str = r#"SELECT "status", count(*) FROM posts {}"#;
+
+    fn sql(e: &impl Expression) -> String {
+        build(&Numbered, e).expect("render").0
+    }
 
     #[test]
     fn no_groups_means_no_clause_even_with_modifiers() {
@@ -169,8 +178,20 @@ mod tests {
             with: Some(GroupByWith::Rollup),
             ..GroupBy::default()
         };
-        assert_eq!(build(&Numbered, &g).unwrap().0, "");
+        // Framed against a statement that is still legal without it: with no
+        // grouping element there is no clause, modifiers or not.
+        assert_frag_sql("SELECT count(*) FROM posts {}", &sql(&g), "");
         assert!(g.is_empty());
+    }
+
+    #[test]
+    fn the_group_list_is_comma_separated() {
+        let mut g = GroupBy::default();
+        g.append_group(quote("status"));
+        // An ordinal is a grouping element too; 1 is the frame's first output
+        // column, which is `status` again.
+        g.append_group("1");
+        assert_frag_sql(FRAME, &sql(&g), r#"GROUP BY "status", 1"#);
     }
 
     #[test]
@@ -178,10 +199,12 @@ mod tests {
         let mut g = GroupBy::default();
         g.append_group(quote("status"));
         g.append_group("1");
-        assert_eq!(build(&Numbered, &g).unwrap().0, r#"GROUP BY "status", 1"#);
-
         g.distinct = true;
         g.with = Some(GroupByWith::Cube);
+        // Not framed: `WITH CUBE` is a trailing modifier no PostgreSQL grammar has
+        // (it spells the same idea `GROUP BY CUBE (...)`, which is the case below),
+        // so the psql judge cannot see this shape at all. The dialect that has it
+        // is checked in its own crate; here only the rendering is pinned.
         assert_eq!(
             build(&Numbered, &g).unwrap().0,
             r#"GROUP BY DISTINCT "status", 1 WITH CUBE"#
@@ -195,11 +218,12 @@ mod tests {
         let mut g = GroupBy::default();
         g.append_group(Expr::custom(GroupingSet::new(
             GroupingSetKind::Rollup,
-            (quote("a"), quote("b")),
+            (quote("status"), quote("user_id")),
         )));
-        assert_eq!(
-            build(&Numbered, &g).unwrap().0,
-            r#"GROUP BY ROLLUP ("a", "b")"#
+        assert_frag_sql(
+            "SELECT count(*) FROM posts {}",
+            &sql(&g),
+            r#"GROUP BY ROLLUP ("status", "user_id")"#,
         );
     }
 
@@ -213,19 +237,22 @@ mod tests {
         let set = GroupingSet::new(
             GroupingSetKind::GroupingSets,
             (
-                Expr::group(quote("a")),
-                Expr::group((quote("a"), quote("b"))),
+                Expr::group(quote("status")),
+                Expr::group((quote("status"), quote("user_id"))),
                 Expr::raw("()"),
             ),
         );
-        assert_eq!(
-            build(&Numbered, &set).unwrap().0,
-            r#"GROUPING SETS (("a"), ("a", "b"), ())"#
+        assert_frag_sql(
+            "SELECT count(*) FROM posts GROUP BY {}",
+            &sql(&set),
+            r#"GROUPING SETS (("status"), ("status", "user_id"), ())"#,
         );
     }
 
     #[test]
     fn an_empty_grouping_set_writes_nothing() {
+        // Not framed: a grouping element that writes nothing leaves `GROUP BY`
+        // dangling, which is the point — there is no statement to judge.
         assert_eq!(build(&Numbered, &GroupingSet::default()).unwrap().0, "");
         assert!(GroupingSet::default().is_empty());
         assert_eq!(GroupingSetKind::Cube.keyword(), "CUBE");

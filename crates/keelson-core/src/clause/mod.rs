@@ -174,6 +174,8 @@ fn write_quoted_list(
 
 #[cfg(test)]
 mod tests {
+    use keelson_sqlcheck::testing::{assert_frag_sql, assert_stmt_sql};
+
     use super::*;
     use crate::dialect::testing::Numbered;
     use crate::expr::{Chain, Expr, arg, quote};
@@ -187,7 +189,9 @@ mod tests {
     /// and their trailing `ORDER BY`/`LIMIT`.
     ///
     /// The real query type lives in `keelson-psql`; this one exists so the clause
-    /// shapes can be checked as a group from inside this crate.
+    /// shapes can be checked as a group from inside this crate. Because it renders
+    /// a whole statement, the cases below go to the judge rather than to
+    /// `assert_eq!` alone.
     #[derive(Debug, Default)]
     struct Select {
         with: With,
@@ -236,10 +240,20 @@ mod tests {
         }
     }
 
+    fn from(table: &'static str) -> TableRef {
+        TableRef::new(quote(table))
+    }
+
     #[test]
     fn an_all_default_select_is_the_shortest_legal_statement() {
         // Every clause absent contributes nothing, so only the projection's `*`
         // survives. This is the property the whole module is built around.
+        //
+        // Not judged: `SELECT *` is as short as the clauses can make a statement,
+        // and PostgreSQL rejects it — `*` needs something to expand against
+        // ("SELECT * with no tables specified is not valid"). So what an
+        // all-default `Select` renders is the assertion, and the case below is
+        // where the same composition is judged as SQL.
         let (sql, args) = build(&Numbered, &Select::default()).unwrap();
         assert_eq!(sql, "SELECT *");
         assert!(args.is_empty());
@@ -256,7 +270,7 @@ mod tests {
                 columns: vec![quote("id")],
                 ..SelectList::default()
             },
-            from: TableRef::new(quote("posts")),
+            from: from("posts"),
             ..Select::default()
         };
 
@@ -266,11 +280,11 @@ mod tests {
             ..Cte::new("recent", Expr::custom(inner))
         });
 
-        let mut from = TableRef::new(quote("users"));
-        from.set_alias("u");
-        from.append_join(Join {
+        let mut from_users = from("users");
+        from_users.set_alias("u");
+        from_users.append_join(Join {
             kind: JoinKind::Left,
-            to: TableRef::new(quote("recent")),
+            to: from("recent"),
             using: vec!["id".into()],
             ..Join::default()
         });
@@ -281,7 +295,7 @@ mod tests {
                 columns: vec![quote(("u", "id"))],
                 ..SelectList::default()
             },
-            from,
+            from: from_users,
             where_: Where {
                 conditions: vec![quote(("u", "id")).eq(arg(7i32))],
             },
@@ -289,9 +303,13 @@ mod tests {
         };
 
         let (sql, args) = build(&Numbered, &q).unwrap();
-        assert_eq!(
-            sql,
-            r#"WITH "recent" ("id") AS (SELECT "id" FROM "posts") SELECT "u"."id" FROM "users" AS "u" LEFT JOIN "recent" USING ("id") WHERE ("u"."id" = $1)"#
+        assert_stmt_sql(
+            &sql,
+            concat!(
+                r#"WITH "recent" ("id") AS (SELECT "id" FROM "posts") "#,
+                r#"SELECT "u"."id" FROM "users" AS "u" LEFT JOIN "recent" USING ("id") "#,
+                r#"WHERE ("u"."id" = $1)"#
+            ),
         );
         assert_eq!(args, vec![Value::I32(7)]);
     }
@@ -314,29 +332,40 @@ mod tests {
         limit.set_limit(1);
 
         let q = Select {
+            select: SelectList {
+                columns: vec![quote("id")],
+                ..SelectList::default()
+            },
+            from: from("users"),
             limit,
             combines,
             ..Select::default()
         };
 
-        assert_eq!(
-            build(&Numbered, &q).unwrap().0,
-            "(SELECT * LIMIT 1) UNION ALL (SELECT 2) ORDER BY 1 LIMIT 5"
+        assert_stmt_sql(
+            &build(&Numbered, &q).unwrap().0,
+            r#"(SELECT "id" FROM "users" LIMIT 1) UNION ALL (SELECT 2) ORDER BY 1 LIMIT 5"#,
         );
     }
 
     #[test]
     fn the_same_where_mod_reaches_a_statement_and_a_conflict_clause() {
         // The point of the Has* traits: one function, three receivers.
-        fn only_mine<Q: HasWhere>(q: &mut Q) {
-            q.where_mut().append_where(Expr::raw("owner_id = 1"));
+        // Qualified, because in an `ON CONFLICT DO UPDATE ... WHERE` an
+        // unqualified column is ambiguous between the target row and EXCLUDED —
+        // and a mod written once has to be legal in every receiver.
+        fn recent<Q: HasWhere>(q: &mut Q) {
+            q.where_mut().append_where(Expr::raw(r#""users"."id" > 1"#));
         }
 
-        let mut select = Select::default();
-        only_mine(&mut select.where_);
-        assert_eq!(
-            build(&Numbered, &select).unwrap().0,
-            "SELECT * WHERE owner_id = 1"
+        let mut select = Select {
+            from: from("users"),
+            ..Select::default()
+        };
+        recent(&mut select.where_);
+        assert_stmt_sql(
+            &build(&Numbered, &select).unwrap().0,
+            r#"SELECT * FROM "users" WHERE "users"."id" > 1"#,
         );
 
         // The target needs its column list for the predicate to attach to; that is
@@ -345,17 +374,44 @@ mod tests {
             target: ConflictTarget::on_columns(quote("id")),
             ..ConflictClause::do_update()
         };
-        conflict.set.append_set(Expr::raw("a = 1"));
-        only_mine(&mut conflict);
-        only_mine(&mut conflict.target);
+        conflict
+            .set
+            .append_set(Expr::raw(r#""name" = EXCLUDED."name""#));
+        recent(&mut conflict);
+        recent(&mut conflict.target);
+        // The action's WHERE is framed; the *target's* is an index predicate, and
+        // the shared schema has no partial unique index for it to match — see
+        // `conflict::tests::a_partial_index_target_carries_the_indexs_own_predicate`.
+        // So this one pins the rendering and the framed case below pins the SQL.
         assert_eq!(
             build(&Numbered, &conflict).unwrap().0,
-            r#"ON CONFLICT ("id") WHERE owner_id = 1 DO UPDATE SET a = 1 WHERE owner_id = 1"#
+            concat!(
+                r#"ON CONFLICT ("id") WHERE "users"."id" > 1 "#,
+                r#"DO UPDATE SET "name" = EXCLUDED."name" WHERE "users"."id" > 1"#
+            )
+        );
+
+        let mut action_only = ConflictClause {
+            target: ConflictTarget::on_columns(quote("id")),
+            ..ConflictClause::do_update()
+        };
+        action_only
+            .set
+            .append_set(Expr::raw(r#""name" = EXCLUDED."name""#));
+        recent(&mut action_only);
+        assert_frag_sql(
+            r#"INSERT INTO users ("id", "name") VALUES (1, 'kubo') {}"#,
+            &build(&Numbered, &action_only).unwrap().0,
+            r#"ON CONFLICT ("id") DO UPDATE SET "name" = EXCLUDED."name" WHERE "users"."id" > 1"#,
         );
     }
 
     /// `write_quoted_list` is the shared helper every identifier list goes
     /// through, so its empty case is load-bearing in six clauses.
+    ///
+    /// An identifier list is not a statement and belongs to no single one of them —
+    /// six clauses put it in six places — so this is one of the cases that stays a
+    /// string comparison.
     #[test]
     fn a_quoted_list_omits_its_affixes_when_empty() {
         let mut w = SqlWriter::new(&Numbered);

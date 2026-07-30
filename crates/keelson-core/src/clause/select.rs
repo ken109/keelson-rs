@@ -86,27 +86,35 @@ impl HasSelectList for SelectList {
 
 #[cfg(test)]
 mod tests {
+    use keelson_sqlcheck::testing::assert_frag_sql;
+
     use super::*;
     use crate::dialect::testing::Numbered;
     use crate::expr::{Chain, quote};
     use crate::writer::build;
 
+    fn sql(list: &SelectList) -> String {
+        build(&Numbered, list).expect("render").0
+    }
+
     #[test]
     fn an_empty_projection_is_a_star() {
-        let (sql, _) = build(&Numbered, &SelectList::default()).unwrap();
-        assert_eq!(sql, "*");
+        assert_frag_sql("SELECT {} FROM users", &sql(&SelectList::default()), "*");
         assert!(SelectList::default().is_empty());
     }
 
     #[test]
     fn preloads_render_after_the_selected_columns() {
         let mut list = SelectList::default();
-        list.append_select((quote("id"), quote("name")));
-        list.append_preload_select(quote(("pilots", "id")));
+        list.append_select((quote("age"), quote("name")));
+        list.append_preload_select(quote(("posts", "id")));
 
-        assert_eq!(
-            build(&Numbered, &list).unwrap().0,
-            r#""id", "name", "pilots"."id""#
+        // Two tables in the frame so the preload's qualified column resolves; the
+        // unqualified ones are chosen to be unambiguous across both.
+        assert_frag_sql(
+            "SELECT {} FROM users, posts",
+            &sql(&list),
+            r#""age", "name", "posts"."id""#,
         );
         assert_eq!(
             list.count_select_cols(),
@@ -118,8 +126,8 @@ mod tests {
     #[test]
     fn preloads_alone_still_suppress_the_star() {
         let mut list = SelectList::default();
-        list.set_preload_select(quote(("pilots", "id")));
-        assert_eq!(build(&Numbered, &list).unwrap().0, r#""pilots"."id""#);
+        list.set_preload_select(quote(("posts", "id")));
+        assert_frag_sql("SELECT {} FROM posts", &sql(&list), r#""posts"."id""#);
         assert!(!list.is_empty());
     }
 
@@ -129,9 +137,12 @@ mod tests {
         list.append_column(quote("id"));
         list.append_column(Expr::func("count", "*").as_("n"));
         list.append_column("1 + 1");
-        assert_eq!(
-            build(&Numbered, &list).unwrap().0,
-            r#""id", count(*) AS "n", 1 + 1"#
+        // The GROUP BY is the frame's, not the projection's: a select list mixing
+        // an aggregate with a plain column needs one to be legal.
+        assert_frag_sql(
+            r#"SELECT {} FROM users GROUP BY "id""#,
+            &sql(&list),
+            r#""id", count(*) AS "n", 1 + 1"#,
         );
     }
 }

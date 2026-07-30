@@ -77,11 +77,21 @@ impl HasFetch for Fetch {
 
 #[cfg(test)]
 mod tests {
+    use keelson_sqlcheck::testing::assert_frag_sql;
+
     use super::*;
     use crate::dialect::testing::Numbered;
     use crate::expr::arg;
     use crate::value::Value;
     use crate::writer::build;
+
+    /// The frame carries an `ORDER BY` because PostgreSQL refuses `WITH TIES`
+    /// without one — the ties are ties *in the sort order*.
+    const FRAME: &str = r#"SELECT "id" FROM users ORDER BY "id" {}"#;
+
+    fn sql(f: &Fetch) -> String {
+        build(&Numbered, f).expect("render").0
+    }
 
     #[test]
     fn an_unset_fetch_writes_nothing_even_with_ties_asked_for() {
@@ -89,28 +99,25 @@ mod tests {
             count: None,
             with_ties: true,
         };
-        assert_eq!(build(&Numbered, &f).unwrap().0, "");
+        assert_frag_sql(FRAME, &sql(&f), "");
         assert!(Fetch::default().is_empty());
     }
 
     #[test]
     fn the_suffix_switches_on_with_ties() {
         let mut f = Fetch::new(3i64);
-        assert_eq!(build(&Numbered, &f).unwrap().0, "FETCH NEXT 3 ROWS ONLY");
+        assert_frag_sql(FRAME, &sql(&f), "FETCH NEXT 3 ROWS ONLY");
 
         f.with_ties = true;
-        assert_eq!(
-            build(&Numbered, &f).unwrap().0,
-            "FETCH NEXT 3 ROWS WITH TIES"
-        );
+        assert_frag_sql(FRAME, &sql(&f), "FETCH NEXT 3 ROWS WITH TIES");
     }
 
     #[test]
     fn the_count_may_be_bound() {
         let mut f = Fetch::default();
         f.set_fetch(arg(3i64));
-        let (sql, args) = build(&Numbered, &f).unwrap();
-        assert_eq!(sql, "FETCH NEXT $1 ROWS ONLY");
+        let (rendered, args) = build(&Numbered, &f).unwrap();
+        assert_frag_sql(FRAME, &rendered, "FETCH NEXT $1 ROWS ONLY");
         assert_eq!(args, vec![Value::I64(3)]);
     }
 }

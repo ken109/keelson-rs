@@ -58,11 +58,15 @@ impl CaseBuilder {
 
 #[cfg(test)]
 mod tests {
+    use keelson_sqlcheck::testing::assert_frag_sql;
+
     use super::super::{arg, case, literal, quote};
     use super::*;
     use crate::dialect::testing::Numbered;
     use crate::expr::Chain;
     use crate::writer::build;
+
+    const VALUE: &str = "SELECT {} FROM users";
 
     fn sql(e: Expr) -> String {
         build(&Numbered, &e).expect("render").0
@@ -76,9 +80,10 @@ mod tests {
             .when(quote("id").eq(literal("1")), literal("A"))
             .else_(literal("B"))
             .as_("C");
-        assert_eq!(
-            sql(e),
-            r#"(CASE WHEN ("id" = '1') THEN 'A' ELSE 'B' END) AS "C""#
+        assert_frag_sql(
+            VALUE,
+            &sql(e),
+            r#"(CASE WHEN ("id" = '1') THEN 'A' ELSE 'B' END) AS "C""#,
         );
     }
 
@@ -89,17 +94,29 @@ mod tests {
             .when(quote("id").eq(literal("1")), literal("A"))
             .end()
             .as_("C");
-        assert_eq!(sql(e), r#"(CASE WHEN ("id" = '1') THEN 'A' END) AS "C""#);
+        assert_frag_sql(
+            VALUE,
+            &sql(e),
+            r#"(CASE WHEN ("id" = '1') THEN 'A' END) AS "C""#,
+        );
     }
 
     #[test]
     fn branches_render_in_the_order_they_were_added() {
         let e = case()
-            .when(quote("a"), arg(1i32))
-            .when(quote("b"), arg(2i32))
+            .when(quote("is_active"), arg(1i32))
+            .when(Expr::raw("age > 1"), arg(2i32))
             .else_(arg(3i32));
         let (s, args) = build(&Numbered, &e).unwrap();
-        assert_eq!(s, r#"(CASE WHEN "a" THEN $1 WHEN "b" THEN $2 ELSE $3 END)"#);
+        // The cast is the frame's: every result is a placeholder, so the CASE has
+        // no branch of known type and PostgreSQL cannot infer one — comparing it
+        // to an integer column does not help, since the comparison is what it
+        // would need the type for.
+        assert_frag_sql(
+            r#"SELECT "id" FROM users WHERE "age" = CAST({} AS integer)"#,
+            &s,
+            r#"(CASE WHEN "is_active" THEN $1 WHEN age > 1 THEN $2 ELSE $3 END)"#,
+        );
         assert_eq!(args.len(), 3);
     }
 

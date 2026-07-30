@@ -46,15 +46,24 @@ impl HasLimit for Limit {
 
 #[cfg(test)]
 mod tests {
+    use keelson_sqlcheck::testing::assert_frag_sql;
+
     use super::*;
     use crate::dialect::testing::Numbered;
     use crate::expr::arg;
     use crate::value::Value;
     use crate::writer::build;
 
+    /// `LIMIT` is a fragment; this is the statement it trails.
+    const FRAME: &str = r#"SELECT "id" FROM users {}"#;
+
+    fn sql(l: &Limit) -> String {
+        build(&Numbered, l).expect("render").0
+    }
+
     #[test]
     fn an_unset_limit_writes_nothing() {
-        assert_eq!(build(&Numbered, &Limit::default()).unwrap().0, "");
+        assert_frag_sql(FRAME, &sql(&Limit::default()), "");
         assert!(Limit::default().is_empty());
     }
 
@@ -62,24 +71,23 @@ mod tests {
     fn a_count_is_a_literal_unless_it_is_bound() {
         let mut l = Limit::default();
         l.set_limit(10i64);
-        let (sql, args) = build(&Numbered, &l).unwrap();
-        assert_eq!(sql, "LIMIT 10");
+        let (rendered, args) = build(&Numbered, &l).unwrap();
+        assert_frag_sql(FRAME, &rendered, "LIMIT 10");
         assert!(args.is_empty(), "a number is a literal, not an argument");
 
         l.set_limit(arg(10i64));
-        let (sql, args) = build(&Numbered, &l).unwrap();
-        assert_eq!(sql, "LIMIT $1");
+        let (rendered, args) = build(&Numbered, &l).unwrap();
+        assert_frag_sql(FRAME, &rendered, "LIMIT $1");
         assert_eq!(args, vec![Value::I64(10)]);
     }
 
     #[test]
     fn a_count_may_be_any_expression() {
-        // SQLite: "LIMIT expr" takes a full expression.
+        // SQLite: "LIMIT expr" takes a full expression. PostgreSQL 17 sql-select
+        // spells the same slot `LIMIT { count | ALL }` where count is an
+        // a_expr, so a scalar sub-query is one there too.
         let mut l = Limit::default();
         l.set_limit("(SELECT count(*) FROM users)");
-        assert_eq!(
-            build(&Numbered, &l).unwrap().0,
-            "LIMIT (SELECT count(*) FROM users)"
-        );
+        assert_frag_sql(FRAME, &sql(&l), "LIMIT (SELECT count(*) FROM users)");
     }
 }

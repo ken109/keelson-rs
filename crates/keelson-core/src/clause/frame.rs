@@ -174,15 +174,25 @@ impl FrameExclusion {
 
 #[cfg(test)]
 mod tests {
+    use keelson_sqlcheck::testing::assert_frag_sql;
+
     use super::*;
     use crate::dialect::testing::Numbered;
     use crate::expr::arg;
     use crate::value::Value;
     use crate::writer::build;
 
+    /// A frame clause is the tail of a window definition. The frame carries an
+    /// `ORDER BY` because `GROUPS` mode and the `EXCLUDE` variants need one.
+    const FRAME: &str = r#"SELECT count(*) OVER (ORDER BY "id" {}) FROM users"#;
+
+    fn sql(f: &Frame) -> String {
+        build(&Numbered, f).expect("render").0
+    }
+
     #[test]
     fn an_untouched_frame_writes_nothing() {
-        assert_eq!(build(&Numbered, &Frame::default()).unwrap().0, "");
+        assert_frag_sql(FRAME, &sql(&Frame::default()), "");
         assert!(Frame::default().is_empty());
     }
 
@@ -190,9 +200,10 @@ mod tests {
     fn a_mode_alone_gets_the_grammars_default_start() {
         // `ROWS` is not a frame_clause on its own; frame_start is mandatory and
         // UNBOUNDED PRECEDING is what it defaults to.
-        assert_eq!(
-            build(&Numbered, &Frame::new(FrameMode::Rows)).unwrap().0,
-            "ROWS UNBOUNDED PRECEDING"
+        assert_frag_sql(
+            FRAME,
+            &sql(&Frame::new(FrameMode::Rows)),
+            "ROWS UNBOUNDED PRECEDING",
         );
     }
 
@@ -202,10 +213,7 @@ mod tests {
         let mut f = Frame::default();
         f.set_exclusion(FrameExclusion::Ties);
         assert!(!f.is_empty());
-        assert_eq!(
-            build(&Numbered, &f).unwrap().0,
-            "RANGE UNBOUNDED PRECEDING EXCLUDE TIES"
-        );
+        assert_frag_sql(FRAME, &sql(&f), "RANGE UNBOUNDED PRECEDING EXCLUDE TIES");
     }
 
     #[test]
@@ -213,7 +221,7 @@ mod tests {
         // The first production: no BETWEEN, no AND.
         let mut f = Frame::new(FrameMode::Rows);
         f.set_start("CURRENT ROW");
-        assert_eq!(build(&Numbered, &f).unwrap().0, "ROWS CURRENT ROW");
+        assert_frag_sql(FRAME, &sql(&f), "ROWS CURRENT ROW");
     }
 
     #[test]
@@ -222,15 +230,17 @@ mod tests {
         // default start.
         let mut f = Frame::new(FrameMode::Rows);
         f.set_end("CURRENT ROW");
-        assert_eq!(
-            build(&Numbered, &f).unwrap().0,
-            "ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW"
+        assert_frag_sql(
+            FRAME,
+            &sql(&f),
+            "ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW",
         );
 
         f.set_start("UNBOUNDED PRECEDING");
-        assert_eq!(
-            build(&Numbered, &f).unwrap().0,
-            "ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW"
+        assert_frag_sql(
+            FRAME,
+            &sql(&f),
+            "ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW",
         );
     }
 
@@ -244,10 +254,11 @@ mod tests {
         f.set_end(Expr::join((arg(2i32), Expr::raw("FOLLOWING"))));
         f.set_exclusion(FrameExclusion::CurrentRow);
 
-        let (sql, args) = build(&Numbered, &f).unwrap();
-        assert_eq!(
-            sql,
-            "GROUPS BETWEEN $1 PRECEDING AND $2 FOLLOWING EXCLUDE CURRENT ROW"
+        let (rendered, args) = build(&Numbered, &f).unwrap();
+        assert_frag_sql(
+            FRAME,
+            &rendered,
+            "GROUPS BETWEEN $1 PRECEDING AND $2 FOLLOWING EXCLUDE CURRENT ROW",
         );
         assert_eq!(args, vec![Value::I32(1), Value::I32(2)]);
     }
@@ -259,9 +270,10 @@ mod tests {
             (FrameMode::Rows, "ROWS"),
             (FrameMode::Groups, "GROUPS"),
         ] {
-            assert_eq!(
-                build(&Numbered, &Frame::new(mode)).unwrap().0,
-                format!("{keyword} UNBOUNDED PRECEDING")
+            assert_frag_sql(
+                FRAME,
+                &sql(&Frame::new(mode)),
+                &format!("{keyword} UNBOUNDED PRECEDING"),
             );
         }
 
@@ -273,9 +285,10 @@ mod tests {
         ] {
             let mut f = Frame::new(FrameMode::Rows);
             f.set_exclusion(exclusion);
-            assert_eq!(
-                build(&Numbered, &f).unwrap().0,
-                format!("ROWS UNBOUNDED PRECEDING EXCLUDE {keyword}")
+            assert_frag_sql(
+                FRAME,
+                &sql(&f),
+                &format!("ROWS UNBOUNDED PRECEDING EXCLUDE {keyword}"),
             );
         }
     }

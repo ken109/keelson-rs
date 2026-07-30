@@ -168,10 +168,22 @@ pub fn or(items: impl IntoExprList) -> Expr {
 
 #[cfg(test)]
 mod tests {
+    use keelson_sqlcheck::testing::assert_frag_sql;
+
     use super::*;
     use crate::dialect::testing::Numbered;
     use crate::value::Value;
     use crate::writer::build;
+
+    /// Where a fragment of each shape is legal, and therefore judgeable. The
+    /// placeholders sit next to a column not because a lone one would be rejected —
+    /// PostgreSQL resolves a parameter it has nothing else to go on to `text` — but
+    /// because that is the position each of these entry points is *for*.
+    const COND: &str = r#"SELECT "id" FROM users WHERE {}"#;
+    const VALUE: &str = r#"SELECT {} FROM users"#;
+    const IN_LIST: &str = r#"SELECT "id" FROM users WHERE "id" IN ({})"#;
+    const ROW: &str = r#"SELECT "id" FROM users WHERE ("id", "age") = {}"#;
+    const EQ: &str = r#"SELECT "id" FROM users WHERE "id" = {}"#;
 
     fn sql(e: Expr) -> String {
         build(&Numbered, &e).expect("render").0
@@ -179,37 +191,60 @@ mod tests {
 
     #[test]
     fn the_atomic_entry_points_render_as_themselves() {
-        assert_eq!(sql(raw("a = 1")), "a = 1");
-        assert_eq!(sql(literal("A")), "'A'");
-        assert_eq!(sql(quote(("users", "id"))), r#""users"."id""#);
-        assert_eq!(sql(arg(1i32)), "$1");
-        assert_eq!(sql(args([1i32, 2])), "$1, $2");
-        assert_eq!(sql(arg_group([1i32, 2])), "($1, $2)");
-        assert_eq!(sql(placeholders(2)), "$1, $2");
-        assert_eq!(sql(group(("a", "b"))), "(a, b)");
+        assert_frag_sql(COND, &sql(raw("age = 1")), "age = 1");
+        assert_frag_sql(VALUE, &sql(literal("A")), "'A'");
+        assert_frag_sql(VALUE, &sql(quote(("users", "id"))), r#""users"."id""#);
+        assert_frag_sql(EQ, &sql(arg(1i32)), "$1");
+        assert_frag_sql(IN_LIST, &sql(args([1i32, 2])), "$1, $2");
+        assert_frag_sql(ROW, &sql(arg_group([1i32, 2])), "($1, $2)");
+        assert_frag_sql(IN_LIST, &sql(placeholders(2)), "$1, $2");
+        assert_frag_sql(ROW, &sql(group(("id", "age"))), "(id, age)");
     }
 
     #[test]
     fn boolean_combinators_parenthesise_their_result() {
-        assert_eq!(sql(and(("a", "b"))), "(a AND b)");
-        assert_eq!(sql(or(("a", "b"))), "(a OR b)");
+        assert_frag_sql(
+            COND,
+            &sql(and(("age > 1", "age < 9"))),
+            "(age > 1 AND age < 9)",
+        );
+        assert_frag_sql(
+            COND,
+            &sql(or(("age > 1", "age < 9"))),
+            "(age > 1 OR age < 9)",
+        );
     }
 
     #[test]
     fn not_parenthesises_its_operand_but_not_itself() {
-        assert_eq!(sql(not(Expr::binary("a", "=", arg(1i32)))), "NOT (a = $1)");
+        assert_frag_sql(
+            COND,
+            &sql(not(Expr::binary("age", "=", arg(1i32)))),
+            "NOT (age = $1)",
+        );
         // Already atomic: no parentheses are added at all.
-        assert_eq!(sql(not(quote("flag"))), r#"NOT "flag""#);
+        assert_frag_sql(COND, &sql(not(quote("is_active"))), r#"NOT "is_active""#);
         // A chain result is already grouped, so `NOT` does not double-wrap it —
         // the property that makes bob's "already a chain value" arm unnecessary.
-        assert_eq!(sql(not(quote("a").eq(arg(1i32)))), r#"NOT ("a" = $1)"#);
+        assert_frag_sql(
+            COND,
+            &sql(not(quote("age").eq(arg(1i32)))),
+            r#"NOT ("age" = $1)"#,
+        );
     }
 
     #[test]
     fn cast_is_not_wrapped_because_it_is_already_self_delimiting() {
-        assert_eq!(sql(cast(quote("a"), "int")), r#"CAST("a" AS int)"#);
+        assert_frag_sql(
+            VALUE,
+            &sql(cast(quote("age"), "int")),
+            r#"CAST("age" AS int)"#,
+        );
     }
 
+    /// Not judged: `:id` is SQLite's spelling and PostgreSQL has no named
+    /// placeholders, so the judge reachable from here would reject it. What is
+    /// asserted is that it binds nothing.
     #[test]
     fn a_named_argument_binds_nothing() {
         let (s, a) = build(&crate::dialect::testing::TestDialect, &named("id")).unwrap();
@@ -217,6 +252,10 @@ mod tests {
         assert!(a.is_empty());
     }
 
+    /// Not judged: one of each entry point in a row is a deliberate soup, not a
+    /// statement — `$1 ($2, $3) f($4) g($5)` is not legal in any position. What it
+    /// pins is that one counter runs through all five kinds, which is the property
+    /// a whole statement inherits.
     #[test]
     fn every_entry_point_shares_one_argument_counter() {
         let e = Expr::join((

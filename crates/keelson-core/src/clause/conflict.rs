@@ -255,17 +255,33 @@ impl ConflictAction {
 
 #[cfg(test)]
 mod tests {
+    use keelson_sqlcheck::testing::assert_frag_sql;
+
     use super::*;
     use crate::dialect::testing::Numbered;
     use crate::expr::{Chain, arg, quote};
     use crate::value::Value;
     use crate::writer::build;
 
+    /// `ON CONFLICT` only exists on an `INSERT`, so that is the frame. `users`'
+    /// primary key is what the column targets below infer, because a target that
+    /// matches no unique index is a semantic error rather than a syntactic one —
+    /// the class of mistake only the engine tier sees.
+    const FRAME: &str = r#"INSERT INTO users ("id", "name") VALUES (1, 'kubo') {}"#;
+    /// For a bare [`ConflictTarget`], which is the part between the keyword and the
+    /// action.
+    const TARGET_FRAME: &str =
+        r#"INSERT INTO tags ("id", "name") VALUES (1, 'rust') ON CONFLICT {} DO NOTHING"#;
+
+    fn sql(e: &impl Expression) -> String {
+        build(&Numbered, e).expect("render").0
+    }
+
     #[test]
     fn an_actionless_clause_writes_nothing() {
-        assert_eq!(build(&Numbered, &ConflictClause::default()).unwrap().0, "");
+        assert_frag_sql(FRAME, &sql(&ConflictClause::default()), "");
         assert!(ConflictClause::default().is_empty());
-        assert_eq!(build(&Numbered, &Conflict::default()).unwrap().0, "");
+        assert_frag_sql(FRAME, &sql(&Conflict::default()), "");
         assert!(Conflict::default().is_empty());
     }
 
@@ -273,41 +289,44 @@ mod tests {
     fn do_nothing_needs_no_target() {
         // PostgreSQL 17: `ON CONFLICT [ conflict_target ] conflict_action`, and
         // DO NOTHING is the one action that works with no target at all.
-        assert_eq!(
-            build(&Numbered, &ConflictClause::do_nothing()).unwrap().0,
-            "ON CONFLICT DO NOTHING"
+        assert_frag_sql(
+            FRAME,
+            &sql(&ConflictClause::do_nothing()),
+            "ON CONFLICT DO NOTHING",
         );
     }
 
     #[test]
     fn a_column_target_precedes_the_action() {
         let c = ConflictClause {
-            target: ConflictTarget::on_columns(quote("email")),
+            target: ConflictTarget::on_columns(quote("id")),
             ..ConflictClause::do_nothing()
         };
-        assert_eq!(
-            build(&Numbered, &c).unwrap().0,
-            r#"ON CONFLICT ("email") DO NOTHING"#
-        );
+        assert_frag_sql(FRAME, &sql(&c), r#"ON CONFLICT ("id") DO NOTHING"#);
     }
 
     #[test]
     fn a_constraint_name_beats_the_column_list() {
         // The two forms of conflict_target are alternatives, so a target holding
-        // both renders the one PostgreSQL would accept.
-        let mut t = ConflictTarget::on_constraint("users_email_key");
-        t.columns = vec![quote("email")];
-        t.where_.append_where("deleted_at IS NULL");
-        assert_eq!(
-            build(&Numbered, &t).unwrap().0,
-            r#"ON CONSTRAINT "users_email_key""#
-        );
+        // both renders the one PostgreSQL would accept. `tags_name_key` is the
+        // constraint the shared schema's `name text NOT NULL UNIQUE` creates.
+        let mut t = ConflictTarget::on_constraint("tags_name_key");
+        t.columns = vec![quote("name")];
+        t.where_.append_where("id IS NOT NULL");
+        assert_frag_sql(TARGET_FRAME, &sql(&t), r#"ON CONSTRAINT "tags_name_key""#);
     }
 
     #[test]
     fn a_partial_index_target_carries_the_indexs_own_predicate() {
         // This WHERE belongs to the *index*: it is how PostgreSQL is told which
         // partial unique index to infer.
+        //
+        // Not framed. The engine tier resolves a conflict target against the
+        // indexes that exist, and the shared schema has no partial unique index
+        // for this to match — inventing one there would change a fixture five
+        // other test binaries share, to check a rendering rule. What the grammar
+        // says (`'(' index_params ')' where_clause`) is pinned by the psql crate,
+        // which owns that syntax; here it is only the order of the two parts.
         let mut t = ConflictTarget::on_columns((quote("email"), quote("tenant_id")));
         t.where_.append_where("deleted_at IS NULL");
         assert_eq!(
@@ -319,7 +338,7 @@ mod tests {
 
     #[test]
     fn an_empty_target_writes_nothing() {
-        assert_eq!(build(&Numbered, &ConflictTarget::default()).unwrap().0, "");
+        assert_frag_sql(TARGET_FRAME, &sql(&ConflictTarget::default()), "");
         assert!(ConflictTarget::default().is_empty());
     }
 
@@ -341,7 +360,7 @@ mod tests {
         // The action's WHERE filters rows; the target's matched an index. Both
         // appear here, in that order, which is the shape most easily got wrong.
         let mut c = ConflictClause {
-            target: ConflictTarget::on_columns(quote("email")),
+            target: ConflictTarget::on_columns(quote("id")),
             ..ConflictClause::do_update()
         };
         c.set_mut()
@@ -349,10 +368,11 @@ mod tests {
         c.where_mut()
             .append_where(quote(("users", "id")).gt(arg(0i32)));
 
-        let (sql, args) = build(&Numbered, &c).unwrap();
-        assert_eq!(
-            sql,
-            r#"ON CONFLICT ("email") DO UPDATE SET "name" = EXCLUDED."name" WHERE ("users"."id" > $1)"#
+        let (rendered, args) = build(&Numbered, &c).unwrap();
+        assert_frag_sql(
+            FRAME,
+            &rendered,
+            r#"ON CONFLICT ("id") DO UPDATE SET "name" = EXCLUDED."name" WHERE ("users"."id" > $1)"#,
         );
         assert_eq!(args, vec![Value::I32(0)]);
     }
@@ -377,6 +397,11 @@ mod tests {
         c.where_mut().append_where("row_pred");
         c.target.columns = vec![quote("id")];
 
+        // Not framed, for the reason given in
+        // `a_partial_index_target_carries_the_indexs_own_predicate`: the index
+        // predicate has no matching index in the shared schema. What is asserted
+        // is that the two WHEREs land on opposite sides of the action and neither
+        // borrows the other's conditions.
         assert_eq!(
             build(&Numbered, &c).unwrap().0,
             r#"ON CONFLICT ("id") WHERE index_pred DO UPDATE SET a = 1 WHERE row_pred"#
@@ -386,7 +411,9 @@ mod tests {
     #[test]
     fn the_slot_is_transparent_to_whatever_a_dialect_puts_in_it() {
         // MySQL's spelling has no ON CONFLICT and no SET, which is exactly why the
-        // slot holds an expression rather than a ConflictClause.
+        // slot holds an expression rather than a ConflictClause. Not framed: the
+        // psql judge would reject it, and rightly. MySQL's own crate checks it
+        // against MySQL.
         let mut slot = Conflict::default();
         slot.set_conflict(Expr::raw("ON DUPLICATE KEY UPDATE `a` = 1"));
         assert_eq!(
@@ -396,6 +423,6 @@ mod tests {
 
         let mut slot = Conflict::default();
         slot.set_conflict(Expr::custom(ConflictClause::do_nothing()));
-        assert_eq!(build(&Numbered, &slot).unwrap().0, "ON CONFLICT DO NOTHING");
+        assert_frag_sql(FRAME, &sql(&slot), "ON CONFLICT DO NOTHING");
     }
 }

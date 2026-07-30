@@ -98,6 +98,25 @@ mod tests {
     use crate::dialect::testing::{Numbered, TestDialect};
     use crate::writer::build;
 
+    // None of the cases in this module is judged by a grammar or an engine, and the
+    // reason is the subject matter rather than a missing dependency.
+    //
+    // `write_template` is a byte scan over text the author supplied. What it has to
+    // get right is where a `?` becomes a placeholder and where a `\?` collapses to
+    // a literal one — over inputs like `a\?b?c`, `\?\?` and `名前 = ?`, which are
+    // not SQL and were never meant to be. Wrapping them in a statement would put
+    // the frame under test instead of the scan.
+    //
+    // The `bob_raw_test` module below is a second, stronger reason: those seven
+    // cases are bob's `expr/raw_test.go` reproduced case for case, down to the
+    // `alphabet` table and the `?N` dialect. Their value is that they are
+    // *unaltered*; renaming the table to one the shared schema has would make them
+    // no longer the thing they are here to be.
+    //
+    // Where a template's numbering meets real SQL — a template spliced into a
+    // statement, or one holding a built expression — that is checked in
+    // `keelson-core/tests/grammar_raw.rs`, which does go to the judges.
+
     /// bob's `expr/raw_test.go`, which is also the source of the seven
     /// dialect-agnostic golden cases. Its dialect writes `?N`, `:name` and
     /// `"quoted"`, which is [`TestDialect`].

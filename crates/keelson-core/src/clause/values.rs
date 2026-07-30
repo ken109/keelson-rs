@@ -114,14 +114,29 @@ impl MaybeAbsent for ValuesRow {
 
 #[cfg(test)]
 mod tests {
+    use keelson_sqlcheck::testing::assert_frag_sql;
+
     use super::*;
     use crate::dialect::testing::Numbered;
     use crate::expr::arg;
     use crate::value::Value;
     use crate::writer::build;
 
+    /// A `VALUES` list is the tail of an `INSERT`, and its width has to match the
+    /// column list — a mismatch parses and is caught by the engine.
+    const TWO_COL_FRAME: &str = r#"INSERT INTO tags ("id", "name") {}"#;
+    const THREE_COL_FRAME: &str = r#"INSERT INTO users ("id", "name", "age") {}"#;
+    const ONE_COL_FRAME: &str = r#"INSERT INTO tags ("id") {}"#;
+
+    fn sql(v: &Values) -> String {
+        build(&Numbered, v).expect("render").0
+    }
+
     #[test]
     fn no_query_and_no_rows_writes_nothing() {
+        // Not framed: an `INSERT` with neither VALUES nor a source query is not a
+        // statement, so there is nothing to judge. That the clause contributes
+        // nothing is the whole assertion.
         assert_eq!(build(&Numbered, &Values::default()).unwrap().0, "");
         assert!(Values::default().is_empty());
     }
@@ -132,8 +147,8 @@ mod tests {
         v.append_values((arg(1i32), arg("a")));
         v.append_values((arg(2i32), arg("b")));
 
-        let (sql, args) = build(&Numbered, &v).unwrap();
-        assert_eq!(sql, "VALUES ($1, $2), ($3, $4)");
+        let (rendered, args) = build(&Numbered, &v).unwrap();
+        assert_frag_sql(TWO_COL_FRAME, &rendered, "VALUES ($1, $2), ($3, $4)");
         assert_eq!(
             args,
             vec![
@@ -153,14 +168,16 @@ mod tests {
             "DEFAULT",
             Expr::group(Expr::raw("SELECT max(id) FROM users")),
         ));
-        assert_eq!(
-            build(&Numbered, &v).unwrap().0,
-            "VALUES ($1, DEFAULT, (SELECT max(id) FROM users))"
+        assert_frag_sql(
+            THREE_COL_FRAME,
+            &sql(&v),
+            "VALUES ($1, DEFAULT, (SELECT max(id) FROM users))",
         );
     }
 
     #[test]
     fn an_empty_row_is_dropped_rather_than_written_as_empty_parentheses() {
+        // Not framed, for the same reason as the no-rows case above.
         let mut v = Values::default();
         v.append_values(());
         assert!(v.rows.is_empty());
@@ -172,20 +189,19 @@ mod tests {
     fn a_query_wins_over_recorded_rows_and_writes_no_values_keyword() {
         let mut v = Values::default();
         v.append_values(arg(1i32));
-        v.query = Some(Expr::raw("SELECT id FROM staging"));
+        v.query = Some(Expr::raw(r#"SELECT "id" FROM posts"#));
 
-        let (sql, args) = build(&Numbered, &v).unwrap();
-        assert_eq!(sql, "SELECT id FROM staging");
+        let (rendered, args) = build(&Numbered, &v).unwrap();
+        assert_frag_sql(ONE_COL_FRAME, &rendered, r#"SELECT "id" FROM posts"#);
         assert!(
             args.is_empty(),
             "the dropped rows must not leave their arguments behind"
         );
 
-        assert_eq!(
-            build(&Numbered, &Values::from_query(Expr::raw("SELECT 1")))
-                .unwrap()
-                .0,
-            "SELECT 1"
+        assert_frag_sql(
+            ONE_COL_FRAME,
+            &sql(&Values::from_query(Expr::raw("SELECT 1"))),
+            "SELECT 1",
         );
     }
 }

@@ -61,19 +61,37 @@ impl HasWith for With {
 
 #[cfg(test)]
 mod tests {
+    use keelson_sqlcheck::testing::assert_frag_sql;
+
     use super::*;
     use crate::dialect::testing::Numbered;
     use crate::expr::{Expr, arg};
     use crate::value::Value;
     use crate::writer::build;
 
+    /// A `WITH` prefixes a statement, so the frame follows it rather than
+    /// surrounding it. Two frames: one whose body reads the CTEs, and one for the
+    /// cases where the clause writes nothing and there is no CTE to read.
+    const FRAME: &str = r#"{} SELECT * FROM "a""#;
+    const EMPTY_FRAME: &str = r#"{} SELECT "id" FROM users"#;
+
+    /// A real sub-query: `SELECT "id" FROM posts WHERE "id" = $n`. The placeholder
+    /// is compared against a column so PostgreSQL can give it a type.
     fn sub(v: i32) -> Expr {
-        Expr::join((Expr::raw("SELECT"), arg(v)))
+        Expr::join((Expr::raw(r#"SELECT "id" FROM posts WHERE "id" ="#), arg(v)))
+    }
+
+    fn sub_sql(n: usize) -> String {
+        format!(r#"SELECT "id" FROM posts WHERE "id" = ${n}"#)
+    }
+
+    fn sql(w: &With) -> String {
+        build(&Numbered, w).expect("render").0
     }
 
     #[test]
     fn an_empty_with_writes_nothing_not_even_the_keyword() {
-        assert_eq!(build(&Numbered, &With::default()).unwrap().0, "");
+        assert_frag_sql(EMPTY_FRAME, &sql(&With::default()), "");
         assert!(With::default().is_empty());
     }
 
@@ -81,7 +99,7 @@ mod tests {
     fn recursive_alone_is_still_an_absent_clause() {
         let mut with = With::default();
         with.set_recursive(true);
-        assert_eq!(build(&Numbered, &with).unwrap().0, "");
+        assert_frag_sql(EMPTY_FRAME, &sql(&with), "");
     }
 
     #[test]
@@ -90,14 +108,25 @@ mod tests {
         with.append_cte(Cte::new("a", sub(1)));
         with.append_cte(Cte::new("b", sub(2)));
 
-        let (sql, args) = build(&Numbered, &with).unwrap();
-        assert_eq!(sql, r#"WITH "a" AS (SELECT $1), "b" AS (SELECT $2)"#);
+        let (rendered, args) = build(&Numbered, &with).unwrap();
+        assert_frag_sql(
+            FRAME,
+            &rendered,
+            &format!(r#"WITH "a" AS ({}), "b" AS ({})"#, sub_sql(1), sub_sql(2)),
+        );
         assert_eq!(args, vec![Value::I32(1), Value::I32(2)]);
 
+        // RECURSIVE is a property of the whole list, not of one CTE, and a list
+        // that happens not to recurse is still allowed to carry it.
         with.set_recursive(true);
-        assert_eq!(
-            build(&Numbered, &with).unwrap().0,
-            r#"WITH RECURSIVE "a" AS (SELECT $1), "b" AS (SELECT $2)"#
+        assert_frag_sql(
+            FRAME,
+            &sql(&with),
+            &format!(
+                r#"WITH RECURSIVE "a" AS ({}), "b" AS ({})"#,
+                sub_sql(1),
+                sub_sql(2)
+            ),
         );
     }
 
@@ -107,13 +136,14 @@ mod tests {
         // between CTEs that are both actually there.
         let mut with = With::default();
         with.append_cte(Cte::default());
-        assert_eq!(build(&Numbered, &with).unwrap().0, "");
+        assert_frag_sql(EMPTY_FRAME, &sql(&with), "");
 
         with.append_cte(Cte::new("a", sub(1)));
         with.append_cte(Cte::default());
-        assert_eq!(
-            build(&Numbered, &with).unwrap().0,
-            r#"WITH "a" AS (SELECT $1)"#
+        assert_frag_sql(
+            FRAME,
+            &sql(&with),
+            &format!(r#"WITH "a" AS ({})"#, sub_sql(1)),
         );
     }
 }

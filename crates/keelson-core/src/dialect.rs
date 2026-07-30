@@ -139,6 +139,13 @@ mod tests {
     use super::*;
     use crate::error::Error;
 
+    // These cases are about the three `Dialect` methods and nothing else, so what
+    // they assert is a placeholder and a quoted identifier written back to back —
+    // `$1"id"`. That is deliberately not SQL: the point is which characters each
+    // dialect emits, and a statement would only hide them behind a frame. The
+    // dialects' output *as SQL* is judged wherever a fragment or statement rendered
+    // through them is, which is most of the rest of this crate's tests.
+
     /// The recorded shapes of the three real dialects, checked against the ones
     /// this trait has to be able to express.
     #[test]

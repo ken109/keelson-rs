@@ -157,14 +157,25 @@ impl MaybeAbsent for Lock {
 
 #[cfg(test)]
 mod tests {
+    use keelson_sqlcheck::testing::assert_frag_sql;
+
     use super::*;
     use crate::dialect::testing::Numbered;
-    use crate::writer::build;
+    use crate::writer::{Expression, build};
+
+    /// A locking clause is the last thing in a `SELECT`. `OF` names a table, so the
+    /// frame that carries an `OF` list has to have those tables in its `FROM`.
+    const FRAME: &str = r#"SELECT "id" FROM users {}"#;
+    const TWO_TABLE_FRAME: &str = r#"SELECT "users"."id" FROM users, posts {}"#;
+
+    fn sql(e: &impl Expression) -> String {
+        build(&Numbered, e).expect("render").0
+    }
 
     #[test]
     fn a_lock_without_a_strength_writes_nothing() {
-        assert_eq!(build(&Numbered, &Lock::default()).unwrap().0, "");
-        assert_eq!(build(&Numbered, &Locks::default()).unwrap().0, "");
+        assert_frag_sql(FRAME, &sql(&Lock::default()), "");
+        assert_frag_sql(FRAME, &sql(&Locks::default()), "");
         assert!(Lock::default().is_empty());
         assert!(Locks::default().is_empty());
     }
@@ -173,11 +184,10 @@ mod tests {
     fn a_bare_lock_is_just_for_and_the_strength() {
         // No trailing space: bob writes `FOR KEY SHARE ` because it pads before
         // the optional OF list rather than inside it.
-        assert_eq!(
-            build(&Numbered, &Lock::new(LockStrength::KeyShare))
-                .unwrap()
-                .0,
-            "FOR KEY SHARE"
+        assert_frag_sql(
+            FRAME,
+            &sql(&Lock::new(LockStrength::KeyShare)),
+            "FOR KEY SHARE",
         );
     }
 
@@ -188,8 +198,12 @@ mod tests {
         l.append_table(["users", "posts"]);
         l.wait = Some(LockWait::SkipLocked);
 
-        let (sql, args) = build(&Numbered, &l).unwrap();
-        assert_eq!(sql, r#"FOR UPDATE OF "users", "posts" SKIP LOCKED"#);
+        let (rendered, args) = build(&Numbered, &l).unwrap();
+        assert_frag_sql(
+            TWO_TABLE_FRAME,
+            &rendered,
+            r#"FOR UPDATE OF "users", "posts" SKIP LOCKED"#,
+        );
         assert!(args.is_empty(), "table names are identifiers");
     }
 
@@ -201,12 +215,12 @@ mod tests {
             (LockStrength::Share, "FOR SHARE"),
             (LockStrength::KeyShare, "FOR KEY SHARE"),
         ] {
-            assert_eq!(build(&Numbered, &Lock::new(strength)).unwrap().0, keyword);
+            assert_frag_sql(FRAME, &sql(&Lock::new(strength)), keyword);
         }
 
         let mut l = Lock::new(LockStrength::Share);
         l.wait = Some(LockWait::NoWait);
-        assert_eq!(build(&Numbered, &l).unwrap().0, "FOR SHARE NOWAIT");
+        assert_frag_sql(FRAME, &sql(&l), "FOR SHARE NOWAIT");
     }
 
     #[test]
@@ -219,9 +233,10 @@ mod tests {
         locks.append_lock(first);
         locks.append_lock(second);
 
-        assert_eq!(
-            build(&Numbered, &locks).unwrap().0,
-            r#"FOR UPDATE OF "users" FOR SHARE OF "posts""#
+        assert_frag_sql(
+            TWO_TABLE_FRAME,
+            &sql(&locks),
+            r#"FOR UPDATE OF "users" FOR SHARE OF "posts""#,
         );
     }
 }

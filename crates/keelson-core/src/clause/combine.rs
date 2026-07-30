@@ -207,21 +207,38 @@ impl MaybeAbsent for Combine {
 
 #[cfg(test)]
 mod tests {
+    use keelson_sqlcheck::testing::assert_frag_sql;
+
     use super::*;
     use crate::dialect::testing::Numbered;
     use crate::expr::arg;
     use crate::value::Value;
     use crate::writer::build;
 
-    /// `SELECT $n`, standing in for a whole sub-query.
+    /// A set operation is a fragment: it needs the query it is combined *with*.
+    /// One output column, matching every operand below — a set operation whose
+    /// arms disagree on arity parses fine and is rejected by the engine, which is
+    /// exactly the class of error this frame lets through to the judge.
+    const FRAME: &str = r#"SELECT "id" FROM users {}"#;
+
+    /// A whole sub-query. Its placeholder is compared against a column so that
+    /// PostgreSQL can infer a type for it.
     fn sub(v: i32) -> Expr {
-        Expr::join((Expr::raw("SELECT"), arg(v)))
+        Expr::join((Expr::raw(r#"SELECT "id" FROM posts WHERE "id" ="#), arg(v)))
+    }
+
+    fn sub_sql(n: usize) -> String {
+        format!(r#"SELECT "id" FROM posts WHERE "id" = ${n}"#)
+    }
+
+    fn sql(e: &impl Expression) -> String {
+        build(&Numbered, e).expect("render").0
     }
 
     #[test]
     fn an_empty_combines_writes_nothing() {
-        assert_eq!(build(&Numbered, &Combines::default()).unwrap().0, "");
-        assert_eq!(build(&Numbered, &Combine::default()).unwrap().0, "");
+        assert_frag_sql(FRAME, &sql(&Combines::default()), "");
+        assert_frag_sql(FRAME, &sql(&Combine::default()), "");
         assert!(Combines::default().is_empty());
         assert!(Combine::default().is_empty());
     }
@@ -229,10 +246,10 @@ mod tests {
     #[test]
     fn all_goes_between_the_operator_and_the_operand() {
         let mut c = Combine::new(SetOp::Union, sub(1));
-        assert_eq!(build(&Numbered, &c).unwrap().0, "UNION (SELECT $1)");
+        assert_frag_sql(FRAME, &sql(&c), &format!("UNION ({})", sub_sql(1)));
 
         c.all = true;
-        assert_eq!(build(&Numbered, &c).unwrap().0, "UNION ALL (SELECT $1)");
+        assert_frag_sql(FRAME, &sql(&c), &format!("UNION ALL ({})", sub_sql(1)));
     }
 
     #[test]
@@ -242,11 +259,10 @@ mod tests {
             (SetOp::Intersect, "INTERSECT"),
             (SetOp::Except, "EXCEPT"),
         ] {
-            assert_eq!(
-                build(&Numbered, &Combine::new(op, Expr::raw("SELECT 1")))
-                    .unwrap()
-                    .0,
-                format!("{keyword} (SELECT 1)")
+            assert_frag_sql(
+                FRAME,
+                &sql(&Combine::new(op, Expr::raw("SELECT 1"))),
+                &format!("{keyword} (SELECT 1)"),
             );
         }
     }
@@ -278,8 +294,12 @@ mod tests {
         cs.append_combine(Combine::new(SetOp::Union, sub(1)));
         cs.append_combine(Combine::new(SetOp::Intersect, sub(2)));
 
-        let (sql, args) = build(&Numbered, &cs).unwrap();
-        assert_eq!(sql, "UNION (SELECT $1) INTERSECT (SELECT $2)");
+        let (rendered, args) = build(&Numbered, &cs).unwrap();
+        assert_frag_sql(
+            FRAME,
+            &rendered,
+            &format!("UNION ({}) INTERSECT ({})", sub_sql(1), sub_sql(2)),
+        );
         assert_eq!(args, vec![Value::I32(1), Value::I32(2)]);
     }
 
@@ -293,9 +313,10 @@ mod tests {
         cs.limit.set_limit(10i64);
         cs.offset.set_offset(5i64);
 
-        assert_eq!(
-            build(&Numbered, &cs).unwrap().0,
-            "UNION (SELECT $1) ORDER BY 1 LIMIT 10 OFFSET 5"
+        assert_frag_sql(
+            FRAME,
+            &sql(&cs),
+            &format!("UNION ({}) ORDER BY 1 LIMIT 10 OFFSET 5", sub_sql(1)),
         );
     }
 
@@ -306,7 +327,7 @@ mod tests {
         let mut cs = Combines::default();
         cs.fetch.set_fetch(2i64);
         assert!(!cs.is_empty());
-        assert_eq!(build(&Numbered, &cs).unwrap().0, "FETCH NEXT 2 ROWS ONLY");
+        assert_frag_sql(FRAME, &sql(&cs), "FETCH NEXT 2 ROWS ONLY");
     }
 
     #[test]

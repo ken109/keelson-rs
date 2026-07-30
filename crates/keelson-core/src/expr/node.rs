@@ -471,13 +471,29 @@ impl Expression for Expr {
 
 #[cfg(test)]
 mod tests {
+    use keelson_sqlcheck::testing::assert_frag_sql;
+
     use super::*;
     use crate::dialect::testing::{Numbered, TestDialect};
     use crate::writer::build;
 
+    /// bob's dialect: `?N`, `:name`, `"quoted"`. Used where the case is about the
+    /// parenthesisation rule rather than about SQL a server would see.
     fn sql(e: &Expr) -> String {
         build(&TestDialect, e).expect("render").0
     }
+
+    /// `$N` and `"quoted"` — what the psql judges understand.
+    fn pg(e: &Expr) -> String {
+        build(&Numbered, e).expect("render").0
+    }
+
+    /// Where a fragment of each shape is legal: a condition, a value, an `IN` list
+    /// and an `IN` list that brings its own parentheses.
+    const COND: &str = r#"SELECT "id" FROM users WHERE {}"#;
+    const VALUE: &str = r#"SELECT {} FROM users"#;
+    const IN_LIST: &str = r#"SELECT "id" FROM users WHERE "id" IN ({})"#;
+    const IN_GROUP: &str = r#"SELECT "id" FROM users WHERE "id" IN {}"#;
 
     // --- the parenthesisation rule, arm by arm -------------------------------
 
@@ -485,31 +501,33 @@ mod tests {
     fn raw_sql_is_never_parenthesised() {
         // The author wrote it; handing it back with parentheses added would be
         // editing it.
-        let e = Expr::raw("a = 1");
+        let e = Expr::raw("age = 1");
         assert!(e.is_atomic());
-        assert_eq!(sql(&e.clone().grouped()), "a = 1");
-        assert_eq!(sql(&e), "a = 1");
+        assert_frag_sql(COND, &pg(&e.clone().grouped()), "age = 1");
+        assert_frag_sql(COND, &pg(&e), "age = 1");
     }
 
     #[test]
     fn a_template_is_never_parenthesised() {
-        let e = Expr::template("a = ?", [RawArg::value(1i32)]);
+        let e = Expr::template("age = ?", [RawArg::value(1i32)]);
         assert!(e.is_atomic());
-        assert_eq!(sql(&e.grouped()), "a = ?1");
+        assert_frag_sql(COND, &pg(&e.clone().grouped()), "age = $1");
+        // The same fragment under bob's dialect, where a hole is `?N`.
+        assert_eq!(sql(&e.grouped()), "age = ?1");
     }
 
     #[test]
     fn a_string_literal_is_never_parenthesised() {
         let e = Expr::literal("A");
         assert!(e.is_atomic());
-        assert_eq!(sql(&e.grouped()), "'A'");
+        assert_frag_sql(VALUE, &pg(&e.grouped()), "'A'");
     }
 
     #[test]
     fn a_quoted_identifier_is_never_parenthesised() {
         let e = Expr::ident(("users", "id"));
         assert!(e.is_atomic());
-        assert_eq!(sql(&e.grouped()), r#""users"."id""#);
+        assert_frag_sql(VALUE, &pg(&e.grouped()), r#""users"."id""#);
     }
 
     #[test]
@@ -518,46 +536,63 @@ mod tests {
         for e in [Expr::arg(1i32), Expr::args([1i32, 2]), Expr::named_arg("n")] {
             assert!(e.is_atomic(), "{e:?}");
         }
-        assert_eq!(sql(&Expr::args([1i32, 2]).grouped()), "?1, ?2");
+        assert_frag_sql(IN_LIST, &pg(&Expr::args([1i32, 2]).grouped()), "$1, $2");
     }
 
     #[test]
     fn a_group_is_not_parenthesised_twice() {
-        let e = Expr::group(Expr::binary(Expr::ident("a"), "=", Expr::arg(1i32)));
+        let e = Expr::group(Expr::binary(Expr::ident("age"), "=", Expr::arg(1i32)));
         assert!(e.is_atomic());
-        assert_eq!(sql(&e.grouped()), r#"("a" = ?1)"#);
+        assert_frag_sql(COND, &pg(&e.grouped()), r#"("age" = $1)"#);
     }
 
     #[test]
     fn every_operator_shape_is_parenthesised() {
-        let cases: Vec<(Expr, &str)> = vec![
+        let conditions: Vec<(Expr, &str)> = vec![
             (
-                Expr::binary(Expr::ident("a"), "=", Expr::arg(1i32)),
-                r#"("a" = ?1)"#,
-            ),
-            (Expr::prefix("NOT", Expr::ident("a")), r#"(NOT "a")"#),
-            (
-                Expr::postfix(Expr::ident("a"), "IS NULL"),
-                r#"("a" IS NULL)"#,
+                Expr::binary(Expr::ident("age"), "=", Expr::arg(1i32)),
+                r#"("age" = $1)"#,
             ),
             (
-                Expr::join([Expr::ident("a"), Expr::raw("DESC")]),
-                r#"("a" DESC)"#,
+                Expr::prefix("NOT", Expr::ident("is_active")),
+                r#"(NOT "is_active")"#,
             ),
-            (Expr::func("NOW", ()), "(NOW())"),
-            (Expr::cast(Expr::ident("a"), "int"), r#"(CAST("a" AS int))"#),
             (
-                Expr::Case {
-                    whens: vec![(Expr::raw("a"), Expr::literal("x"))],
-                    else_: None,
-                },
-                "(CASE WHEN a THEN 'x' END)",
+                Expr::postfix(Expr::ident("age"), "IS NULL"),
+                r#"("age" IS NULL)"#,
             ),
         ];
-        for (e, expected) in cases {
+        for (e, expected) in conditions {
             assert!(!e.is_atomic(), "{e:?} should not be atomic");
-            assert_eq!(sql(&e.grouped()), expected);
+            assert_frag_sql(COND, &pg(&e.grouped()), expected);
         }
+
+        let values: Vec<(Expr, &str)> = vec![
+            (Expr::func("NOW", ()), "(NOW())"),
+            (
+                Expr::cast(Expr::ident("age"), "int"),
+                r#"(CAST("age" AS int))"#,
+            ),
+            (
+                Expr::Case {
+                    whens: vec![(Expr::raw("age > 1"), Expr::literal("x"))],
+                    else_: None,
+                },
+                "(CASE WHEN age > 1 THEN 'x' END)",
+            ),
+        ];
+        for (e, expected) in values {
+            assert!(!e.is_atomic(), "{e:?} should not be atomic");
+            assert_frag_sql(VALUE, &pg(&e.grouped()), expected);
+        }
+
+        // A `Join` is parenthesised by the same rule, and this one is the reason
+        // the rule cannot be judged shape by shape: `("age" DESC)` is legal in no
+        // statement position at all — a sort key's direction is part of the ORDER
+        // BY, not of an expression — so the assertion is the rendering.
+        let sort_key = Expr::join([Expr::ident("age"), Expr::raw("DESC")]);
+        assert!(!sort_key.is_atomic());
+        assert_eq!(pg(&sort_key.grouped()), r#"("age" DESC)"#);
     }
 
     #[test]
@@ -566,47 +601,53 @@ mod tests {
         struct Opaque;
         impl Expression for Opaque {
             fn write_sql(&self, w: &mut SqlWriter<'_>) {
-                w.push_str("x @> y");
+                w.push_str("ARRAY[1] <@ ARRAY[1, 2]");
             }
         }
         let e = Expr::custom(Opaque);
         assert!(!e.is_atomic());
-        assert_eq!(sql(&e.grouped()), "(x @> y)");
+        assert_frag_sql(COND, &pg(&e.grouped()), "(ARRAY[1] <@ ARRAY[1, 2])");
     }
 
     #[test]
     fn grouping_is_idempotent_which_is_what_keeps_operators_from_nesting_parens() {
-        let once = Expr::binary(Expr::ident("a"), "=", Expr::arg(1i32)).grouped();
+        let once = Expr::binary(Expr::ident("age"), "=", Expr::arg(1i32)).grouped();
         let twice = once.clone().grouped();
-        assert_eq!(sql(&once), sql(&twice));
+        assert_frag_sql(COND, &pg(&once), r#"("age" = $1)"#);
+        assert_eq!(pg(&once), pg(&twice));
     }
 
     // --- rendering -----------------------------------------------------------
 
+    /// Not judged: an identifier that renders nothing leaves a hole in whatever
+    /// held it, and `SELECT  FROM users` is not a statement — which is why the
+    /// clauses check `is_empty` before writing a separator.
     #[test]
     fn an_empty_identifier_renders_nothing_and_empty_parts_are_dropped() {
         assert_eq!(sql(&Expr::ident(Vec::<String>::new())), "");
-        assert_eq!(sql(&Expr::ident(["", "id"])), r#""id""#);
+        assert_frag_sql(VALUE, &pg(&Expr::ident(["", "id"])), r#""id""#);
         assert!(matches!(Expr::ident(["", "id"]), Expr::Ident(p) if p.len() == 1));
     }
 
     #[test]
     fn an_empty_argument_list_renders_null() {
-        assert_eq!(sql(&Expr::args(Vec::<i32>::new())), "NULL");
+        assert_frag_sql(IN_LIST, &pg(&Expr::args(Vec::<i32>::new())), "NULL");
     }
 
     #[test]
     fn an_empty_group_renders_a_null_row() {
-        assert_eq!(sql(&Expr::Group(vec![])), "(NULL)");
+        assert_frag_sql(IN_GROUP, &pg(&Expr::Group(vec![])), "(NULL)");
     }
 
     #[test]
     fn placeholders_bind_null_and_keep_their_positions() {
         let (s, args) = build(&Numbered, &Expr::placeholders(3)).unwrap();
-        assert_eq!(s, "$1, $2, $3");
+        assert_frag_sql(IN_LIST, &s, "$1, $2, $3");
         assert!(args.iter().all(Value::is_null));
     }
 
+    /// Not judged: `:name` is SQLite's spelling, and the dialect that has it is not
+    /// the one the judges here understand.
     #[test]
     fn a_named_argument_binds_nothing_and_fails_where_unsupported() {
         let (s, args) = build(&TestDialect, &Expr::named_arg("name")).unwrap();
@@ -620,21 +661,25 @@ mod tests {
 
     #[test]
     fn a_function_call_renders_its_arguments_and_window() {
-        assert_eq!(sql(&Expr::func("NOW", ())), "NOW()");
-        assert_eq!(
-            sql(&Expr::func(
+        assert_frag_sql(VALUE, &pg(&Expr::func("NOW", ())), "NOW()");
+        // `LEAD` is a window function, so the frame supplies the `OVER` its
+        // arguments would otherwise be checked without.
+        assert_frag_sql(
+            "SELECT {} OVER () FROM posts",
+            &pg(&Expr::func(
                 "LEAD",
-                ("created_date", 1, Expr::func("NOW", ()))
+                ("published_at", 1, Expr::func("NOW", ())),
             )),
-            "LEAD(created_date, 1, NOW())"
+            "LEAD(published_at, 1, NOW())",
         );
-        assert_eq!(
-            sql(&Expr::Func {
+        assert_frag_sql(
+            VALUE,
+            &pg(&Expr::Func {
                 name: "row_number".into(),
                 args: vec![],
                 over: Some(Box::new(Expr::raw(""))),
             }),
-            "row_number() OVER ()"
+            "row_number() OVER ()",
         );
     }
 
@@ -647,16 +692,17 @@ mod tests {
             )],
             else_: Some(Box::new(Expr::literal("B"))),
         };
-        assert_eq!(
-            sql(&with_else),
-            r#"CASE WHEN ("id" = '1') THEN 'A' ELSE 'B' END"#
+        assert_frag_sql(
+            VALUE,
+            &pg(&with_else),
+            r#"CASE WHEN ("id" = '1') THEN 'A' ELSE 'B' END"#,
         );
 
         let without = Expr::Case {
-            whens: vec![(Expr::raw("a"), Expr::literal("A"))],
+            whens: vec![(Expr::raw("age > 1"), Expr::literal("A"))],
             else_: None,
         };
-        assert_eq!(sql(&without), "CASE WHEN a THEN 'A' END");
+        assert_frag_sql(VALUE, &pg(&without), "CASE WHEN age > 1 THEN 'A' END");
     }
 
     #[test]
@@ -669,6 +715,9 @@ mod tests {
         assert_eq!(err.to_string(), "query is missing a CASE WHEN branch");
     }
 
+    /// Not judged: two expressions with a separator between them is a *list*, and
+    /// `a b` or `ab` is not a fragment any statement position accepts. The
+    /// separator is the writer's contract, checked here as written.
     #[test]
     fn join_uses_its_separator_verbatim() {
         let parts = [Expr::raw("a"), Expr::raw("b")];
@@ -677,11 +726,18 @@ mod tests {
         assert_eq!(sql(&Expr::join_with("", parts)), "ab");
     }
 
+    /// Not judged, and could not be: what an empty join renders is the *absence*
+    /// of SQL, which is how a clause omits itself.
     #[test]
     fn an_empty_join_renders_nothing_which_is_how_a_clause_omits_itself() {
         assert_eq!(sql(&Expr::join(Vec::<Expr>::new())), "");
     }
 
+    /// Not judged: every operand is a placeholder, on both sides of the `IN`, so
+    /// PostgreSQL has nothing to infer a type from — and a row constructor against
+    /// a list mixing a row and a scalar is a semantic error besides. The typed
+    /// version of this shape is `chain::tests::a_row_constructor_in_a_list_of_row_constructors`;
+    /// what is left here is the write order of nested groups.
     #[test]
     fn nested_arguments_are_numbered_in_write_order() {
         let e = Expr::binary(

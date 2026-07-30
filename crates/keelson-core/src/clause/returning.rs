@@ -55,15 +55,26 @@ impl HasReturning for Returning {
 
 #[cfg(test)]
 mod tests {
+    use keelson_sqlcheck::testing::assert_frag_sql;
+
     use super::*;
     use crate::dialect::testing::Numbered;
     use crate::expr::{Chain, quote};
     use crate::writer::build;
 
+    /// `RETURNING` only exists on a data-modifying statement, so that is the frame.
+    /// Its values are literals rather than placeholders so that the frame's
+    /// numbering cannot be confused with the fragment's.
+    const FRAME: &str = r#"INSERT INTO tags ("id", "name") VALUES (1, 'rust') {}"#;
+
+    fn sql(r: &Returning) -> String {
+        build(&Numbered, r).expect("render").0
+    }
+
     #[test]
     fn an_empty_returning_writes_nothing_and_reports_no_rows() {
         let r = Returning::default();
-        assert_eq!(build(&Numbered, &r).unwrap().0, "");
+        assert_frag_sql(FRAME, &sql(&r), "");
         assert!(!r.has_returning());
         assert!(r.is_empty());
     }
@@ -73,10 +84,7 @@ mod tests {
         let mut r = Returning::default();
         r.append_returning(quote("id"));
         r.append_returnings((quote("name"), Expr::func("now", ()).as_("at")));
-        assert_eq!(
-            build(&Numbered, &r).unwrap().0,
-            r#"RETURNING "id", "name", now() AS "at""#
-        );
+        assert_frag_sql(FRAME, &sql(&r), r#"RETURNING "id", "name", now() AS "at""#);
         assert!(r.has_returning());
     }
 
@@ -84,6 +92,6 @@ mod tests {
     fn a_star_is_an_ordinary_entry() {
         let mut r = Returning::default();
         r.append_returning("*");
-        assert_eq!(build(&Numbered, &r).unwrap().0, "RETURNING *");
+        assert_frag_sql(FRAME, &sql(&r), "RETURNING *");
     }
 }

@@ -105,6 +105,8 @@ pub trait QueryExtensions<Hook, Loader, MapperMod>: Query {
 
 #[cfg(test)]
 mod tests {
+    use keelson_sqlcheck::testing::assert_stmt_sql;
+
     use super::*;
     use crate::dialect::testing::Numbered;
     use crate::writer::SqlWriter;
@@ -119,7 +121,9 @@ mod tests {
         assert_eq!(QueryType::default(), QueryType::Unknown);
     }
 
-    /// The shape a dialect crate's query struct will have.
+    /// The shape a dialect crate's query struct will have. It renders a whole
+    /// statement, so the cases below go to the judge — and it names a table from
+    /// `tests/schema/psql.sql` so that a real server can resolve it.
     #[derive(Debug)]
     struct Select {
         table: &'static str,
@@ -154,10 +158,14 @@ mod tests {
             min_age: 21,
         };
         let (sql, args) = q.build().unwrap();
-        assert_eq!(sql, r#"SELECT * FROM "users" WHERE "age" >= $1"#);
+        assert_stmt_sql(&sql, r#"SELECT * FROM "users" WHERE "age" >= $1"#);
         assert_eq!(args, vec![Value::I32(21)]);
         assert_eq!(q.query_type(), QueryType::Select);
 
+        // Not judged: a statement whose lowest placeholder is `$4` has no `$1`, and
+        // a server refuses to prepare that. Which is the point of `build_from` —
+        // the result is a fragment for splicing into a statement that already has
+        // three arguments, not something to send on its own.
         let (sql, _) = q.build_from(4).unwrap();
         assert_eq!(sql, r#"SELECT * FROM "users" WHERE "age" >= $4"#);
     }
@@ -181,7 +189,9 @@ mod tests {
             fn write_sql(&self, w: &mut SqlWriter<'_>) {
                 w.push_str("SELECT * FROM (");
                 w.write_expr(&self.0);
-                w.push_str(") WHERE x = ");
+                // The alias is not decoration: PostgreSQL requires one on a
+                // sub-query in a FROM.
+                w.push_str(") AS \"u\" WHERE \"u\".\"id\" = ");
                 w.push_arg(9i32);
             }
         }
@@ -194,9 +204,12 @@ mod tests {
             }),
         )
         .unwrap();
-        assert_eq!(
-            sql,
-            r#"SELECT * FROM (SELECT * FROM "users" WHERE "age" >= $1) WHERE x = $2"#
+        assert_stmt_sql(
+            &sql,
+            concat!(
+                r#"SELECT * FROM (SELECT * FROM "users" WHERE "age" >= $1) AS "u" "#,
+                r#"WHERE "u"."id" = $2"#
+            ),
         );
         assert_eq!(args, vec![Value::I32(21), Value::I32(9)]);
     }

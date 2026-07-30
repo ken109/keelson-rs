@@ -43,15 +43,19 @@ impl HasOffset for Offset {
 
 #[cfg(test)]
 mod tests {
+    use keelson_sqlcheck::testing::assert_frag_sql;
+
     use super::*;
     use crate::dialect::testing::Numbered;
     use crate::expr::arg;
     use crate::value::Value;
     use crate::writer::build;
 
+    const FRAME: &str = r#"SELECT "id" FROM users {}"#;
+
     #[test]
     fn an_unset_offset_writes_nothing() {
-        assert_eq!(build(&Numbered, &Offset::default()).unwrap().0, "");
+        assert_frag_sql(FRAME, &build(&Numbered, &Offset::default()).unwrap().0, "");
         assert!(Offset::default().is_empty());
     }
 
@@ -59,11 +63,11 @@ mod tests {
     fn the_count_is_written_after_the_keyword() {
         let mut o = Offset::default();
         o.set_offset(5i64);
-        assert_eq!(build(&Numbered, &o).unwrap().0, "OFFSET 5");
+        assert_frag_sql(FRAME, &build(&Numbered, &o).unwrap().0, "OFFSET 5");
 
         o.set_offset(arg(5i64));
         let (sql, args) = build(&Numbered, &o).unwrap();
-        assert_eq!(sql, "OFFSET $1");
+        assert_frag_sql(FRAME, &sql, "OFFSET $1");
         assert_eq!(args, vec![Value::I64(5)]);
     }
 }

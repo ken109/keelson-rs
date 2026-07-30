@@ -242,9 +242,15 @@ impl_ident_tuple!(A, B, C, D);
 
 #[cfg(test)]
 mod tests {
+    use keelson_sqlcheck::testing::assert_frag_sql;
+
     use super::*;
     use crate::dialect::testing::Numbered;
     use crate::writer::build;
+
+    const COND: &str = r#"SELECT "id" FROM users WHERE {}"#;
+    const VALUE: &str = r#"SELECT {} FROM users"#;
+    const EQ: &str = r#"SELECT "id" FROM users WHERE "age" = {}"#;
 
     fn rendered(e: Expr) -> (String, Vec<Value>) {
         build(&Numbered, &e).expect("render")
@@ -253,30 +259,30 @@ mod tests {
     #[test]
     fn text_becomes_raw_sql() {
         for e in [
-            "id = 1".into_expr(),
-            String::from("id = 1").into_expr(),
-            Cow::Borrowed("id = 1").into_expr(),
+            "age = 1".into_expr(),
+            String::from("age = 1").into_expr(),
+            Cow::Borrowed("age = 1").into_expr(),
         ] {
             assert!(matches!(e, Expr::Raw(_)));
-            assert_eq!(rendered(e).0, "id = 1");
+            assert_frag_sql(COND, &rendered(e).0, "age = 1");
         }
     }
 
     #[test]
     fn numbers_become_literals_and_values_become_arguments() {
         let (sql, args) = rendered(20i64.into_expr());
-        assert_eq!(sql, "20");
+        assert_frag_sql(VALUE, &sql, "20");
         assert!(args.is_empty(), "a literal binds nothing");
 
         let (sql, args) = rendered(Value::I64(20).into_expr());
-        assert_eq!(sql, "$1");
+        assert_frag_sql(EQ, &sql, "$1");
         assert_eq!(args, vec![Value::I64(20)]);
     }
 
     #[test]
     fn booleans_and_floats_render_as_written() {
-        assert_eq!(rendered(true.into_expr()).0, "true");
-        assert_eq!(rendered(1.5f64.into_expr()).0, "1.5");
+        assert_frag_sql(VALUE, &rendered(true.into_expr()).0, "true");
+        assert_frag_sql(VALUE, &rendered(1.5f64.into_expr()).0, "1.5");
     }
 
     #[test]
@@ -299,24 +305,32 @@ mod tests {
 
     #[test]
     fn an_identifier_takes_one_part_or_several() {
-        assert_eq!(rendered(Expr::ident("age")).0, r#""age""#);
-        assert_eq!(rendered(Expr::ident(("users", "id"))).0, r#""users"."id""#);
-        assert_eq!(
-            rendered(Expr::ident(["public", "users", "id"])).0,
-            r#""public"."users"."id""#
+        assert_frag_sql(VALUE, &rendered(Expr::ident("age")).0, r#""age""#);
+        assert_frag_sql(
+            VALUE,
+            &rendered(Expr::ident(("users", "id"))).0,
+            r#""users"."id""#,
         );
-        assert_eq!(
-            rendered(Expr::ident(vec![String::from("a"), String::from("b")])).0,
-            r#""a"."b""#
+        // A three-part identifier is schema-qualified, which resolves against an
+        // unqualified FROM as long as the schema is the right one.
+        assert_frag_sql(
+            VALUE,
+            &rendered(Expr::ident(["public", "users", "id"])).0,
+            r#""public"."users"."id""#,
+        );
+        assert_frag_sql(
+            VALUE,
+            &rendered(Expr::ident(vec![String::from("users"), String::from("id")])).0,
+            r#""users"."id""#,
         );
         // An unset qualifier needs no branch at the call site.
-        assert_eq!(rendered(Expr::ident(("", "id"))).0, r#""id""#);
+        assert_frag_sql(VALUE, &rendered(Expr::ident(("", "id"))).0, r#""id""#);
     }
 
     #[test]
     fn an_erased_expression_arrives_as_custom() {
-        let e: DynExpr = crate::writer::dyn_expr("raw bits");
+        let e: DynExpr = crate::writer::dyn_expr("1 + 1");
         assert!(matches!(e.clone().into_expr(), Expr::Custom(_)));
-        assert_eq!(rendered(e.into_expr()).0, "raw bits");
+        assert_frag_sql(VALUE, &rendered(e.into_expr()).0, "1 + 1");
     }
 }

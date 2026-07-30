@@ -1,10 +1,24 @@
 //! The core API exercised from outside the crate, the way a dialect crate will
-//! use it: a hand-written dialect, clauses that store `Cow<'static, str>` and
-//! erased expressions, mods shared through a `Has*` trait, and a query that knows
-//! its own dialect.
+//! use it: a dialect, clauses that store `Cow<'static, str>` and erased
+//! expressions, mods shared through a `Has*` trait, and a query that knows its own
+//! dialect.
 //!
 //! This is a contract test. If it stops compiling, a later phase's code stops
 //! compiling too.
+//!
+//! # Where the expectations come from, and who checks them
+//!
+//! The little `SelectQuery` below renders a *whole statement*, so every case that
+//! produces SQL goes through [`assert_stmt`], which asks the PostgreSQL grammar
+//! and — under `--features live-docker` — a real PostgreSQL 17 whether it is valid,
+//! before comparing it to what the test meant. That is why the statements name
+//! `users` and `posts` from `tests/schema/psql.sql`: an engine resolves names, so a
+//! statement about an invented table cannot be judged at all.
+//!
+//! The dialect is [`PgLike`] from `keelson-sqlcheck`, which is what makes the judge
+//! reachable from a crate that has no dialect of its own. A hand-written one would
+//! render the same `$N` and `"id"`, but nothing would then guarantee that the
+//! judge and the renderer agree.
 
 use std::borrow::Cow;
 
@@ -12,23 +26,7 @@ use keelson_core::{
     BuildMod, DynExpr, Error, Expression, Mod, Query, QueryType, Result, SqlWriter, Value, build,
     dyn_expr, mod_fn,
 };
-
-/// A dialect crate's dialect: `$N`, `"id"`, no named arguments.
-#[derive(Debug, Clone, Copy)]
-struct Psql;
-
-impl keelson_core::Dialect for Psql {
-    fn write_arg(&self, w: &mut SqlWriter<'_>, position: usize) {
-        w.push_str("$");
-        w.push_str(&position.to_string());
-    }
-
-    fn write_quoted(&self, w: &mut SqlWriter<'_>, s: &str) {
-        w.push_str("\"");
-        w.push_str(s);
-        w.push_str("\"");
-    }
-}
+use keelson_sqlcheck::testing::{PgLike, assert_stmt};
 
 /// A quoted identifier, stored the way clauses store one: owned when computed,
 /// free when a literal, and with no lifetime on the type.
@@ -68,10 +66,21 @@ impl Expression for Gte {
 #[derive(Debug, Clone, Default)]
 struct Where(Vec<DynExpr>);
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 struct SelectQuery {
+    projection: Cow<'static, str>,
     from: Option<Cow<'static, str>>,
     where_: Where,
+}
+
+impl Default for SelectQuery {
+    fn default() -> Self {
+        SelectQuery {
+            projection: Cow::Borrowed("*"),
+            from: None,
+            where_: Where::default(),
+        }
+    }
 }
 
 /// The shared-clause trait the `where_` mod is written against: a statement
@@ -97,9 +106,17 @@ fn from(table: impl Into<Cow<'static, str>>) -> impl Mod<SelectQuery> {
     mod_fn(move |q: &mut SelectQuery| q.from = Some(table))
 }
 
+/// Narrows the projection, which is what a sub-query used with `IN` needs: one
+/// column, because a real server counts them.
+fn select(column: impl Into<Cow<'static, str>>) -> impl Mod<SelectQuery> {
+    let column = column.into();
+    mod_fn(move |q: &mut SelectQuery| q.projection = column)
+}
+
 impl Expression for SelectQuery {
     fn write_sql(&self, w: &mut SqlWriter<'_>) {
-        w.push_str("SELECT *");
+        w.push_str("SELECT ");
+        w.push_str(&self.projection);
         w.write_if_some(self.from.as_ref(), " FROM ", "");
         w.write_slice(&self.where_.0, " WHERE ", " AND ", "");
     }
@@ -111,11 +128,11 @@ impl Query for SelectQuery {
     }
 
     fn dialect(&self) -> &dyn keelson_core::Dialect {
-        &Psql
+        &PgLike
     }
 }
 
-fn select(mods: impl Mod<SelectQuery>) -> SelectQuery {
+fn query(mods: impl Mod<SelectQuery>) -> SelectQuery {
     let mut q = SelectQuery::default();
     mods.apply(&mut q);
     q
@@ -135,13 +152,13 @@ fn gte(lhs: impl Expression + 'static, rhs: impl Expression + 'static) -> Gte {
 
 #[test]
 fn a_query_assembled_from_mods_builds_itself() {
-    let q = select((
+    let q = query((
         from("users"),
         where_(gte(quote(["users", "age"]), arg(21i32))),
     ));
 
     let (sql, args) = q.build().unwrap();
-    assert_eq!(sql, r#"SELECT * FROM users WHERE ("users"."age" >= $1)"#);
+    assert_stmt(&sql, r#"SELECT * FROM users WHERE ("users"."age" >= $1)"#);
     assert_eq!(args, vec![Value::I32(21)]);
     assert_eq!(q.query_type(), QueryType::Select);
 }
@@ -149,27 +166,27 @@ fn a_query_assembled_from_mods_builds_itself() {
 #[test]
 fn conditional_mods_need_no_if_statement() {
     let admin = false;
-    let scoped = select((
-        from("projects"),
+    let scoped = query((
+        from("posts"),
         (!admin).then(|| where_(gte(quote(["user_id"]), arg(7i32)))),
     ));
-    assert_eq!(
-        scoped.build().unwrap().0,
-        r#"SELECT * FROM projects WHERE ("user_id" >= $1)"#
+    assert_stmt(
+        &scoped.build().unwrap().0,
+        r#"SELECT * FROM posts WHERE ("user_id" >= $1)"#,
     );
 
     let admin = true;
-    let unscoped = select((
-        from("projects"),
+    let unscoped = query((
+        from("posts"),
         (!admin).then(|| where_(gte(quote(["user_id"]), arg(7i32)))),
     ));
-    assert_eq!(unscoped.build().unwrap().0, "SELECT * FROM projects");
+    assert_stmt(&unscoped.build().unwrap().0, "SELECT * FROM posts");
 }
 
 #[test]
 fn a_raw_fragment_goes_wherever_an_expression_goes() {
-    let q = select((from("users"), where_("id = 1")));
-    assert_eq!(q.build().unwrap().0, "SELECT * FROM users WHERE id = 1");
+    let q = query((from("users"), where_("id = 1")));
+    assert_stmt(&q.build().unwrap().0, "SELECT * FROM users WHERE id = 1");
 }
 
 #[test]
@@ -186,23 +203,33 @@ fn a_subquery_continues_the_outer_placeholder_numbering() {
         }
     }
 
-    let inner = select((from("adults"), where_(gte(quote(["age"]), arg(21i32)))));
-    let outer = select((
+    let inner = query((
+        select("id"),
         from("users"),
-        where_(gte(quote(["rank"]), arg(3i32))),
-        where_(In(dyn_expr(quote(["id"])), inner)),
-        where_(gte(quote(["score"]), arg(9i32))),
+        where_(gte(quote(["age"]), arg(21i32))),
+    ));
+    let outer = query((
+        from("posts"),
+        where_(gte(quote(["views"]), arg(3i32))),
+        where_(In(dyn_expr(quote(["user_id"])), inner)),
+        where_(gte(quote(["id"]), arg(9i32))),
     ));
 
     let (sql, args) = outer.build().unwrap();
-    assert_eq!(
-        sql,
-        r#"SELECT * FROM users WHERE ("rank" >= $1) AND "id" IN (SELECT * FROM adults WHERE ("age" >= $2)) AND ("score" >= $3)"#
+    assert_stmt(
+        &sql,
+        concat!(
+            r#"SELECT * FROM posts WHERE ("views" >= $1) AND "#,
+            r#""user_id" IN (SELECT id FROM users WHERE ("age" >= $2)) AND "#,
+            r#"("id" >= $3)"#
+        ),
     );
     assert_eq!(args, vec![Value::I32(3), Value::I32(21), Value::I32(9)]);
 
     // And splicing the whole thing into an existing statement shifts every
-    // placeholder, arguments unchanged.
+    // placeholder, arguments unchanged. Not judged: `$5` with no `$1` is not a
+    // statement a server will prepare, which is the point of `build_from` — the
+    // result is for splicing into one that already has four arguments.
     let (sql, args) = outer.build_from(5).unwrap();
     assert!(sql.contains("$5") && sql.contains("$6") && sql.contains("$7"));
     assert_eq!(args.len(), 3);
@@ -210,12 +237,16 @@ fn a_subquery_continues_the_outer_placeholder_numbering() {
 
 #[test]
 fn args_serialise_as_the_plain_json_the_golden_harness_compares() {
-    let q = select((
+    let q = query((
         from("users"),
         where_(gte(quote(["name"]), arg("Stephen"))),
         where_(gte(quote(["age"]), arg(100i32))),
     ));
-    let (_, args) = q.build().unwrap();
+    let (sql, args) = q.build().unwrap();
+    assert_stmt(
+        &sql,
+        r#"SELECT * FROM users WHERE ("name" >= $1) AND ("age" >= $2)"#,
+    );
     let json: Vec<serde_json::Value> = args
         .iter()
         .map(|a| serde_json::to_value(a).unwrap())
@@ -243,13 +274,13 @@ fn a_build_mod_runs_against_a_clone_on_every_build() {
         }
     }
 
-    let base = select(from("users"));
+    let base = query(from("users"));
     for _ in 0..2 {
         let mut q = base.clone();
         Schema("public").apply(&mut q).unwrap();
-        assert_eq!(q.build().unwrap().0, "SELECT * FROM public.users");
+        assert_stmt(&q.build().unwrap().0, "SELECT * FROM public.users");
     }
-    assert_eq!(base.build().unwrap().0, "SELECT * FROM users");
+    assert_stmt(&base.build().unwrap().0, "SELECT * FROM users");
 
     let mut empty = SelectQuery::default();
     assert!(Schema("public").apply(&mut empty).is_err());
@@ -266,10 +297,12 @@ fn asking_for_a_named_arg_a_dialect_lacks_fails_the_build_and_nothing_else() {
         }
     }
 
-    let q = select((from("users"), where_(Named("id"))));
+    let q = query((from("users"), where_(Named("id"))));
     assert!(matches!(q.build(), Err(Error::NoNamedArgs)));
 
-    // The same expression under a dialect that has them renders fine.
+    // The same expression under a dialect that has them renders fine. Not judged:
+    // `:id` is SQLite's spelling, so the psql judge would reject it — and a bare
+    // placeholder is not a statement either way.
     #[derive(Debug)]
     struct Sqlite;
 

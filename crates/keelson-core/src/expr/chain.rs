@@ -283,11 +283,20 @@ impl Chain for Expr {
 
 #[cfg(test)]
 mod tests {
+    use keelson_sqlcheck::testing::assert_frag_sql;
+
     use super::super::{arg, arg_group, literal, quote, raw};
     use super::*;
     use crate::dialect::testing::{Numbered, TestDialect};
     use crate::value::Value;
     use crate::writer::build;
+
+    /// An operator expression is a fragment. A boolean one is judged where a
+    /// condition goes and a scalar one where a value goes — putting either in the
+    /// other's place is a mistake the grammar or the engine will name.
+    const COND: &str = r#"SELECT "id" FROM users WHERE {}"#;
+    const VALUE: &str = r#"SELECT {} FROM users"#;
+    const POST_COND: &str = r#"SELECT "id" FROM posts WHERE {}"#;
 
     fn sql(e: Expr) -> String {
         build(&Numbered, &e).expect("render").0
@@ -295,99 +304,138 @@ mod tests {
 
     #[test]
     fn a_comparison_is_parenthesised_exactly_once() {
-        assert_eq!(sql(quote("age").gte(arg(21i32))), r#"("age" >= $1)"#);
+        assert_frag_sql(COND, &sql(quote("age").gte(arg(21i32))), r#"("age" >= $1)"#);
     }
 
     #[test]
     fn every_comparison_operator_uses_its_standard_spelling() {
-        let cases = [
-            (quote("a").eq(raw("b")), r#"("a" = b)"#),
-            (quote("a").ne(raw("b")), r#"("a" <> b)"#),
-            (quote("a").lt(raw("b")), r#"("a" < b)"#),
-            (quote("a").lte(raw("b")), r#"("a" <= b)"#),
-            (quote("a").gt(raw("b")), r#"("a" > b)"#),
-            (quote("a").gte(raw("b")), r#"("a" >= b)"#),
-            (quote("a").like(literal("b%")), r#"("a" LIKE 'b%')"#),
-            (quote("a").plus(1i32), r#"("a" + 1)"#),
-            (quote("a").minus(quote("b")), r#"("a" - "b")"#),
-            (quote("a").op("@>", raw("b")), r#"("a" @> b)"#),
+        // Chapter 9 of the PostgreSQL manual for each spelling; `<>` rather than
+        // `!=` because that is the standard one.
+        let conditions = [
+            (quote("age").eq(raw("id")), r#"("age" = id)"#),
+            (quote("age").ne(raw("id")), r#"("age" <> id)"#),
+            (quote("age").lt(raw("id")), r#"("age" < id)"#),
+            (quote("age").lte(raw("id")), r#"("age" <= id)"#),
+            (quote("age").gt(raw("id")), r#"("age" > id)"#),
+            (quote("age").gte(raw("id")), r#"("age" >= id)"#),
+            (quote("name").like(literal("b%")), r#"("name" LIKE 'b%')"#),
         ];
-        for (e, expected) in cases {
-            assert_eq!(sql(e), expected);
+        for (e, expected) in conditions {
+            assert_frag_sql(COND, &sql(e), expected);
         }
+
+        // Arithmetic is a value, not a condition, so it goes in the select list.
+        let values = [
+            (quote("age").plus(1i32), r#"("age" + 1)"#),
+            (quote("age").minus(quote("id")), r#"("age" - "id")"#),
+        ];
+        for (e, expected) in values {
+            assert_frag_sql(VALUE, &sql(e), expected);
+        }
+
+        // A dialect operator core has never heard of, reached through `op`.
+        assert_frag_sql(
+            COND,
+            &sql(raw("ARRAY[1, 2]").op("@>", raw("ARRAY[1]"))),
+            "(ARRAY[1, 2] @> ARRAY[1])",
+        );
     }
 
     #[test]
     fn null_tests_are_postfix() {
-        assert_eq!(sql(quote("a").is_null()), r#"("a" IS NULL)"#);
-        assert_eq!(sql(quote("a").is_not_null()), r#"("a" IS NOT NULL)"#);
+        assert_frag_sql(COND, &sql(quote("age").is_null()), r#"("age" IS NULL)"#);
+        assert_frag_sql(
+            COND,
+            &sql(quote("age").is_not_null()),
+            r#"("age" IS NOT NULL)"#,
+        );
     }
 
     #[test]
     fn distinct_from_is_an_infix_keyword_operator() {
-        assert_eq!(
-            sql(quote("a").is_distinct_from(quote("b"))),
-            r#"("a" IS DISTINCT FROM "b")"#
+        assert_frag_sql(
+            COND,
+            &sql(quote("age").is_distinct_from(quote("id"))),
+            r#"("age" IS DISTINCT FROM "id")"#,
         );
-        assert_eq!(
-            sql(quote("a").is_not_distinct_from(quote("b"))),
-            r#"("a" IS NOT DISTINCT FROM "b")"#
+        assert_frag_sql(
+            COND,
+            &sql(quote("age").is_not_distinct_from(quote("id"))),
+            r#"("age" IS NOT DISTINCT FROM "id")"#,
         );
     }
 
     #[test]
     fn between_keeps_its_three_part_shape() {
-        assert_eq!(
-            sql(quote("a").between(arg(1i32), arg(2i32))),
-            r#"("a" BETWEEN $1 AND $2)"#
+        assert_frag_sql(
+            COND,
+            &sql(quote("age").between(arg(1i32), arg(2i32))),
+            r#"("age" BETWEEN $1 AND $2)"#,
         );
-        assert_eq!(
-            sql(quote("a").not_between(arg(1i32), arg(2i32))),
-            r#"("a" NOT BETWEEN $1 AND $2)"#
+        assert_frag_sql(
+            COND,
+            &sql(quote("age").not_between(arg(1i32), arg(2i32))),
+            r#"("age" NOT BETWEEN $1 AND $2)"#,
         );
     }
 
     #[test]
     fn in_always_parenthesises_its_operands() {
-        assert_eq!(
-            sql(quote("status").in_((literal("A"), literal("B")))),
-            r#"("status" IN ('A', 'B'))"#
+        assert_frag_sql(
+            POST_COND,
+            &sql(quote("status").in_((literal("A"), literal("B")))),
+            r#"("status" IN ('A', 'B'))"#,
         );
-        assert_eq!(sql(quote("id").not_in(arg(1i32))), r#"("id" NOT IN ($1))"#);
+        assert_frag_sql(
+            COND,
+            &sql(quote("id").not_in(arg(1i32))),
+            r#"("id" NOT IN ($1))"#,
+        );
     }
 
     /// The shape bob's `select with grouped IN` fixture pins: a row constructor
     /// on the left, a list of row constructors on the right.
     #[test]
     fn a_row_constructor_in_a_list_of_row_constructors() {
-        let e = Expr::group((quote("id"), quote("employee_id")))
+        let e = Expr::group((quote("id"), quote("user_id")))
             .in_((arg_group([1i32, 2]), arg_group([3i32, 4])));
-        let (s, args) = build(&Numbered, &e).unwrap();
-        assert_eq!(s, r#"(("id", "employee_id") IN (($1, $2), ($3, $4)))"#);
+        let (rendered, args) = build(&Numbered, &e).unwrap();
+        assert_frag_sql(
+            POST_COND,
+            &rendered,
+            r#"(("id", "user_id") IN (($1, $2), ($3, $4)))"#,
+        );
         assert_eq!(args.len(), 4);
     }
 
     #[test]
     fn boolean_chains_take_one_operand_or_several() {
-        assert_eq!(sql(quote("a").and(quote("b"))), r#"("a" AND "b")"#);
-        assert_eq!(
-            sql(quote("a").or((quote("b"), quote("c")))),
-            r#"("a" OR "b" OR "c")"#
+        assert_frag_sql(
+            COND,
+            &sql(quote("is_active").and(raw("age > 1"))),
+            r#"("is_active" AND age > 1)"#,
+        );
+        assert_frag_sql(
+            COND,
+            &sql(quote("is_active").or((raw("age > 1"), raw("age < 9")))),
+            r#"("is_active" OR age > 1 OR age < 9)"#,
         );
     }
 
     /// The `psql upsert` fixture's `SET` value, which is where concatenation is
-    /// pinned.
+    /// pinned. `EXCLUDED` only exists inside `ON CONFLICT DO UPDATE`, so that is
+    /// the frame.
     #[test]
     fn concat_joins_with_the_pipe_operator() {
-        let e = raw("EXCLUDED.dname").concat((
+        let e = raw(r#"EXCLUDED."name""#).concat((
             literal(" (formerly "),
-            quote(("d", "dname")),
+            quote(("tags", "name")),
             literal(")"),
         ));
-        assert_eq!(
-            sql(e),
-            r#"(EXCLUDED.dname || ' (formerly ' || "d"."dname" || ')')"#
+        assert_frag_sql(
+            r#"INSERT INTO tags ("id", "name") VALUES (1, 'rust') ON CONFLICT ("id") DO UPDATE SET "name" = {}"#,
+            &sql(e),
+            r#"(EXCLUDED."name" || ' (formerly ' || "tags"."name" || ')')"#,
         );
     }
 
@@ -396,23 +444,27 @@ mod tests {
         // Each step's result is already atomic, so re-applying the rule is a
         // no-op. This is the invariant that replaces bob's "already a chain
         // value" arm.
-        let e = quote("a").eq(arg(1i32)).and(quote("b").eq(arg(2i32)));
-        assert_eq!(sql(e), r#"(("a" = $1) AND ("b" = $2))"#);
+        let e = quote("age").eq(arg(1i32)).and(quote("id").eq(arg(2i32)));
+        assert_frag_sql(COND, &sql(e), r#"(("age" = $1) AND ("id" = $2))"#);
     }
 
     #[test]
     fn an_alias_ends_the_chain_and_is_not_parenthesised() {
-        let e = quote("a").minus(quote("b")).as_("difference");
-        assert_eq!(sql(e), r#"("a" - "b") AS "difference""#);
+        let e = quote("age").minus(quote("id")).as_("difference");
+        assert_frag_sql(VALUE, &sql(e), r#"("age" - "id") AS "difference""#);
     }
 
     #[test]
     fn arguments_are_numbered_left_to_right_across_a_whole_chain() {
-        let e = quote("a")
+        let e = quote("age")
             .between(arg(1i32), arg(2i32))
-            .and(quote("b").in_((arg(3i32), arg(4i32))));
-        let (s, args) = build(&Numbered, &e).unwrap();
-        assert_eq!(s, r#"(("a" BETWEEN $1 AND $2) AND ("b" IN ($3, $4)))"#);
+            .and(quote("id").in_((arg(3i32), arg(4i32))));
+        let (rendered, args) = build(&Numbered, &e).unwrap();
+        assert_frag_sql(
+            COND,
+            &rendered,
+            r#"(("age" BETWEEN $1 AND $2) AND ("id" IN ($3, $4)))"#,
+        );
         assert_eq!(
             args,
             vec![Value::I32(1), Value::I32(2), Value::I32(3), Value::I32(4)]
@@ -437,15 +489,26 @@ mod tests {
         }
         impl<T: Chain> PsqlOps for T {}
 
-        assert_eq!(sql(quote("tags").contains(arg("x"))), r#"("tags" @> $1)"#);
-        assert_eq!(
-            sql(quote("a").between_symmetric(arg(1i32), arg(2i32))),
-            r#"("a" BETWEEN SYMMETRIC $1 AND $2)"#
+        assert_frag_sql(
+            COND,
+            &sql(raw("ARRAY[1, 2]").contains(raw("ARRAY[1]"))),
+            "(ARRAY[1, 2] @> ARRAY[1])",
+        );
+        assert_frag_sql(
+            COND,
+            &sql(quote("age").between_symmetric(arg(1i32), arg(2i32))),
+            r#"("age" BETWEEN SYMMETRIC $1 AND $2)"#,
         );
     }
 
     /// The other extension shape: a dialect newtype, so its operators cannot be
     /// reached from another dialect's expressions at all.
+    ///
+    /// Not judged: `GLOB` is SQLite's, and the dialect this renders under is
+    /// SQLite-shaped (`?N`, `:name`). PostgreSQL — the judge reachable from
+    /// `keelson-core` — has neither, and `keelson-sqlite` is where the operator
+    /// itself is checked. What is asserted here is that the chain stays in the
+    /// newtype.
     #[test]
     fn a_dialect_newtype_keeps_the_whole_chain_in_its_own_type() {
         #[derive(Debug, Clone)]

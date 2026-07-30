@@ -152,15 +152,25 @@ impl NullsPosition {
 
 #[cfg(test)]
 mod tests {
+    use keelson_sqlcheck::testing::assert_frag_sql;
+
     use super::*;
     use crate::dialect::testing::Numbered;
     use crate::expr::{arg, quote};
     use crate::value::Value;
     use crate::writer::build;
 
+    /// A single sort key goes after the keyword; a whole `OrderBy` brings its own.
+    const KEY_FRAME: &str = r#"SELECT "id" FROM users ORDER BY {}"#;
+    const CLAUSE_FRAME: &str = r#"SELECT "id", "name", "age" FROM users {}"#;
+
+    fn sql(e: &impl Expression) -> String {
+        build(&Numbered, e).expect("render").0
+    }
+
     #[test]
     fn an_empty_order_by_writes_nothing() {
-        assert_eq!(build(&Numbered, &OrderBy::default()).unwrap().0, "");
+        assert_frag_sql(CLAUSE_FRAME, &sql(&OrderBy::default()), "");
         assert!(OrderBy::default().is_empty());
     }
 
@@ -170,16 +180,16 @@ mod tests {
             direction: Some(OrderDirection::Desc),
             ..OrderDef::default()
         };
+        // Not framed: a sort key that writes nothing leaves `ORDER BY` dangling,
+        // so there is no statement for it to be judged inside. That it renders
+        // nothing at all — not even the direction it was given — is the assertion.
         assert_eq!(build(&Numbered, &o).unwrap().0, "");
         assert!(o.is_empty());
     }
 
     #[test]
     fn a_bare_order_def_is_just_its_expression() {
-        assert_eq!(
-            build(&Numbered, &OrderDef::new(quote("name"))).unwrap().0,
-            r#""name""#
-        );
+        assert_frag_sql(KEY_FRAME, &sql(&OrderDef::new(quote("name"))), r#""name""#);
     }
 
     #[test]
@@ -193,43 +203,41 @@ mod tests {
             nulls: Some(NullsPosition::Last),
             ..OrderDef::new(quote("name"))
         };
-        assert_eq!(
-            build(&Numbered, &o).unwrap().0,
-            r#""name" COLLATE "bg-BG-x-icu" ASC NULLS LAST"#
+        assert_frag_sql(
+            KEY_FRAME,
+            &sql(&o),
+            r#""name" COLLATE "bg-BG-x-icu" ASC NULLS LAST"#,
         );
     }
 
     #[test]
     fn a_direction_can_be_an_operator() {
+        // `USING >` needs an operator that is a btree ordering operator for the
+        // key's type, which `>` is for text.
         let o = OrderDef {
             direction: Some(OrderDirection::Using(">".into())),
             nulls: Some(NullsPosition::First),
             ..OrderDef::new(quote("name"))
         };
-        assert_eq!(
-            build(&Numbered, &o).unwrap().0,
-            r#""name" USING > NULLS FIRST"#
-        );
+        assert_frag_sql(KEY_FRAME, &sql(&o), r#""name" USING > NULLS FIRST"#);
     }
 
     #[test]
     fn keys_are_comma_separated_and_can_be_cleared() {
         let mut ob = OrderBy::default();
-        ob.append_order(Expr::custom(OrderDef::new(quote("a"))));
+        ob.append_order(Expr::custom(OrderDef::new(quote("name"))));
         ob.append_order(Expr::custom(OrderDef {
             direction: Some(OrderDirection::Desc),
-            ..OrderDef::new(quote("b"))
+            ..OrderDef::new(quote("age"))
         }));
-        // A sort key may also be an ordinal or any expression.
+        // A sort key may also be an ordinal or any expression; 3 is the frame's
+        // third output column.
         ob.append_order("3");
 
-        assert_eq!(
-            build(&Numbered, &ob).unwrap().0,
-            r#"ORDER BY "a", "b" DESC, 3"#
-        );
+        assert_frag_sql(CLAUSE_FRAME, &sql(&ob), r#"ORDER BY "name", "age" DESC, 3"#);
 
         ob.clear_order_by();
-        assert_eq!(build(&Numbered, &ob).unwrap().0, "");
+        assert_frag_sql(CLAUSE_FRAME, &sql(&ob), "");
     }
 
     #[test]
@@ -237,10 +245,10 @@ mod tests {
         let mut ob = OrderBy::default();
         ob.append_order(Expr::custom(OrderDef::new(Expr::func(
             "coalesce",
-            (quote("a"), arg(0i32)),
+            (quote("age"), arg(0i32)),
         ))));
-        let (sql, args) = build(&Numbered, &ob).unwrap();
-        assert_eq!(sql, r#"ORDER BY coalesce("a", $1)"#);
+        let (rendered, args) = build(&Numbered, &ob).unwrap();
+        assert_frag_sql(CLAUSE_FRAME, &rendered, r#"ORDER BY coalesce("age", $1)"#);
         assert_eq!(args, vec![Value::I32(0)]);
     }
 }

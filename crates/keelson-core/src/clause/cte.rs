@@ -257,40 +257,77 @@ impl MaybeAbsent for Cte {
 
 #[cfg(test)]
 mod tests {
+    use keelson_sqlcheck::testing::assert_frag_sql;
+
     use super::*;
     use crate::dialect::testing::Numbered;
     use crate::expr::arg;
     use crate::value::Value;
     use crate::writer::build;
 
-    /// `SELECT $1`, standing in for a sub-query.
+    /// A CTE is a fragment of a `WITH`, which is itself a prefix. These are the
+    /// statements the cases below are judged inside.
+    const FRAME: &str = r#"WITH {} SELECT * FROM "c""#;
+    const RECURSIVE_FRAME: &str = r#"WITH RECURSIVE {} SELECT * FROM "c""#;
+    /// For a `SEARCH` / `CYCLE` clause on its own: the CTE it qualifies is in the
+    /// frame, since both are only legal on a recursive one.
+    const AFTER_RECURSIVE_CTE: &str = concat!(
+        r#"WITH RECURSIVE "c" AS ("#,
+        r#"SELECT 1 AS "id" UNION ALL SELECT "id" + 1 FROM "c" WHERE "id" < 5"#,
+        r#") {} SELECT * FROM "c""#
+    );
+
+    /// A one-column sub-query. The placeholder is compared against a column so
+    /// PostgreSQL can infer a type for it.
     fn sub() -> Expr {
-        Expr::join((Expr::raw("SELECT"), arg(1i32)))
+        Expr::join((
+            Expr::raw(r#"SELECT "id" FROM posts WHERE "id" ="#),
+            arg(1i32),
+        ))
+    }
+
+    const SUB_SQL: &str = r#"SELECT "id" FROM posts WHERE "id" = $1"#;
+
+    /// The recursive query a SEARCH or CYCLE clause needs under it.
+    fn recursive_sub() -> Expr {
+        Expr::raw(r#"SELECT 1 AS "id" UNION ALL SELECT "id" + 1 FROM "c" WHERE "id" < 5"#)
+    }
+
+    const RECURSIVE_SUB_SQL: &str =
+        r#"SELECT 1 AS "id" UNION ALL SELECT "id" + 1 FROM "c" WHERE "id" < 5"#;
+
+    fn sql(e: &impl Expression) -> String {
+        build(&Numbered, e).expect("render").0
     }
 
     #[test]
     fn an_untouched_cte_writes_nothing() {
+        // Not framed: `WITH  SELECT …` is not a statement, which is the reason an
+        // empty CTE has to be skipped by `With` rather than written.
         assert_eq!(build(&Numbered, &Cte::default()).unwrap().0, "");
         assert!(Cte::default().is_empty());
     }
 
     #[test]
     fn a_bare_cte_is_name_as_query() {
-        let (sql, args) = build(&Numbered, &Cte::new("c", sub())).unwrap();
-        assert_eq!(sql, r#""c" AS (SELECT $1)"#);
+        let (rendered, args) = build(&Numbered, &Cte::new("c", sub())).unwrap();
+        assert_frag_sql(FRAME, &rendered, &format!(r#""c" AS ({SUB_SQL})"#));
         assert_eq!(args, vec![Value::I32(1)]);
     }
 
     #[test]
     fn column_names_follow_the_cte_name() {
         // PostgreSQL 17: with_query_name [ ( column_name [, ...] ) ] AS ( … )
+        // As many names as the query has columns, so the two-column query.
+        let two_cols = Expr::raw(r#"SELECT "id", "title" FROM posts"#);
         let cte = Cte {
             columns: vec!["id".into(), "data".into()],
-            ..Cte::new("c", sub())
+            ..Cte::new("c", two_cols)
         };
-        assert_eq!(
-            build(&Numbered, &cte).unwrap().0,
-            r#""c" ("id", "data") AS (SELECT $1)"#
+        assert_frag_sql(
+            FRAME,
+            &sql(&cte),
+            r#""c" ("id", "data") AS (SELECT "id", "title" FROM posts)"#,
         );
     }
 
@@ -300,24 +337,26 @@ mod tests {
         // three different instructions to the planner, so None is not a synonym
         // for either of the others.
         let base = Cte::new("c", sub());
-        assert_eq!(build(&Numbered, &base).unwrap().0, r#""c" AS (SELECT $1)"#);
+        assert_frag_sql(FRAME, &sql(&base), &format!(r#""c" AS ({SUB_SQL})"#));
 
         let yes = Cte {
             materialized: Some(true),
             ..base.clone()
         };
-        assert_eq!(
-            build(&Numbered, &yes).unwrap().0,
-            r#""c" AS MATERIALIZED (SELECT $1)"#
+        assert_frag_sql(
+            FRAME,
+            &sql(&yes),
+            &format!(r#""c" AS MATERIALIZED ({SUB_SQL})"#),
         );
 
         let no = Cte {
             materialized: Some(false),
             ..base
         };
-        assert_eq!(
-            build(&Numbered, &no).unwrap().0,
-            r#""c" AS NOT MATERIALIZED (SELECT $1)"#
+        assert_frag_sql(
+            FRAME,
+            &sql(&no),
+            &format!(r#""c" AS NOT MATERIALIZED ({SUB_SQL})"#),
         );
     }
 
@@ -335,7 +374,7 @@ mod tests {
 
     #[test]
     fn search_and_cycle_follow_the_query_and_hinge_on_their_columns() {
-        let mut cte = Cte::new("c", sub());
+        let mut cte = Cte::new("c", recursive_sub());
         cte.search = CteSearch::new(SearchOrder::Depth, ["id"], "ordercol");
         // No columns, so the whole CYCLE clause stays out even though the two
         // column names are filled in.
@@ -345,24 +384,33 @@ mod tests {
             ..CteCycle::default()
         };
 
-        assert_eq!(
-            build(&Numbered, &cte).unwrap().0,
-            r#""c" AS (SELECT $1) SEARCH DEPTH FIRST BY "id" SET "ordercol""#
+        assert_frag_sql(
+            RECURSIVE_FRAME,
+            &sql(&cte),
+            &format!(r#""c" AS ({RECURSIVE_SUB_SQL}) SEARCH DEPTH FIRST BY "id" SET "ordercol""#),
         );
 
         cte.cycle.columns = vec!["id".into()];
-        assert_eq!(
-            build(&Numbered, &cte).unwrap().0,
-            r#""c" AS (SELECT $1) SEARCH DEPTH FIRST BY "id" SET "ordercol" CYCLE "id" SET "is_cycle" USING "path""#
+        assert_frag_sql(
+            RECURSIVE_FRAME,
+            &sql(&cte),
+            &format!(
+                concat!(
+                    r#""c" AS ({}) SEARCH DEPTH FIRST BY "id" SET "ordercol""#,
+                    r#" CYCLE "id" SET "is_cycle" USING "path""#
+                ),
+                RECURSIVE_SUB_SQL
+            ),
         );
     }
 
     #[test]
     fn breadth_is_the_default_search_order() {
         let search = CteSearch::new(SearchOrder::default(), ["id"], "seq");
-        assert_eq!(
-            build(&Numbered, &search).unwrap().0,
-            r#"SEARCH BREADTH FIRST BY "id" SET "seq""#
+        assert_frag_sql(
+            AFTER_RECURSIVE_CTE,
+            &sql(&search),
+            r#"SEARCH BREADTH FIRST BY "id" SET "seq""#,
         );
     }
 
@@ -388,10 +436,11 @@ mod tests {
         cycle.to = Some(Expr::literal("Y"));
         cycle.default_val = Some(Expr::literal("N"));
 
-        let (sql, args) = build(&Numbered, &cycle).unwrap();
-        assert_eq!(
-            sql,
-            r#"CYCLE "id" SET "is_cycle" TO 'Y' DEFAULT 'N' USING "path""#
+        let (rendered, args) = build(&Numbered, &cycle).unwrap();
+        assert_frag_sql(
+            AFTER_RECURSIVE_CTE,
+            &rendered,
+            r#"CYCLE "id" SET "is_cycle" TO 'Y' DEFAULT 'N' USING "path""#,
         );
         assert!(args.is_empty(), "a constant binds nothing");
 

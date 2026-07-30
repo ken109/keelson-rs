@@ -327,6 +327,8 @@ impl MaybeAbsent for IndexHint {
 
 #[cfg(test)]
 mod tests {
+    use keelson_sqlcheck::testing::assert_frag_sql;
+
     use super::*;
     use crate::dialect::testing::{Numbered, Positional, TestDialect};
     use crate::expr::{arg, quote};
@@ -334,12 +336,23 @@ mod tests {
     use crate::writer::build;
     use crate::{clause::JoinKind, expr::Chain};
 
+    /// A table reference is a fragment of a `FROM`.
+    const FRAME: &str = "SELECT * FROM {}";
+
     fn users() -> TableRef {
         TableRef::new(quote("users"))
     }
 
+    fn sql(e: &impl Expression) -> String {
+        build(&Numbered, e).expect("render").0
+    }
+
     #[test]
     fn an_empty_table_ref_writes_nothing() {
+        // Not framed: `SELECT * FROM` is not a statement, so there is nothing to
+        // judge — which is precisely why a query type has to omit the keyword
+        // along with the reference. `SELECT * FROM users {}` would judge the frame
+        // and say nothing about the fragment.
         assert_eq!(build(&Numbered, &TableRef::default()).unwrap().0, "");
         assert!(TableRef::default().is_empty());
     }
@@ -358,26 +371,29 @@ mod tests {
 
     #[test]
     fn a_bare_table_is_just_its_expression() {
-        assert_eq!(build(&Numbered, &users()).unwrap().0, r#""users""#);
+        assert_frag_sql(FRAME, &sql(&users()), r#""users""#);
     }
 
     #[test]
     fn the_alias_and_its_columns_are_quoted() {
+        // PostgreSQL 17 from_item: `table_name [ [ AS ] alias [ ( column_alias
+        // [, ...] ) ] ]` — fewer column aliases than columns renames a prefix.
         let mut t = users();
         t.set_alias("u");
         t.set_columns(["a", "b"]);
-        assert_eq!(
-            build(&Numbered, &t).unwrap().0,
-            r#""users" AS "u" ("a", "b")"#
-        );
+        assert_frag_sql(FRAME, &sql(&t), r#""users" AS "u" ("a", "b")"#);
     }
 
     #[test]
     fn column_aliases_without_an_alias_still_render() {
-        // This is the INSERT column-list shape: `INSERT INTO users ("a", "b")`.
+        // This is the INSERT column-list shape: `INSERT INTO users ("id", "name")`.
         let mut t = users();
-        t.columns = vec!["a".into(), "b".into()];
-        assert_eq!(build(&Numbered, &t).unwrap().0, r#""users" ("a", "b")"#);
+        t.columns = vec!["id".into(), "name".into()];
+        assert_frag_sql(
+            "INSERT INTO {} VALUES (1, 'kubo')",
+            &sql(&t),
+            r#""users" ("id", "name")"#,
+        );
     }
 
     #[test]
@@ -386,30 +402,42 @@ mod tests {
         //   [ ONLY ] table_name … | [ LATERAL ] function_name ( … )
         //   [ WITH ORDINALITY ] [ [ AS ] alias … ]
         // ONLY and LATERAL precede the item; WITH ORDINALITY follows it and
-        // precedes the alias.
-        let t = TableRef {
+        // precedes the alias. ONLY qualifies a table and LATERAL a function, so
+        // they are judged on the item each one is legal on rather than together.
+        let only = TableRef {
             only: true,
+            alias: Some("u".into()),
+            ..users()
+        };
+        assert_frag_sql(FRAME, &sql(&only), r#"ONLY "users" AS "u""#);
+
+        let lateral = TableRef {
             lateral: true,
             with_ordinality: true,
             alias: Some("x".into()),
             ..TableRef::new(Expr::func("generate_series", (1i32, 3i32)))
         };
-        assert_eq!(
-            build(&Numbered, &t).unwrap().0,
-            r#"ONLY LATERAL generate_series(1, 3) WITH ORDINALITY AS "x""#
+        assert_frag_sql(
+            "SELECT * FROM users, {}",
+            &sql(&lateral),
+            r#"LATERAL generate_series(1, 3) WITH ORDINALITY AS "x""#,
         );
     }
 
     #[test]
     fn a_sub_select_in_the_from_keeps_the_outer_numbering() {
         let sub = Expr::group(Expr::join((
-            Expr::raw("SELECT id FROM posts WHERE author_id ="),
+            Expr::raw(r#"SELECT "id" FROM posts WHERE "user_id" ="#),
             arg(3i32),
         )));
         let mut t = TableRef::new(sub);
         t.set_alias("p");
-        let (sql, args) = build(&Numbered, &t).unwrap();
-        assert_eq!(sql, r#"(SELECT id FROM posts WHERE author_id = $1) AS "p""#);
+        let (rendered, args) = build(&Numbered, &t).unwrap();
+        assert_frag_sql(
+            FRAME,
+            &rendered,
+            r#"(SELECT "id" FROM posts WHERE "user_id" = $1) AS "p""#,
+        );
         assert_eq!(args, vec![Value::I32(3)]);
     }
 
@@ -417,6 +445,11 @@ mod tests {
     fn mysql_partitions_come_before_the_alias() {
         // MySQL 8.4 table_reference:
         //   tbl_name [PARTITION (partition_names)] [[AS] alias] [index_hint_list]
+        //
+        // Not framed: this is MySQL syntax rendered by the MySQL-shaped stand-in
+        // dialect, and the judge reachable from here is PostgreSQL's — which has
+        // neither backticks nor PARTITION. `keelson-mysql` checks the same shape
+        // against a real MySQL.
         let mut t = TableRef::new(Expr::ident("users"));
         t.append_partition(["p0", "p1"]);
         t.set_alias("u");
@@ -429,7 +462,8 @@ mod tests {
     #[test]
     fn index_hints_follow_the_alias_and_are_space_separated() {
         // MySQL 8.4: index_hint_list follows the alias, and each hint always
-        // brings its parentheses — `USE INDEX ()` is meaningful.
+        // brings its parentheses — `USE INDEX ()` is meaningful. MySQL-only, so
+        // unframed for the same reason as the case above.
         let mut t = users();
         t.set_alias("u");
         t.append_index_hint(IndexHint::new(IndexHintKind::Use, ["a"]));
@@ -461,17 +495,17 @@ mod tests {
         assert!(IndexHint::default().is_empty());
         // Not even the space that would precede them: an absent item is absent
         // separator and all.
-        assert_eq!(build(&Numbered, &t).unwrap().0, r#""users""#);
+        assert_frag_sql(FRAME, &sql(&t), r#""users""#);
 
         t.append_join(Join::new(JoinKind::Cross, TableRef::new(quote("tags"))));
-        assert_eq!(
-            build(&Numbered, &t).unwrap().0,
-            r#""users" CROSS JOIN "tags""#
-        );
+        assert_frag_sql(FRAME, &sql(&t), r#""users" CROSS JOIN "tags""#);
     }
 
     #[test]
     fn sqlite_indexed_by_has_three_states() {
+        // SQLite's own `INDEXED BY` / `NOT INDEXED`. Not framed: PostgreSQL has no
+        // such syntax, so the judge reachable from here would reject valid SQL.
+        // `keelson-sqlite` checks it against a real SQLite.
         let mut t = users();
         assert_eq!(build(&TestDialect, &t).unwrap().0, r#""users""#);
 
@@ -492,7 +526,7 @@ mod tests {
         t.append_join(Join {
             kind: JoinKind::Inner,
             to: TableRef::new(quote("posts")),
-            on: vec![quote(("u", "id")).eq(quote(("posts", "author_id")))],
+            on: vec![quote(("u", "id")).eq(quote(("posts", "user_id")))],
             ..Join::default()
         });
         t.append_join(Join {
@@ -501,9 +535,10 @@ mod tests {
             ..Join::default()
         });
 
-        assert_eq!(
-            build(&Numbered, &t).unwrap().0,
-            r#""users" AS "u" INNER JOIN "posts" ON ("u"."id" = "posts"."author_id") CROSS JOIN "tags""#
+        assert_frag_sql(
+            FRAME,
+            &sql(&t),
+            r#""users" AS "u" INNER JOIN "posts" ON ("u"."id" = "posts"."user_id") CROSS JOIN "tags""#,
         );
     }
 
@@ -514,30 +549,35 @@ mod tests {
         assert_eq!(build(&Numbered, &TableFunctions::default()).unwrap().0, "");
 
         let one = TableFunctions::new(Expr::func("generate_series", (1i32, 3i32)));
-        assert_eq!(build(&Numbered, &one).unwrap().0, "generate_series(1, 3)");
+        assert_frag_sql(FRAME, &sql(&one), "generate_series(1, 3)");
 
         let many = TableFunctions::new((
             Expr::func("generate_series", (1i32, 3i32)),
-            Expr::func("unnest", "a"),
+            Expr::func("unnest", "ARRAY['a', 'b']"),
         ));
-        assert_eq!(
-            build(&Numbered, &many).unwrap().0,
-            "ROWS FROM (generate_series(1, 3), unnest(a))"
+        assert_frag_sql(
+            FRAME,
+            &sql(&many),
+            "ROWS FROM (generate_series(1, 3), unnest(ARRAY['a', 'b']))",
         );
     }
 
     #[test]
     fn a_rows_from_set_is_a_table_ref_expression() {
         let mut t = TableRef::new(Expr::custom(TableFunctions::new((
-            Expr::func("f", ()),
-            Expr::func("g", ()),
+            Expr::func("generate_series", (1i32, 2i32)),
+            Expr::func("generate_series", (3i32, 4i32)),
         ))));
         t.with_ordinality = true;
         t.set_alias("x");
         t.set_columns(["p", "q"]);
-        assert_eq!(
-            build(&Numbered, &t).unwrap().0,
-            r#"ROWS FROM (f(), g()) WITH ORDINALITY AS "x" ("p", "q")"#
+        assert_frag_sql(
+            FRAME,
+            &sql(&t),
+            concat!(
+                r#"ROWS FROM (generate_series(1, 2), generate_series(3, 4))"#,
+                r#" WITH ORDINALITY AS "x" ("p", "q")"#
+            ),
         );
     }
 }

@@ -58,14 +58,22 @@ impl HasSet for Set {
 
 #[cfg(test)]
 mod tests {
+    use keelson_sqlcheck::testing::assert_frag_sql;
+
     use super::*;
     use crate::dialect::testing::Numbered;
     use crate::expr::{Chain, arg, quote};
     use crate::value::Value;
     use crate::writer::build;
 
+    /// The assignment list carries no `SET` keyword, so the frame supplies it.
+    const FRAME: &str = "UPDATE users SET {} WHERE \"id\" = 1";
+
     #[test]
     fn an_empty_set_writes_nothing() {
+        // Not framed: `UPDATE users SET` with nothing after it is not a statement
+        // in any dialect, so there is no statement for an empty assignment list to
+        // be judged inside. What it renders is all there is to check.
         assert_eq!(build(&Numbered, &Set::default()).unwrap().0, "");
         assert!(Set::default().is_empty());
     }
@@ -78,9 +86,16 @@ mod tests {
 
         let (sql, args) = build(&Numbered, &s).unwrap();
         // The parentheses come from the comparison chain, which is what makes an
-        // assignment and a condition the same kind of thing. A dialect's `set` mod
-        // is free to build an unparenthesised `"a" = $1` instead.
-        assert_eq!(sql, r#"("name" = $1), ("age" = $2)"#);
+        // assignment and a condition the same kind of thing. That also means this
+        // one cannot be framed as an `UPDATE`: PostgreSQL's `set_clause` is
+        // `column_name = expression`, and `("name" = $1)` is a parenthesised
+        // *comparison*, so a dialect's `set` mod builds an unparenthesised
+        // `"a" = $1` instead. Judged as the select list it *is* valid in.
+        assert_frag_sql(
+            r#"SELECT {} FROM users"#,
+            &sql,
+            r#"("name" = $1), ("age" = $2)"#,
+        );
         assert_eq!(args, vec![Value::Text("kubo".into()), Value::I32(3)]);
     }
 
@@ -91,15 +106,18 @@ mod tests {
         let mut s = Set::default();
         s.append_sets((
             Expr::binary(
-                Expr::group((quote("a"), quote("b"))),
+                Expr::group((quote("name"), quote("email"))),
                 "=",
-                Expr::group((arg(1i32), arg(2i32))),
+                Expr::group((arg("kubo"), arg("kubo@example.com"))),
             ),
-            Expr::raw(r#""c" = DEFAULT"#),
+            Expr::raw(r#""age" = DEFAULT"#),
         ));
-        assert_eq!(
-            build(&Numbered, &s).unwrap().0,
-            r#"("a", "b") = ($1, $2), "c" = DEFAULT"#
+        let (sql, args) = build(&Numbered, &s).unwrap();
+        assert_frag_sql(
+            FRAME,
+            &sql,
+            r#"("name", "email") = ($1, $2), "age" = DEFAULT"#,
         );
+        assert_eq!(args.len(), 2);
     }
 }

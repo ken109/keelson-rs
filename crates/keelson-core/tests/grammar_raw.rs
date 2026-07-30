@@ -3,7 +3,7 @@
 //! This is where silent corruption lives. An off-by-one in the placeholder
 //! counter binds the wrong value to the wrong column and every layer downstream
 //! reports success, so the cases here assert the *argument list* as hard as they
-//! assert the SQL — and they use [`Numbered`] (`$N`, PostgreSQL-shaped) wherever
+//! assert the SQL — and they render under `$N` (PostgreSQL-shaped) wherever
 //! numbering is the point, because [`Positional`] (`?`, MySQL-shaped) renders the
 //! same string no matter how badly the counter is wrong.
 //!
@@ -14,18 +14,29 @@
 //! arm) or from bob's `expr/raw.go` — named in a comment wherever the construct is
 //! not obvious. None of it was copied out of a program's output.
 //!
-//! # Why there is no `assert_sql` here
+//! # What is judged, and what cannot be
 //!
-//! `keelson-core` has no dialect and no `keelson-sqlcheck` dependency: the judges
-//! live one layer up, and wiring them in would mean a dev-dependency cycle
-//! (`keelson-core` -> `keelson-psql` -> `keelson-core`) that couples this crate's
-//! test run to another crate's compilation. Every case below is therefore an
-//! expression fragment or a hand-assembled statement checked against the
-//! stand-in dialects directly. The three statement-shaped cases
-//! (`placeholders_are_numbered_left_to_right_across_a_whole_statement` and the two
-//! cross-dialect sub-query cases) are the ones a grammar judge would have added
-//! value to; they are written to be re-checkable by hand against the PostgreSQL
-//! grammar instead.
+//! `keelson-core` has no dialect of its own, so rendering here goes through
+//! [`PgLike`] from `keelson-sqlcheck` — `$N` and `"id"`, close enough to
+//! PostgreSQL that libpg_query and (under `--features live-docker`) a real
+//! PostgreSQL 17 can judge the result. Anything that is or can be phrased as a
+//! whole statement therefore goes through [`assert_stmt`] or [`assert_frag`],
+//! which put the grammar and the engine in front of the string comparison.
+//!
+//! Three kinds of case stay a bare `assert_eq!`, and say so where they are:
+//!
+//! - **A template scan.** `\?` handling operates on arbitrary text; `a\?b?c` is
+//!   not SQL and pretending otherwise would test the frame instead.
+//! - **A deliberately foreign dialect.** The cross-dialect sub-query cases render
+//!   MySQL backticks or SQLite `:name` *inside* a `$N` statement — that is the
+//!   property under test, and no single parser accepts it.
+//! - **A fragment with no legal home.** `"data" ? 'key'` needs a jsonb column the
+//!   shared schema has not got, and `$1 ARRAY[…] @> ARRAY[$2] $3` — three
+//!   placeholders with an operator between two of them — is a deliberate soup that
+//!   no position accepts.
+//!
+//! Every name in a judged case comes from `tests/schema/psql.sql` — `users`,
+//! `posts`, `comments`, `tags`, `post_tags` — because an engine resolves names.
 
 use keelson_core::expr::{Chain, Expr, IntoExpr, RawArg, arg, arg_group, f, quote};
 use keelson_core::testing::{Numbered, Positional, TestDialect};
@@ -33,10 +44,12 @@ use keelson_core::{
     Dialect, DynExpr, Error, Expression, Query, QueryType, SqlWriter, Value, build, build_from,
     dyn_expr,
 };
+use keelson_sqlcheck::testing::{PgLike, assert_frag, assert_stmt};
 
-/// Render under the `$N` dialect — the one that shows a numbering bug.
+/// Render under the `$N` dialect — the one that shows a numbering bug, and the one
+/// the psql judges understand.
 fn pg(e: &Expr) -> (String, Vec<Value>) {
-    build(&Numbered, e).expect("render")
+    build(&PgLike, e).expect("render")
 }
 
 /// Render and take the SQL only.
@@ -52,20 +65,30 @@ fn parts(d: &dyn Dialect, e: &Expr) -> (String, Vec<Value>, Option<Error>) {
     w.into_parts()
 }
 
+/// Where a fragment of each shape is legal. A lone placeholder is fine in a select
+/// list — PostgreSQL resolves a parameter it has nothing else to go on to `text` —
+/// but an operator whose *every* operand is one cannot be resolved at all, which is
+/// why one or two frames below supply a `CAST`.
+const COND: &str = r#"SELECT "id" FROM users WHERE {}"#;
+const POST_VALUE: &str = "SELECT {} FROM posts";
+const TAIL: &str = r#"SELECT "id" FROM users {}"#;
+
 fn text(s: &str) -> Value {
     Value::Text(s.to_owned())
 }
 
-/// `"tags" @> $n` — a dialect-specific operator, as a dialect crate would write
-/// one: an ordinary `Expression` that reaches core through `Expr::Custom`.
+/// `ARRAY['rust'] @> ARRAY[$n]` — a dialect-specific operator, as a dialect crate
+/// would write one: an ordinary `Expression` that reaches core through
+/// `Expr::Custom`. Array literals rather than a column, because `@>` needs an
+/// operand type the shared schema does not have a column of.
 #[derive(Debug, Clone)]
 struct Contains(Value);
 
 impl Expression for Contains {
     fn write_sql(&self, w: &mut SqlWriter<'_>) {
-        w.push_quoted(&["tags"]);
-        w.push_str(" @> ");
+        w.push_str("ARRAY['rust'] @> ARRAY[");
         w.push_arg(self.0.clone());
+        w.push_str("]");
     }
 }
 
@@ -91,7 +114,7 @@ fn raw_sql_never_has_its_question_marks_rewritten() {
 #[test]
 fn a_question_mark_inside_a_string_literal_in_a_template_is_a_hole() {
     let e = Expr::template("a = '?' AND b = ?", [RawArg::value(1i32)]);
-    let err = build(&Numbered, &e).unwrap_err();
+    let err = build(&PgLike, &e).unwrap_err();
     assert_eq!(
         err.to_string(),
         "Bad Statement: has 2 placeholders but 1 args: a = '?' AND b = ?"
@@ -134,7 +157,7 @@ fn a_question_mark_in_a_literal_node_is_never_scanned() {
 
 /// On a `?`-placeholder dialect the escaped `?` and the bound argument are
 /// indistinguishable in the SQL — the argument list is the only thing that says
-/// which is which. This is exactly why the numbering cases below use `Numbered`.
+/// which is which. This is exactly why the numbering cases below use `PgLike`.
 #[test]
 fn on_a_positional_dialect_a_literal_and_a_placeholder_look_identical() {
     // Two escapes and two holes, alternating: `a ? $1 AND b ? $2` in intent.
@@ -272,8 +295,15 @@ fn core_escapes_nothing_except_a_template_question_mark() {
 /// because it is a footgun that a future "helpful" change might try to fix.
 #[test]
 fn a_template_is_never_parenthesised_by_its_surroundings() {
-    let e = keelson_core::expr::not(Expr::template("a = ? OR b", [RawArg::value(1i32)]));
-    assert_eq!(pg_sql(&e), "NOT a = $1 OR b");
+    let e = keelson_core::expr::not(Expr::template(
+        "age = ? OR is_active",
+        [RawArg::value(1i32)],
+    ));
+    // Judged, and the judge is the point: this parses, and it does not mean what
+    // the `NOT` looks like it means — `NOT age = $1 OR is_active` is
+    // `(NOT age = $1) OR is_active`, because the template is atomic and keeps the
+    // author's precedence, parentheses and all.
+    assert_frag(COND, &e, "NOT age = $1 OR is_active");
 }
 
 // ---------------------------------------------------------------------------
@@ -281,12 +311,13 @@ fn a_template_is_never_parenthesised_by_its_surroundings() {
 // ---------------------------------------------------------------------------
 
 /// Select-list position, with an alias. `Chain::as_` is documented as *not*
-/// parenthesising, because `($1 AS "one")` is a syntax error in a select list.
+/// parenthesising, because `($1 AS "one")` is a syntax error in a select list — so
+/// the judge is what distinguishes this from the shape a "helpful" parenthesis
+/// would produce.
 #[test]
 fn a_placeholder_in_the_select_list_with_an_alias() {
     let e = arg(1i32).as_("one");
-    let (sql, args) = pg(&e);
-    assert_eq!(sql, r#"$1 AS "one""#);
+    let args = assert_frag("SELECT {} FROM users", &e, r#"$1 AS "one""#);
     assert_eq!(args, vec![Value::I32(1)]);
 }
 
@@ -294,8 +325,7 @@ fn a_placeholder_in_the_select_list_with_an_alias() {
 #[test]
 fn a_placeholder_as_a_function_argument() {
     let e = Expr::func("coalesce", (quote("title"), arg("untitled")));
-    let (sql, args) = pg(&e);
-    assert_eq!(sql, r#"coalesce("title", $1)"#);
+    let args = assert_frag(POST_VALUE, &e, r#"coalesce("title", $1)"#);
     assert_eq!(args, vec![text("untitled")]);
 }
 
@@ -304,8 +334,7 @@ fn a_placeholder_as_a_function_argument() {
 #[test]
 fn placeholders_as_an_in_list() {
     let e = quote("id").in_(Expr::args([1i32, 2, 3]));
-    let (sql, args) = pg(&e);
-    assert_eq!(sql, r#"("id" IN ($1, $2, $3))"#);
+    let args = assert_frag(COND, &e, r#"("id" IN ($1, $2, $3))"#);
     assert_eq!(args, vec![Value::I32(1), Value::I32(2), Value::I32(3)]);
 }
 
@@ -313,8 +342,7 @@ fn placeholders_as_an_in_list() {
 #[test]
 fn placeholders_on_both_sides_of_between() {
     let e = quote("age").between(arg(18i32), arg(65i32));
-    let (sql, args) = pg(&e);
-    assert_eq!(sql, r#"("age" BETWEEN $1 AND $2)"#);
+    let args = assert_frag(COND, &e, r#"("age" BETWEEN $1 AND $2)"#);
     assert_eq!(args, vec![Value::I32(18), Value::I32(65)]);
 }
 
@@ -327,10 +355,12 @@ fn placeholders_in_every_slot_of_a_case() {
         .when(quote("status").eq(arg("new")), arg(1i32))
         .when(quote("status").eq(arg("old")), arg(2i32))
         .else_(arg(0i32));
-    let (sql, args) = pg(&e);
-    assert_eq!(
-        sql,
-        r#"(CASE WHEN ("status" = $1) THEN $2 WHEN ("status" = $3) THEN $4 ELSE $5 END)"#
+    // The cast is the frame's: every result is a placeholder, so the CASE has no
+    // branch of known type for PostgreSQL to infer one from.
+    let args = assert_frag(
+        "SELECT CAST({} AS integer) FROM posts",
+        &e,
+        r#"(CASE WHEN ("status" = $1) THEN $2 WHEN ("status" = $3) THEN $4 ELSE $5 END)"#,
     );
     assert_eq!(
         args,
@@ -348,8 +378,7 @@ fn placeholders_in_every_slot_of_a_case() {
 #[test]
 fn a_placeholder_as_a_cast_operand() {
     let e = Expr::cast(arg("2026-07-30"), "date");
-    let (sql, args) = pg(&e);
-    assert_eq!(sql, "CAST($1 AS date)");
+    let args = assert_frag("SELECT {} FROM users", &e, "CAST($1 AS date)");
     assert_eq!(args, vec![text("2026-07-30")]);
 }
 
@@ -363,13 +392,11 @@ fn placeholders_in_the_limit_and_offset_slots() {
         Expr::raw("OFFSET"),
         arg(20i64),
     ));
-    let (sql, args) = pg(&bound);
-    assert_eq!(sql, "LIMIT $1 OFFSET $2");
+    let args = assert_frag(TAIL, &bound, "LIMIT $1 OFFSET $2");
     assert_eq!(args, vec![Value::I64(10), Value::I64(20)]);
 
     let literal = Expr::join((Expr::raw("LIMIT"), 10i64.into_expr()));
-    assert_eq!(pg_sql(&literal), "LIMIT 10");
-    assert!(pg(&literal).1.is_empty());
+    assert!(assert_frag(TAIL, &literal, "LIMIT 10").is_empty());
 }
 
 /// A multi-row `VALUES` tail. Two rows of two is the shape where a
@@ -378,8 +405,11 @@ fn placeholders_in_the_limit_and_offset_slots() {
 #[test]
 fn placeholders_in_several_value_rows_stay_in_row_order() {
     let e = Expr::join_with(", ", (arg_group(["a", "b"]), arg_group(["c", "d"])));
-    let (sql, args) = pg(&e);
-    assert_eq!(sql, "($1, $2), ($3, $4)");
+    let args = assert_frag(
+        r#"INSERT INTO tags ("id", "name") VALUES {}"#,
+        &e,
+        "($1, $2), ($3, $4)",
+    );
     assert_eq!(args, vec![text("a"), text("b"), text("c"), text("d")]);
 }
 
@@ -389,13 +419,21 @@ fn placeholders_in_several_value_rows_stay_in_row_order() {
 /// `IN ()` is a syntax error.
 #[test]
 fn an_empty_placeholder_list_renders_null_rather_than_nothing() {
-    assert_eq!(pg_sql(&keelson_core::expr::placeholders(0)), "NULL");
-    let (sql, args) = pg(&arg_group(Vec::<i32>::new()));
-    assert_eq!(sql, "(NULL)");
+    assert_frag(
+        "SELECT {} FROM users",
+        &keelson_core::expr::placeholders(0),
+        "NULL",
+    );
+    let args = assert_frag(
+        r#"SELECT "id" FROM users WHERE "id" IN {}"#,
+        &arg_group(Vec::<i32>::new()),
+        "(NULL)",
+    );
     assert!(args.is_empty());
-    assert_eq!(
-        pg_sql(&quote("id").in_(Expr::args(Vec::<i32>::new()))),
-        r#"("id" IN (NULL))"#
+    assert_frag(
+        COND,
+        &quote("id").in_(Expr::args(Vec::<i32>::new())),
+        r#"("id" IN (NULL))"#,
     );
 }
 
@@ -404,8 +442,7 @@ fn an_empty_placeholder_list_renders_null_rather_than_nothing() {
 #[test]
 fn a_placeholder_on_the_left_of_an_operator() {
     let e = arg(1i32).eq(quote("id"));
-    let (sql, args) = pg(&e);
-    assert_eq!(sql, r#"($1 = "id")"#);
+    let args = assert_frag(COND, &e, r#"($1 = "id")"#);
     assert_eq!(args, vec![Value::I32(1)]);
 }
 
@@ -414,15 +451,24 @@ fn a_placeholder_on_the_left_of_an_operator() {
 #[test]
 fn a_placeholder_inside_a_windowed_function_call() {
     let e = f("lag", (quote("views"), arg(1i32))).over(Expr::raw("\"w\""));
-    let (sql, args) = pg(&e);
-    assert_eq!(sql, r#"lag("views", $1) OVER ("w")"#);
+    let args = assert_frag(
+        r#"SELECT {} FROM posts WINDOW "w" AS ()"#,
+        &e,
+        r#"lag("views", $1) OVER ("w")"#,
+    );
     assert_eq!(args, vec![Value::I32(1)]);
 }
 
 /// Every clause of a statement at once. Assembled by hand out of fragments —
 /// core has no query builder — so what it pins is strictly the left-to-right
 /// numbering across positions, which is the property a clause layer must not
-/// break. The SQL is valid PostgreSQL against the shared test schema.
+/// break.
+///
+/// It is a whole statement, so the claim that it is "valid PostgreSQL against the
+/// shared test schema" is now checked rather than asserted: a placeholder in the
+/// select list, in `GROUP BY`, in `ORDER BY`, in `HAVING`, in `LIMIT` and in
+/// `OFFSET` all at once is exactly the kind of thing a hand-written expected string
+/// is happy to agree with either way.
 #[test]
 fn placeholders_are_numbered_left_to_right_across_a_whole_statement() {
     let e = Expr::join((
@@ -441,10 +487,12 @@ fn placeholders_are_numbered_left_to_right_across_a_whole_statement() {
         Expr::raw("OFFSET"),
         arg(20i64),
     ));
-    let (sql, args) = pg(&e);
-    assert_eq!(
-        sql,
-        r#"SELECT $1 AS "tag" , count(*) FROM posts WHERE ("title" LIKE $2) GROUP BY $3 HAVING count(*) > $4 ORDER BY $5 LIMIT $6 OFFSET $7"#
+    let args = assert_stmt(
+        &e,
+        concat!(
+            r#"SELECT $1 AS "tag" , count(*) FROM posts WHERE ("title" LIKE $2) "#,
+            r#"GROUP BY $3 HAVING count(*) > $4 ORDER BY $5 LIMIT $6 OFFSET $7"#
+        ),
     );
     assert_eq!(args.len(), 7);
     assert_eq!(
@@ -462,6 +510,31 @@ fn placeholders_are_numbered_left_to_right_across_a_whole_statement() {
     );
 }
 
+/// The two stand-in dialects have to write the same SQL, because the in-module
+/// tests in `src/**` render with `keelson_core::testing::Numbered` and judge the
+/// string with `keelson_sqlcheck::testing::assert_frag_sql` — they cannot name
+/// `PgLike`, since the unit-test target compiles this crate a second time and the
+/// `Expression` bound would not hold. That indirection is only sound while the two
+/// agree, so this is where it is checked. An integration test can see both.
+#[test]
+fn numbered_and_pg_like_render_the_same_sql() {
+    let cases = [
+        Expr::join((Expr::raw("SELECT"), arg(1i32), Expr::raw("FROM users"))),
+        quote(("users", "age")).between(arg(18i32), arg(65i32)),
+        Expr::args((1..=12i32).collect::<Vec<_>>()),
+        Expr::template("f(?, \\?, ?)", [RawArg::value(1i32), RawArg::value(2i32)]),
+        Expr::cast(arg("2026-07-30"), "date"),
+    ];
+    for e in cases {
+        assert_eq!(
+            build(&Numbered, &e).expect("render"),
+            build(&PgLike, &e).expect("render"),
+            "the two stand-in dialects disagree, which invalidates every \
+             assert_frag_sql in src/**: {e:?}"
+        );
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Numbering across the raw/built boundary
 // ---------------------------------------------------------------------------
@@ -473,15 +546,18 @@ fn placeholders_are_numbered_left_to_right_across_a_whole_statement() {
 fn a_built_expression_spliced_into_a_template_consumes_as_many_positions_as_it_binds() {
     let inner = quote("age").between(arg(18i32), arg(65i32));
     let e = Expr::template(
-        "a = ? AND ? AND b = ?",
+        "id = ? AND ? AND id <> ?",
         [
             RawArg::value(1i32),
             RawArg::expr(inner),
             RawArg::value(2i32),
         ],
     );
-    let (sql, args) = pg(&e);
-    assert_eq!(sql, r#"a = $1 AND ("age" BETWEEN $2 AND $3) AND b = $4"#);
+    let args = assert_frag(
+        COND,
+        &e,
+        r#"id = $1 AND ("age" BETWEEN $2 AND $3) AND id <> $4"#,
+    );
     assert_eq!(
         args,
         vec![Value::I32(1), Value::I32(18), Value::I32(65), Value::I32(2)]
@@ -517,13 +593,19 @@ fn a_template_inside_a_built_expression_continues_the_numbering() {
     let e = Expr::join_with(
         " AND ",
         (
-            quote("a").eq(arg(1i32)),
-            Expr::template("f(?, ?)", [RawArg::value(2i32), RawArg::value(3i32)]),
-            quote("b").eq(arg(4i32)),
+            quote("age").eq(arg(1i32)),
+            Expr::template(
+                r#"coalesce("id", ?) = ?"#,
+                [RawArg::value(2i32), RawArg::value(3i32)],
+            ),
+            quote("id").eq(arg(4i32)),
         ),
     );
-    let (sql, args) = pg(&e);
-    assert_eq!(sql, r#"("a" = $1) AND f($2, $3) AND ("b" = $4)"#);
+    let args = assert_frag(
+        COND,
+        &e,
+        r#"("age" = $1) AND coalesce("id", $2) = $3 AND ("id" = $4)"#,
+    );
     assert_eq!(
         args,
         vec![Value::I32(1), Value::I32(2), Value::I32(3), Value::I32(4)]
@@ -536,7 +618,10 @@ fn a_template_inside_a_built_expression_continues_the_numbering() {
 fn a_custom_expression_shares_the_placeholder_counter() {
     let e = Expr::join((arg(1i32), Expr::custom(Contains(text("rust"))), arg(2i32)));
     let (sql, args) = pg(&e);
-    assert_eq!(sql, r#"$1 "tags" @> $2 $3"#);
+    // Not judged: three placeholders in a row with an operator between two of them
+    // is a deliberate soup, not a fragment any statement position accepts. What it
+    // pins is that `Custom` draws from the same counter.
+    assert_eq!(sql, r#"$1 ARRAY['rust'] @> ARRAY[$2] $3"#);
     assert_eq!(args, vec![Value::I32(1), text("rust"), Value::I32(2)]);
 }
 
@@ -551,7 +636,8 @@ fn built_template_and_custom_nest_three_deep_with_one_counter() {
     );
     let e = Expr::binary(arg(0i32), "AND", tpl);
     let (sql, args) = pg(&e);
-    assert_eq!(sql, r#"$1 AND ("tags" @> $2 OR $3)"#);
+    // Not judged, for the same reason: `$1 AND (…)` has nothing to type `$1` from.
+    assert_eq!(sql, r#"$1 AND (ARRAY['rust'] @> ARRAY[$2] OR $3)"#);
     assert_eq!(args, vec![Value::I32(0), text("rust"), text("fallback")]);
 }
 
@@ -564,7 +650,7 @@ fn build_from_offsets_a_templates_holes() {
         "a = ? AND b = ?",
         [RawArg::value(1i32), RawArg::value(2i32)],
     );
-    let (sql, args) = build_from(&Numbered, 5, &e).expect("render");
+    let (sql, args) = build_from(&PgLike, 5, &e).expect("render");
     assert_eq!(sql, "a = $5 AND b = $6");
     assert_eq!(
         args,
@@ -596,8 +682,11 @@ fn a_positional_dialect_hides_the_numbering_so_the_arg_order_is_the_contract() {
 #[test]
 fn positions_past_nine_are_written_as_one_token() {
     let e = Expr::args((1..=12i32).collect::<Vec<_>>());
-    let (sql, args) = pg(&e);
-    assert_eq!(sql, "$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12");
+    let args = assert_frag(
+        r#"SELECT "id" FROM users WHERE "id" IN ({})"#,
+        &e,
+        "$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12",
+    );
     assert_eq!(args.len(), 12);
     assert_eq!(args[9], Value::I32(10));
 }
@@ -624,7 +713,7 @@ fn a_template_with_more_than_nine_holes_numbers_them_all() {
 #[test]
 fn fewer_args_than_holes_binds_null_and_keeps_the_later_positions() {
     let e = Expr::template("a = ? AND b = ? AND c = ?", [RawArg::value(1i32)]);
-    let (sql, args, err) = parts(&Numbered, &e);
+    let (sql, args, err) = parts(&PgLike, &e);
     assert_eq!(sql, "a = $1 AND b = $2 AND c = $3");
     assert_eq!(args, vec![Value::I32(1), Value::Null, Value::Null]);
     assert_eq!(
@@ -638,7 +727,7 @@ fn fewer_args_than_holes_binds_null_and_keeps_the_later_positions() {
 #[test]
 fn more_args_than_holes_leaves_the_surplus_unbound() {
     let e = Expr::template("a = ?", [RawArg::value(1i32), RawArg::value(2i32)]);
-    let (sql, args, err) = parts(&Numbered, &e);
+    let (sql, args, err) = parts(&PgLike, &e);
     assert_eq!(sql, "a = $1");
     assert_eq!(args, vec![Value::I32(1)]);
     assert_eq!(
@@ -651,7 +740,7 @@ fn more_args_than_holes_leaves_the_surplus_unbound() {
 #[test]
 fn arguments_with_no_holes_at_all_are_a_mismatch() {
     let e = Expr::template("SELECT 1", [RawArg::value(1i32)]);
-    let err = build(&Numbered, &e).unwrap_err();
+    let err = build(&PgLike, &e).unwrap_err();
     assert!(matches!(
         err,
         Error::RawArgCount {
@@ -674,7 +763,7 @@ fn an_escaped_question_mark_does_not_count_towards_the_total() {
     assert_eq!(pg_sql(&ok), "a ? b");
 
     let not_ok = Expr::template(r"a \? b", [RawArg::value(1i32)]);
-    let err = build(&Numbered, &not_ok).unwrap_err();
+    let err = build(&PgLike, &not_ok).unwrap_err();
     assert_eq!(
         err.to_string(),
         r"Bad Statement: has 0 placeholders but 1 args: a \? b"
@@ -686,7 +775,7 @@ fn an_escaped_question_mark_does_not_count_towards_the_total() {
 #[test]
 fn a_mismatch_inside_a_larger_expression_names_the_fragment() {
     let e = Expr::join((arg(1i32), Expr::template("f(?)", [])));
-    let err = build(&Numbered, &e).unwrap_err();
+    let err = build(&PgLike, &e).unwrap_err();
     assert_eq!(
         err.to_string(),
         "Bad Statement: has 1 placeholders but 0 args: f(?)"
@@ -698,7 +787,7 @@ fn a_mismatch_inside_a_larger_expression_names_the_fragment() {
 #[test]
 fn two_mismatches_surface_as_the_first_one_only() {
     let e = Expr::join((Expr::template("f(?)", []), Expr::template("g(?, ?)", [])));
-    let err = build(&Numbered, &e).unwrap_err();
+    let err = build(&PgLike, &e).unwrap_err();
     assert_eq!(
         err.to_string(),
         "Bad Statement: has 1 placeholders but 0 args: f(?)"
@@ -741,14 +830,14 @@ fn a_dialect_without_named_arguments_reports_it_once_from_build() {
 
     // Rendering is infallible, so the partial SQL is still there: neither named
     // argument wrote anything, and the separator remains.
-    let (sql, args, err) = parts(&Numbered, &e);
+    let (sql, args, err) = parts(&PgLike, &e);
     assert_eq!(sql, " ");
     assert!(args.is_empty());
     assert!(matches!(err, Some(Error::NoNamedArgs)));
 
     // `build` is the one place it becomes a `Result`, and a `Result` carries
     // exactly one error however many were recorded.
-    assert!(matches!(build(&Numbered, &e), Err(Error::NoNamedArgs)));
+    assert!(matches!(build(&PgLike, &e), Err(Error::NoNamedArgs)));
     assert!(matches!(build(&Positional, &e), Err(Error::NoNamedArgs)));
 }
 
@@ -759,13 +848,13 @@ fn a_dialect_without_named_arguments_reports_it_once_from_build() {
 #[test]
 fn the_named_arg_failure_wins_over_the_mismatch_it_causes() {
     let e = Expr::template("a = ? AND b = ?", [RawArg::named("a")]);
-    let (sql, args, err) = parts(&Numbered, &e);
+    let (sql, args, err) = parts(&PgLike, &e);
     // Nothing was written for the named hole; the second hole is short of an
     // argument and binds NULL at position 1.
     assert_eq!(sql, "a =  AND b = $1");
     assert_eq!(args, vec![Value::Null]);
     assert!(matches!(err, Some(Error::NoNamedArgs)));
-    assert!(matches!(build(&Numbered, &e), Err(Error::NoNamedArgs)));
+    assert!(matches!(build(&PgLike, &e), Err(Error::NoNamedArgs)));
 }
 
 /// A named argument buried in a built tree fails the same way — there is no depth
@@ -776,7 +865,7 @@ fn a_named_argument_nested_deep_still_fails_the_build() {
         arg(1i32),
         Expr::named_arg("deep"),
     ))));
-    assert!(matches!(build(&Numbered, &e), Err(Error::NoNamedArgs)));
+    assert!(matches!(build(&PgLike, &e), Err(Error::NoNamedArgs)));
     // And renders on a dialect that has the syntax.
     let (sql, args) = build(&TestDialect, &e).expect("render");
     assert_eq!(sql, r#"("a" = (?1 :deep))"#);
@@ -817,8 +906,7 @@ fn a_dyn_expr_converts_into_custom_and_renders() {
     let erased: DynExpr = dyn_expr(Contains(text("rust")));
     let e = erased.into_expr();
     assert!(matches!(e, Expr::Custom(_)));
-    let (sql, args) = pg(&e);
-    assert_eq!(sql, r#""tags" @> $1"#);
+    let args = assert_frag(COND, &e, "ARRAY['rust'] @> ARRAY[$1]");
     assert_eq!(args, vec![text("rust")]);
 }
 
@@ -837,11 +925,11 @@ fn a_template_inside_custom_is_still_rewritten_by_the_outer_dialect() {
 #[test]
 fn a_failure_inside_custom_propagates() {
     let e = Expr::custom(Expr::named_arg("x"));
-    assert!(matches!(build(&Numbered, &e), Err(Error::NoNamedArgs)));
+    assert!(matches!(build(&PgLike, &e), Err(Error::NoNamedArgs)));
 
     let mismatch = Expr::custom(Expr::template("f(?)", []));
     assert!(matches!(
-        build(&Numbered, &mismatch),
+        build(&PgLike, &mismatch),
         Err(Error::RawArgCount { .. })
     ));
 }
@@ -1009,7 +1097,7 @@ fn a_failure_under_the_inner_dialect_surfaces_from_the_outer_build() {
 
         // `$N`, and no named arguments.
         fn dialect(&self) -> &dyn Dialect {
-            &Numbered
+            &PgLike
         }
     }
 
