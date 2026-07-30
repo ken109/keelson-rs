@@ -1,0 +1,25 @@
+[package]
+name = "keelson-mysql"
+description = "The MySQL dialect for keelson."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[features]
+# Adds the containerised MySQL 8.4 engine to the test judge. `cargo test` on its
+# own runs only the `sqlparser` grammar tier, which for MySQL is advisory: it
+# accepts PostgreSQL-only syntax and rejects valid multi-table `UPDATE a, b SET`.
+# The server is the only trustworthy judge for this dialect, so run it.
+live-docker = ["keelson-sqlcheck/live-docker"]
+
+[dependencies]
+keelson-core.workspace = true
+
+[dev-dependencies]
+keelson-sqlcheck = { workspace = true, features = ["live"] }
+
+[lints]
+workspace = true
