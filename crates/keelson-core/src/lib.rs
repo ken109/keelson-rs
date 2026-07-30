@@ -77,6 +77,19 @@ pub use error::{Error, Result};
 pub use mods::{BuildMod, Mod, ModFn, mod_fn};
 pub use query::{Query, QueryExtensions, QueryType};
 pub use value::{CustomValue, FromValue, ToValue, Value, from_value_array};
+
+/// The derive macros, re-exported behind the `macros` feature.
+///
+/// [`Bind`](macro@Bind) writes the [`ToValue`]/[`FromValue`] pair for a
+/// newtype — the bound a keelson-gen column override must satisfy.
+/// [`FromRow`](macro@FromRow) maps a result row onto a struct; the trait it
+/// implements lives in keelson-exec, which any user of it already depends on.
+/// Both are documented in the keelson-macros crate.
+///
+/// `keelson_core::Bind` is the derive, `keelson_exec::Bind` the trait: two
+/// namespaces, so importing both is fine.
+#[cfg(feature = "macros")]
+pub use keelson_macros::{Bind, FromRow};
 pub use writer::{DynExpr, ExprFn, Expression, SqlWriter, build, build_from, dyn_expr, expr_fn};
 
 /// Stand-in dialects for tests. See [`dialect::testing`].

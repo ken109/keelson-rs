@@ -1,0 +1,23 @@
+error: `#[derive(FromRow)]` matches fields to columns by name, and `Pair` has unnamed fields. Give them names, or drop the struct: tuples of arity 2 already implement `FromRow` positionally, so `fetch_all::<(i64, String)>` reads the same row
+ --> tests/compile_fail/from_row_shape.rs:8:12
+  |
+8 | struct Pair(i64, String);
+  |            ^^^^^^^^^^^^^
+
+error: `#[derive(FromRow)]` needs fields to map columns onto, and `Nothing` has none. A mapper that reads nothing from the row would hide a `SELECT` returning columns nobody looks at
+  --> tests/compile_fail/from_row_shape.rs:12:8
+   |
+12 | struct Nothing;
+   |        ^^^^^^^
+
+error: `#[derive(FromRow)]` maps a row onto a struct with named fields, and `Event` is an enum. Which variant a row is depends on a discriminator only you can name, so read that column first and build the variant in a hand-written `impl keelson_exec::FromRow for Event`
+  --> tests/compile_fail/from_row_shape.rs:16:6
+   |
+16 | enum Event {
+   |      ^^^^^
+
+error: `#[derive(FromRow)]` cannot map onto a borrowed struct, and `Borrowed` has the lifetime parameter `'a`. A row is decoded into owned `Value`s and every field is taken out of it by value, so a field borrowing from the row could not outlive the mapping. Own the fields (`String`, `Vec<u8>`, …)
+  --> tests/compile_fail/from_row_shape.rs:23:17
+   |
+23 | struct Borrowed<'a> {
+   |                 ^^

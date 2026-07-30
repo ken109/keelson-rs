@@ -1,0 +1,71 @@
+error: unknown keelson option `renmae`. `#[derive(FromRow)]` understands `rename = "column"` and `flatten` on a field, and nothing on the struct itself
+ --> tests/compile_fail/from_row_options.rs:8:15
+  |
+8 |     #[keelson(renmae = "id")]
+  |               ^^^^^^
+
+error: `prefix` is not supported. Stripping a prefix means rebuilding the row under different column names, and the failure a user then sees names the stripped column ("no column \"id\"") rather than the real one ("author_id") — a worse error than the one it saves. Use `#[keelson(flatten)]` with a nested struct whose fields carry `#[keelson(rename = "author_id")]`, which reads the same row and reports real column names
+  --> tests/compile_fail/from_row_options.rs:16:24
+   |
+16 |     #[keelson(flatten, prefix = "author_")]
+   |                        ^^^^^^
+
+error: `rename` names one column and `flatten` reads many, so a field cannot have both. Drop `rename` here, and put it on the fields of the flattened struct if their names differ from the columns
+  --> tests/compile_fail/from_row_options.rs:28:15
+   |
+28 |     #[keelson(rename = "author_id", flatten)]
+   |               ^^^^^^
+
+error: `flatten` is here
+  --> tests/compile_fail/from_row_options.rs:28:37
+   |
+28 |     #[keelson(rename = "author_id", flatten)]
+   |                                     ^^^^^^^
+
+error: `rename` cannot be empty — no result set has a column with no name. Drop the attribute to read the column named after the field
+  --> tests/compile_fail/from_row_options.rs:34:24
+   |
+34 |     #[keelson(rename = "")]
+   |                        ^^
+
+error: `rename` takes a string literal — the column name as the database spells it, e.g. `#[keelson(rename = "user_id")]`
+  --> tests/compile_fail/from_row_options.rs:40:24
+   |
+40 |     #[keelson(rename = 3)]
+   |                        ^
+
+error: `rename` needs the column name to read: `#[keelson(rename = "user_id")]`
+  --> tests/compile_fail/from_row_options.rs:46:15
+   |
+46 |     #[keelson(rename)]
+   |               ^^^^^^
+
+error: `flatten` takes no value — it reads the field's own type out of the same row. Write `#[keelson(flatten)]`
+  --> tests/compile_fail/from_row_options.rs:52:15
+   |
+52 |     #[keelson(flatten = "author")]
+   |               ^^^^^^^
+
+error: `rename` is given twice on this field; keep one
+  --> tests/compile_fail/from_row_options.rs:59:15
+   |
+59 |     #[keelson(rename = "b")]
+   |               ^^^^^^
+
+error: the first `rename` is here
+  --> tests/compile_fail/from_row_options.rs:58:15
+   |
+58 |     #[keelson(rename = "a")]
+   |               ^^^^^^
+
+error: expected a list of options: `#[keelson(...)]`, e.g. `#[keelson(rename = "user_id")]`
+  --> tests/compile_fail/from_row_options.rs:65:5
+   |
+65 |     #[keelson = "id"]
+   |     ^^^^^^^^^^^^^^^^^
+
+error: `#[derive(FromRow)]` takes no options on the struct itself — `rename` and `flatten` describe one field, so they go on the field
+  --> tests/compile_fail/from_row_options.rs:71:1
+   |
+71 | #[keelson(rename = "accounts")]
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

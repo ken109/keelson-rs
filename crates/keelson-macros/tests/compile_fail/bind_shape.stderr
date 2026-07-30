@@ -1,0 +1,35 @@
+error: `#[derive(Bind)]` binds one column, so it needs exactly one field, and `Point` has 2. Bind each part as its own column — a struct of them is a row, not a value, and `#[derive(FromRow)]` maps that — or, if the parts really are one column, encode them by hand in `impl keelson_core::ToValue for Point` and the matching `FromValue`
+  --> tests/compile_fail/bind_shape.rs:10:5
+   |
+10 |     y: f64,
+   |     ^
+
+error: the first field is here
+ --> tests/compile_fail/bind_shape.rs:9:5
+  |
+9 |     x: f64,
+  |     ^
+
+error: `#[derive(Bind)]` supports single-field newtype structs only, and `Status` is an enum. A column holds one scalar, so an enum first needs a database representation chosen deliberately — text or integer, which spelling per variant, and what an unrecognised value from the database means. Write `impl keelson_core::ToValue for Status` and `impl keelson_core::FromValue for Status` (about ten lines, and the unknown-variant case becomes `keelson_core::Error::type_mismatch`), or derive `Bind` on a newtype over the representation and convert at the edges
+  --> tests/compile_fail/bind_shape.rs:15:6
+   |
+15 | enum Status {
+   |      ^^^^^^
+
+error: `#[derive(Bind)]` needs exactly one field to bind, and `Marker` has none. Give it the value it wraps: `struct Marker(i64);`
+  --> tests/compile_fail/bind_shape.rs:22:8
+   |
+22 | struct Marker;
+   |        ^^^^^^
+
+error: `#[derive(Bind)]` supports single-field newtype structs only, and `Bits` is a union. Reading a union field is unsafe and which field is live is not knowable here, so there is nothing this derive could honestly emit
+  --> tests/compile_fail/bind_shape.rs:26:7
+   |
+26 | union Bits {
+   |       ^^^^
+
+error: `#[derive(Bind)]` cannot bind a borrowed type, and `Name` has the lifetime parameter `'a`. `FromValue` builds an owned value out of a `Value` — the row it came from is gone by then — so a borrowing type could never read back, and the impl this would emit could never apply. Wrap owned data (`String`, `Vec<u8>`, …); no public keelson type carries a lifetime, for the same reason
+  --> tests/compile_fail/bind_shape.rs:35:13
+   |
+35 | struct Name<'a>(&'a str);
+   |             ^^

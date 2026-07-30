@@ -1,0 +1,11 @@
+error: `#[derive(Bind)]` takes no options, so `rename` on the field does nothing. A newtype is a single column: `rename` and `flatten` are `#[derive(FromRow)]` options and belong on a struct that maps a whole row
+ --> tests/compile_fail/bind_options.rs:7:25
+  |
+7 | struct UserId(#[keelson(rename = "user_id")] i64);
+  |                         ^^^^^^
+
+error: `#[derive(Bind)]` takes no options, so `flatten` on the struct does nothing. A newtype is a single column: `rename` and `flatten` are `#[derive(FromRow)]` options and belong on a struct that maps a whole row
+  --> tests/compile_fail/bind_options.rs:10:11
+   |
+10 | #[keelson(flatten)]
+   |           ^^^^^^^

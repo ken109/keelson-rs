@@ -1,0 +1,49 @@
+[package]
+name = "keelson-macros"
+description = "keelson's derive macros: #[derive(Bind)] for newtype column overrides and #[derive(FromRow)] for row mapping."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2.workspace = true
+quote.workspace = true
+# `derive` (the input shapes) plus `parsing`/`printing` (parse the item, print
+# the impls) and `clone-impls` for `Generics` surgery. This crate parses items
+# and types, never expressions or blocks, so it asks for nothing more. `full`
+# still arrives: Cargo unions a workspace dependency's features with the
+# member's rather than letting a member subtract, and keelson-gen needs `full`.
+syn = { workspace = true, default-features = false, features = [
+    "derive",
+    "parsing",
+    "printing",
+    "clone-impls",
+    "proc-macro",
+] }
+
+[dev-dependencies]
+# The derives are proved against the real traits, not a stub: `Bind` emits
+# keelson-core's `ToValue`/`FromValue`, `FromRow` emits keelson-exec's
+# `FromRow`, and the end-to-end test binds a derived newtype through real
+# SQLite. `macros` on keelson-core is the re-export path a user actually takes
+# (`use keelson_core::Bind;`), so testing through it keeps that path honest.
+#
+# keelson-macros -> (dev) keelson-core/macros -> keelson-macros is a cycle
+# through a dev-dependency, the kind Cargo resolves — the same shape
+# keelson-core already uses for keelson-sqlcheck.
+keelson-core = { path = "../keelson-core", features = ["macros", "uuid"] }
+keelson-exec = { path = "../keelson-exec" }
+keelson-sqlite = { path = "../keelson-sqlite" }
+keelson-sqlx = { path = "../keelson-sqlx", features = ["sqlite", "uuid"] }
+uuid.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+trybuild.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,11 @@
+error: two fields read the column "id": `id` and `also_id`. Reading a column consumes it — the value moves out of the row and NULL is left behind — so the second field would always decode NULL. Rename one of them, or read the column once and copy the value after mapping
+  --> tests/compile_fail/from_row_duplicate_column.rs:10:15
+   |
+10 |     #[keelson(rename = "id")]
+   |               ^^^^^^
+
+error: `id` already reads "id"
+ --> tests/compile_fail/from_row_duplicate_column.rs:9:5
+  |
+9 |     id: i64,
+  |     ^^

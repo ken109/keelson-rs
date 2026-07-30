@@ -1,0 +1,89 @@
+error[E0277]: the trait bound `IpAddr: ToValue` is not satisfied
+  --> tests/compile_fail/bind_inner_does_not_bind.rs:19:13
+   |
+19 | struct Host(std::net::IpAddr);
+   |             ^^^^^^^^^^^^^^^^ the trait `ToValue` is not implemented for `IpAddr`
+   |
+   = help: the following other types implement trait `ToValue`:
+             &String
+             &[u8]
+             &str
+             ()
+             Arc<T>
+             Cow<'_, str>
+             Host
+             Option<T>
+           and $N others
+
+error[E0277]: the trait bound `IpAddr: FromValue` is not satisfied
+  --> tests/compile_fail/bind_inner_does_not_bind.rs:19:13
+   |
+19 | struct Host(std::net::IpAddr);
+   |             ^^^^^^^^^^^^^^^^ the trait `FromValue` is not implemented for `IpAddr`
+   |
+   = help: the following other types implement trait `FromValue`:
+             Host
+             Option<T>
+             String
+             Vec<u8>
+             bool
+             f32
+             f64
+             i16
+           and $N others
+
+error[E0277]: the trait bound `Plain: Bind` is not satisfied
+  --> tests/compile_fail/bind_inner_does_not_bind.rs:23:43
+   |
+23 | const _: () = keelson_exec::assert_bind::<Plain>();
+   |                                           ^^^^^ unsatisfied trait bound
+   |
+help: the trait `ToValue` is not implemented for `Plain`
+  --> tests/compile_fail/bind_inner_does_not_bind.rs:21:1
+   |
+21 | struct Plain(std::net::IpAddr);
+   | ^^^^^^^^^^^^
+   = help: the following other types implement trait `ToValue`:
+             &String
+             &[u8]
+             &str
+             ()
+             Arc<T>
+             Cow<'_, str>
+             Host
+             Option<T>
+           and $N others
+   = note: required for `Plain` to implement `Bind`
+note: required by a bound in `assert_bind`
+  --> $WORKSPACE/crates/keelson-exec/src/bind.rs
+   |
+   | pub const fn assert_bind<T: Bind>() {}
+   |                             ^^^^ required by this bound in `assert_bind`
+
+error[E0277]: the trait bound `Plain: Bind` is not satisfied
+  --> tests/compile_fail/bind_inner_does_not_bind.rs:23:43
+   |
+23 | const _: () = keelson_exec::assert_bind::<Plain>();
+   |                                           ^^^^^ unsatisfied trait bound
+   |
+help: the trait `FromValue` is not implemented for `Plain`
+  --> tests/compile_fail/bind_inner_does_not_bind.rs:21:1
+   |
+21 | struct Plain(std::net::IpAddr);
+   | ^^^^^^^^^^^^
+   = help: the following other types implement trait `FromValue`:
+             Host
+             Option<T>
+             String
+             Vec<u8>
+             bool
+             f32
+             f64
+             i16
+           and $N others
+   = note: required for `Plain` to implement `Bind`
+note: required by a bound in `assert_bind`
+  --> $WORKSPACE/crates/keelson-exec/src/bind.rs
+   |
+   | pub const fn assert_bind<T: Bind>() {}
+   |                             ^^^^ required by this bound in `assert_bind`

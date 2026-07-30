@@ -42,7 +42,16 @@ uuid = ["dep:uuid"]
 decimal = ["dep:rust_decimal"]
 json = ["dep:serde_json"]
 
+# The derive macros — `#[derive(Bind)]` for newtype column overrides and
+# `#[derive(FromRow)]` for row mapping. They are re-exported from here, not
+# from keelson-exec, so that `keelson_core::Bind` (the derive) sits next to the
+# `ToValue`/`FromValue` pair it writes; `FromRow`'s trait still lives in
+# keelson-exec, which anything using that derive already depends on. Off by
+# default: without it this crate pulls in no proc-macro toolchain at all.
+macros = ["dep:keelson-macros"]
+
 [dependencies]
+keelson-macros = { workspace = true, optional = true }
 # `Value` serialises as a bare scalar so a built argument list can be compared,
 # logged or shipped as plain JSON. That is the only reason serde is here.
 serde.workspace = true

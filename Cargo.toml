@@ -15,6 +15,7 @@ keelson-core = { path = "crates/keelson-core" }
 keelson-exec = { path = "crates/keelson-exec" }
 keelson-factory = { path = "crates/keelson-factory" }
 keelson-gen = { path = "crates/keelson-gen" }
+keelson-macros = { path = "crates/keelson-macros" }
 keelson-models = { path = "crates/keelson-models" }
 keelson-sqlcheck = { path = "crates/keelson-sqlcheck" }
 keelson-sqlx = { path = "crates/keelson-sqlx" }
