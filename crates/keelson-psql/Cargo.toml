@@ -1,0 +1,19 @@
+[package]
+name = "keelson-psql"
+description = "PostgreSQL dialect for keelson: query structs, query mods and starters."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+keelson-core.workspace = true
+
+[dev-dependencies]
+keelson-golden.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true
