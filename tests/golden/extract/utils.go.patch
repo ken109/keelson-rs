@@ -1,5 +1,5 @@
---- /Users/ken109/go/pkg/mod/github.com/stephenafamo/bob@v0.42.0/test/utils/utils.go	2025-12-27 22:05:59
-+++ /private/tmp/claude-501/-Users-ken109-ghq-github-com-ken109-rig-rs/a7f86215-5300-4cdd-a4e1-f46740c0fa88/scratchpad/bob/test/utils/utils.go	2026-07-30 11:30:31
+--- test/utils/utils.go	(bob v0.42.0)
++++ test/utils/utils.go	(patched for keelson golden extraction)
 @@ -65,10 +65,35 @@
  
  func RunTests(t *testing.T, cases Testcases, format FormatFunc) {

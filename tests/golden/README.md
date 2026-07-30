@@ -1,9 +1,15 @@
 # Golden tests extracted from Go's `bob`
 
-These fixtures pin the SQL that this library must produce. They are extracted by
-running the test suite of [`bob`](https://github.com/stephenafamo/bob) — the Go
-library this project is a Rust counterpart to — and capturing the SQL it actually
-generates for each of its test cases.
+These fixtures are a correctness oracle. They are extracted by running the test
+suite of [`bob`](https://github.com/stephenafamo/bob) — the Go library keelson is
+inspired by — and capturing the SQL it actually generates for each of its test
+cases. bob's SQL is spec-correct and battle-tested, so matching it is strong
+evidence that we are correct too.
+
+They are *not* a specification of keelson's API, internals, or formatting.
+keelson is a Rust-native design, not a transliteration, and where bob's output is
+needlessly verbose we are free to emit something tidier — see
+[Deliberate deviations](#deliberate-deviations).
 
 Extracted from **bob v0.42.0**. 80 cases: 3 dialects × 4 statement types, plus
 standalone expression cases.
@@ -50,6 +56,19 @@ The other two are not suitable as the comparison target:
   to `status` and `LEAD` to `lead`, so quoting and casing bugs would slip through.
   Keep it only as a secondary semantic sanity check.
 
+## Deliberate deviations
+
+Emitting different SQL from bob is allowed when ours is genuinely better — dropping
+a redundant pair of parentheses, for instance. It is never allowed to differ in
+meaning. Tidier, yes; different, no.
+
+When a case deviates, record it in `deviations.md` alongside this file with the
+case name, what bob emits, what keelson emits, and why ours is better, then assert
+keelson's string in the test with a comment pointing at that entry. A deviation
+that cannot be justified in one sentence is a bug in the builder, not an
+improvement — and bending the assertion instead of writing the entry defeats the
+whole point of having an oracle.
+
 ## Regenerating
 
 The extractor patches bob's own test harness (`test/utils`) to append each case to
@@ -65,7 +84,7 @@ cp <this-dir>/extract/golden.go test/utils/golden.go
 patch -p0 test/utils/utils.go < <this-dir>/extract/utils.go.patch
 
 # 3. run the dialect tests with the output path set
-RIG_GOLDEN_OUT=/tmp/golden.jsonl go test ./dialect/... ./expr/... .
+KEELSON_GOLDEN_OUT=/tmp/golden.jsonl go test ./dialect/... ./expr/... .
 ```
 
 Cases are emitted whether or not the assertion passes, so a failing upstream test

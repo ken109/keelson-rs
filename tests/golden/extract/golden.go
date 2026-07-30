@@ -1,8 +1,8 @@
 package testutils
 
-// Golden test extraction for the rig-rs port.
-// Enabled by setting RIG_GOLDEN_OUT to a file path; each test case is appended
-// as one JSON object per line (JSONL).
+// Golden test extraction for keelson.
+// Enabled by setting KEELSON_GOLDEN_OUT to a file path; each test case is
+// appended as one JSON object per line (JSONL).
 
 import (
 	"encoding/json"
@@ -57,7 +57,7 @@ func goldenOut() *os.File {
 		return goldenFile
 	}
 
-	path := os.Getenv("RIG_GOLDEN_OUT")
+	path := os.Getenv("KEELSON_GOLDEN_OUT")
 	if path == "" {
 		return nil
 	}
