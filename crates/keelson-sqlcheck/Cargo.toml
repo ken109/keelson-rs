@@ -13,15 +13,18 @@ authors.workspace = true
 # Validate against real engines instead of only their grammars. SQLite needs no
 # infrastructure (it is a library); psql and mysql will additionally need Docker.
 live = ["dep:rusqlite"]
+# The server engines. Separate because these need Docker, while `live` does not.
+live-docker = ["live", "dep:testcontainers", "dep:testcontainers-modules", "dep:postgres", "dep:mysql"]
 
 [dependencies]
 pg_query.workspace = true
+mysql = { workspace = true, optional = true }
+postgres = { workspace = true, optional = true }
 rusqlite = { workspace = true, optional = true }
+testcontainers = { workspace = true, optional = true }
+testcontainers-modules = { workspace = true, optional = true }
 sqlite3-parser.workspace = true
 sqlparser.workspace = true
-
-[dev-dependencies]
-keelson-golden.workspace = true
 
 [lints]
 workspace = true

@@ -145,7 +145,7 @@ impl PartialEq for Value {
 ///
 /// This is what makes `Vec<Value>` comparable against a plain JSON array of
 /// arguments — `Value::I32(100)` becomes `100`, not `{"I32":100}` — which is the
-/// shape `keelson-golden` compares against.
+/// shape the test suite compares against.
 impl serde::Serialize for Value {
     fn serialize<S: Serializer>(&self, s: S) -> std::result::Result<S::Ok, S::Error> {
         match self {
@@ -437,7 +437,7 @@ mod tests {
 
     #[test]
     fn serialises_a_whole_arg_list_as_a_plain_json_array() {
-        // This is exactly the shape keelson-golden compares against.
+        // This is exactly the shape the test suite compares against.
         let args = vec![Value::I32(100), Value::Text("Stephen".into())];
         assert_eq!(
             serde_json::to_value(&args).unwrap(),

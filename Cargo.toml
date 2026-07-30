@@ -12,7 +12,6 @@ authors = ["Kensuke Kubo"]
 
 [workspace.dependencies]
 keelson-core = { path = "crates/keelson-core" }
-keelson-golden = { path = "crates/keelson-golden" }
 keelson-sqlcheck = { path = "crates/keelson-sqlcheck" }
 keelson-mysql = { path = "crates/keelson-mysql" }
 keelson-psql = { path = "crates/keelson-psql" }
@@ -20,7 +19,11 @@ keelson-sqlite = { path = "crates/keelson-sqlite" }
 
 pg_query = "6"
 regex = "1"
+mysql = "27"
+postgres = "0.19"
 rusqlite = { version = "0.40", features = ["bundled"] }
+testcontainers = { version = "0.27", features = ["blocking"] }
+testcontainers-modules = { version = "0.15", features = ["postgres", "mysql", "blocking"] }
 sqlite3-parser = "0.17"
 sqlparser = "0.62"
 serde = { version = "1", features = ["derive"] }

@@ -37,6 +37,32 @@
 
 pub mod live;
 
+/// Collapse insignificant whitespace so an expected string can be written
+/// readably without pinning the builder's exact line breaks.
+///
+/// Trim, then collapse every run of ASCII whitespace to one space. That is all —
+/// tokens and their order are pinned, formatting is free.
+///
+/// Whitespace inside string literals is left alone by virtue of only collapsing
+/// runs, but a literal containing a newline would still be altered; no test needs
+/// one, and a test that does should compare the raw string instead.
+pub fn normalize(sql: &str) -> String {
+    let mut out = String::with_capacity(sql.len());
+    let mut in_space = false;
+    for ch in sql.trim().chars() {
+        if ch.is_ascii_whitespace() {
+            in_space = true;
+            continue;
+        }
+        if in_space && !out.is_empty() {
+            out.push(' ');
+        }
+        in_space = false;
+        out.push(ch);
+    }
+    out
+}
+
 /// Which grammar to validate against.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Dialect {
@@ -46,7 +72,7 @@ pub enum Dialect {
 }
 
 impl Dialect {
-    /// Parse the name used in the golden fixtures.
+    /// Parse a dialect name as written in configuration or test data.
     pub fn from_name(name: &str) -> Option<Self> {
         match name {
             "psql" => Some(Self::Psql),
@@ -115,6 +141,15 @@ pub fn assert_valid(dialect: Dialect, sql: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn normalize_collapses_whitespace_only() {
+        assert_eq!(normalize("  SELECT\n\tid  FROM users  "), "SELECT id FROM users");
+        // Parentheses are left exactly as emitted. A normaliser that padded them
+        // would hide the very formatting choices docs/sql-rendering.md records.
+        assert_eq!(normalize("NOW()"), "NOW()");
+        assert_eq!(normalize("a || b"), "a || b");
+    }
 
     // Placeholders must survive the parser: our SQL is full of them, and a parser
     // that choked on `$1` would make the oracle useless.
