@@ -1,0 +1,44 @@
+[package]
+name = "keelson-factory"
+description = "keelson's test-data factory layer: per-model templates with schema-aware parent auto-creation, sequence-based uniqueness and a seedable value faker."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[features]
+# The hand-written factory's end-to-end tests against containerised
+# PostgreSQL 17, reusing keelson-sqlcheck's containers and the
+# `KEELSON_LIVE_*_URL` overrides (the SQLite lane needs no feature and runs in
+# every plain `cargo test`):
+#
+#   cargo test -p keelson-factory --features live-docker
+live-docker = ["keelson-sqlcheck/live-docker", "keelson-sqlx/psql"]
+
+[dependencies]
+# Machinery only: value sources, parent-reference states, the sequence and the
+# faker. Like keelson-models, the crate is dialect-generic and driver-free —
+# the dialect and backend crates below are dev-dependencies, exactly as they
+# will be in an application's own Cargo.toml once the generator emits its
+# factories.
+keelson-core.workspace = true
+keelson-models.workspace = true
+
+[dev-dependencies]
+# The hand-written users/posts/comments factory — the code generator's
+# specification — is written twice, once against keelson-psql and once against
+# keelson-sqlite (the always-on end-to-end lane), each on top of a trimmed
+# rendition of the Layer 2 spec model.
+keelson-core = { workspace = true, features = ["chrono"] }
+keelson-exec.workspace = true
+keelson-psql.workspace = true
+keelson-sqlite.workspace = true
+keelson-sqlx = { workspace = true, features = ["sqlite", "chrono"] }
+keelson-sqlcheck = { workspace = true }
+chrono.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true
