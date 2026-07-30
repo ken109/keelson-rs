@@ -13,6 +13,7 @@ authors = ["Kensuke Kubo"]
 [workspace.dependencies]
 keelson-core = { path = "crates/keelson-core" }
 keelson-exec = { path = "crates/keelson-exec" }
+keelson-models = { path = "crates/keelson-models" }
 keelson-sqlcheck = { path = "crates/keelson-sqlcheck" }
 keelson-sqlx = { path = "crates/keelson-sqlx" }
 keelson-mysql = { path = "crates/keelson-mysql" }

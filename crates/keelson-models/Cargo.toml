@@ -1,0 +1,43 @@
+[package]
+name = "keelson-models"
+description = "keelson's typed model layer: the View/Table traits, Setter plumbing, hooks and relation loaders the code generator emits against."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[features]
+# The hand-written model's end-to-end tests against containerised
+# PostgreSQL 17, reusing keelson-sqlcheck's containers and
+# `KEELSON_LIVE_*_URL` overrides (the SQLite lane needs no feature and runs in
+# every plain `cargo test`):
+#
+#   cargo test -p keelson-models --features live-docker
+live-docker = ["keelson-sqlcheck/live-docker", "keelson-sqlx/psql"]
+
+[dependencies]
+# Machinery only: the model layer is dialect-generic (it is written against
+# keelson-core's `Has*` clause traits) and driver-free (it executes through
+# keelson-exec's `&dyn Executor`). The dialect and backend crates below are
+# dev-dependencies — they belong to the hand-written example model, exactly as
+# they will belong to an application's own Cargo.toml once the generator emits
+# its models.
+keelson-core.workspace = true
+keelson-exec.workspace = true
+
+[dev-dependencies]
+# The hand-written users/posts model — the code generator's specification —
+# is written twice, once against keelson-psql (the demonstration dialect) and
+# once against keelson-sqlite (the always-on end-to-end lane).
+keelson-core = { workspace = true, features = ["chrono"] }
+keelson-psql.workspace = true
+keelson-sqlite.workspace = true
+keelson-sqlx = { workspace = true, features = ["sqlite", "chrono"] }
+keelson-sqlcheck = { workspace = true, features = ["live", "testing"] }
+chrono.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true

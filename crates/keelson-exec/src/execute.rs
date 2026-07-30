@@ -32,6 +32,22 @@ pub trait Execute: Query {
         }
     }
 
+    /// Every row, undecoded.
+    ///
+    /// The row-mapper seam Layer 2 needs: a model query decodes the base
+    /// struct first and then lets its preload mapper mods take the prefixed
+    /// relation columns out of the *same* row, so the rows must come back as
+    /// [`Row`]s without an intermediate decode. (`fetch_all::<Row>` would work
+    /// but clones every row on the way through `FromRow`.) Same funnel, same
+    /// tracing, as every other verb.
+    fn fetch_rows(
+        &self,
+        db: &(impl Executor + ?Sized),
+    ) -> impl Future<Output = Result<Vec<Row>, ExecError>> + Send {
+        let stmt = Statement::from_query(self);
+        async move { run_fetch(db, stmt?).await }
+    }
+
     /// Exactly one row. Zero rows is [`ExecError::RowNotFound`]; a second row
     /// is [`ExecError::TooManyRows`] — "one" means one.
     fn fetch_one<T: FromRow>(

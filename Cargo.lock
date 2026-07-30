@@ -1567,6 +1567,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "keelson-models"
+version = "0.0.0"
+dependencies = [
+ "chrono",
+ "keelson-core",
+ "keelson-exec",
+ "keelson-psql",
+ "keelson-sqlcheck",
+ "keelson-sqlite",
+ "keelson-sqlx",
+ "tokio",
+]
+
+[[package]]
 name = "keelson-mysql"
 version = "0.0.0"
 dependencies = [
