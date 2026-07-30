@@ -1056,6 +1056,36 @@ fn update_from_two_items() {
     assert_eq!(args, vec![Value::Text("archived".into())]);
 }
 
+/// A join on the *second* comma-separated `FROM` item of an `UPDATE`. The
+/// `from_list` after `UPDATE … FROM` is the same `table_ref (',' table_ref)*`
+/// a `SELECT` has, and every `table_ref` may be a `joined_table` — the
+/// standalone join mods reach only the leading item, so the extra item takes
+/// its join by method.
+#[test]
+fn update_from_second_item_with_its_own_join() {
+    let q = psql::update((
+        update::table(quote("posts")).as_("p"),
+        update::set_col("status").to_arg("archived"),
+        update::from(quote("users")).as_("u"),
+        update::from_also(quote("comments")).as_("c").join(
+            update::inner_join(quote("post_tags"))
+                .as_("pt")
+                .on_eq(quote(("pt", "post_id")), quote(("c", "post_id"))),
+        ),
+        update::where_(quote(("p", "user_id")).eq(quote(("u", "id")))),
+        update::where_(quote(("c", "post_id")).eq(quote(("p", "id")))),
+    ));
+    let args = check(
+        &q,
+        r#"UPDATE "posts" AS "p" SET "status" = $1
+           FROM "users" AS "u",
+                "comments" AS "c" INNER JOIN "post_tags" AS "pt"
+                    ON ("pt"."post_id" = "c"."post_id")
+           WHERE ("p"."user_id" = "u"."id") AND ("c"."post_id" = "p"."id")"#,
+    );
+    assert_eq!(args, vec![Value::Text("archived".into())]);
+}
+
 /// A `FROM` item may be a parenthesised sub-query, which PostgreSQL requires to be
 /// aliased.
 #[test]
@@ -1417,6 +1447,31 @@ fn delete_using_three_items() {
            USING "posts" AS "p", "tags" AS "t", "users" AS "u"
            WHERE ("pt"."post_id" = "p"."id") AND ("pt"."tag_id" = "t"."id")
              AND ("p"."user_id" = "u"."id")"#,
+    );
+}
+
+/// A join on the *second* comma-separated `USING` item — `DELETE`'s `USING` is
+/// a `from_list` under another keyword, so the same `table_ref` production
+/// applies and the extra item may be a `joined_table`.
+#[test]
+fn delete_using_second_item_with_its_own_join() {
+    let q = psql::delete((
+        delete::from(quote("post_tags")).as_("pt"),
+        delete::using(quote("posts")).as_("p"),
+        delete::using_also(quote("users")).as_("u").join(
+            delete::inner_join(quote("comments"))
+                .as_("c")
+                .on_eq(quote(("c", "user_id")), quote(("u", "id"))),
+        ),
+        delete::where_(quote(("pt", "post_id")).eq(quote(("p", "id")))),
+        delete::where_(quote(("p", "user_id")).eq(quote(("u", "id")))),
+    ));
+    check(
+        &q,
+        r#"DELETE FROM "post_tags" AS "pt"
+           USING "posts" AS "p",
+                 "users" AS "u" INNER JOIN "comments" AS "c" ON ("c"."user_id" = "u"."id")
+           WHERE ("pt"."post_id" = "p"."id") AND ("p"."user_id" = "u"."id")"#,
     );
 }
 

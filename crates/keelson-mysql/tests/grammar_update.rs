@@ -188,6 +188,32 @@ fn two_tables_updated_through_a_comma_list() {
     assert_eq!(args, vec![Value::I32(0)]);
 }
 
+/// A comma list whose *second* entry carries a join — grammatical because each
+/// `table_reference` of *15.2.15.2*'s `table_references` may be a
+/// `joined_table`, and the comma binds looser than the join keywords.
+#[test]
+fn a_non_leading_target_entry_takes_its_own_joins() {
+    let q = mysql::update((
+        update::table(quote("users")).as_("u"),
+        update::table_also(quote("posts")).as_("p").join(
+            update::inner_join(quote("comments"))
+                .as_("c")
+                .on_eq(quote(("c", "post_id")), quote(("p", "id"))),
+        ),
+        update::set_col(("p", "views")).to_arg(0i32),
+        update::where_(quote(("u", "id")).eq(quote(("p", "user_id")))),
+        update::where_(quote(("c", "user_id")).eq(quote(("u", "id")))),
+    ));
+    let args = check_without_grammar(
+        &q,
+        "UPDATE `users` AS `u`, `posts` AS `p` INNER JOIN `comments` AS `c` \
+         ON (`c`.`post_id` = `p`.`id`) SET `p`.`views` = ? \
+         WHERE (`u`.`id` = `p`.`user_id`) AND (`c`.`user_id` = `u`.`id`)",
+        "multiple-table UPDATE through a comma list",
+    );
+    assert_eq!(args, vec![Value::I32(0)]);
+}
+
 /// The same statement written as a join. `HasJoins` reaches the *target's* joins,
 /// because in MySQL there is nowhere else for them to go. bob's expected SQL for
 /// this shape is

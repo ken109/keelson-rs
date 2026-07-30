@@ -184,6 +184,54 @@ fn several_from_items_are_comma_separated() {
     );
 }
 
+/// A join hanging off a *non-leading* comma entry. *15.2.15.2*'s
+/// `table_references` is `escaped_table_reference [, escaped_table_reference]…`
+/// and each `table_reference` may be a `joined_table`; the comma has lower
+/// precedence than the join keywords, so the join's left operand is the entry
+/// it is written after, not the whole list.
+#[test]
+fn a_non_leading_from_entry_takes_its_own_joins() {
+    let q = mysql::select((
+        select::columns((quote(("u", "id")), quote(("c", "body")))),
+        select::from(quote("users")).as_("u"),
+        select::from_also(quote("posts")).as_("p").join(
+            select::inner_join(quote("comments"))
+                .as_("c")
+                .on_eq(quote(("c", "post_id")), quote(("p", "id"))),
+        ),
+    ));
+    check(
+        &q,
+        "SELECT `u`.`id`, `c`.`body` FROM `users` AS `u`, \
+         `posts` AS `p` INNER JOIN `comments` AS `c` ON (`c`.`post_id` = `p`.`id`)",
+    );
+
+    // Several joins chain onto the one entry, and STRAIGHT_JOIN — the
+    // narrower chain — attaches the same way.
+    let q = mysql::select((
+        select::columns(quote(("u", "id"))),
+        select::from(quote("users")).as_("u"),
+        select::from_also(quote("posts"))
+            .as_("p")
+            .join(
+                select::inner_join(quote("comments"))
+                    .as_("c")
+                    .on_eq(quote(("c", "post_id")), quote(("p", "id"))),
+            )
+            .join(
+                select::straight_join(quote("post_tags"))
+                    .as_("pt")
+                    .on_eq(quote(("pt", "post_id")), quote(("p", "id"))),
+            ),
+    ));
+    check(
+        &q,
+        "SELECT `u`.`id` FROM `users` AS `u`, \
+         `posts` AS `p` INNER JOIN `comments` AS `c` ON (`c`.`post_id` = `p`.`id`) \
+         STRAIGHT_JOIN `post_tags` AS `pt` ON (`pt`.`post_id` = `p`.`id`)",
+    );
+}
+
 #[test]
 fn inner_left_and_right_joins_each_carry_their_own_condition_shape() {
     let q = mysql::select((

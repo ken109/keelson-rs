@@ -570,11 +570,17 @@ impl JoinChain {
     }
 }
 
+impl From<JoinChain> for Join {
+    fn from(chain: JoinChain) -> Join {
+        let JoinChain { mut join, sample } = chain;
+        join.to = finish_table(join.to, sample);
+        join
+    }
+}
+
 impl<Q: HasJoins> Mod<Q> for JoinChain {
     fn apply(self, q: &mut Q) {
-        let JoinChain { mut join, sample } = self;
-        join.to = finish_table(join.to, sample);
-        q.joins_mut().push(join);
+        q.joins_mut().push(self.into());
     }
 }
 
@@ -641,9 +647,34 @@ impl CrossJoinChain {
     }
 }
 
+impl From<CrossJoinChain> for Join {
+    fn from(chain: CrossJoinChain) -> Join {
+        chain.0.into()
+    }
+}
+
 impl<Q: HasJoins> Mod<Q> for CrossJoinChain {
     fn apply(self, q: &mut Q) {
         self.0.apply(q);
+    }
+}
+
+impl TableChain<ExtraSlot> {
+    /// A join hanging off *this* comma-separated item rather than off the
+    /// leading one: `FROM "a", "b" INNER JOIN "c" ON …`.
+    ///
+    /// Grammatical because gram.y's `from_list` is `table_ref (',' table_ref)*`
+    /// and *every* `table_ref` — not just the first — may be a `joined_table`.
+    /// The join binds tighter than the comma, so `"b" INNER JOIN "c"` is one
+    /// from-item. Takes the same [`JoinChain`]/[`CrossJoinChain`] the standalone
+    /// join mods are — those mods reach the leading item through [`HasJoins`],
+    /// which is why the extra items take theirs by method instead. Several
+    /// calls chain several joins onto this item, exactly as several standalone
+    /// mods do onto the leading one.
+    #[must_use]
+    pub fn join(mut self, join: impl Into<Join>) -> TableChain<ExtraSlot> {
+        self.table.joins.push(join.into());
+        self
     }
 }
 

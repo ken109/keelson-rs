@@ -676,9 +676,15 @@ impl JoinChain {
     }
 }
 
+impl From<JoinChain> for Join {
+    fn from(chain: JoinChain) -> Join {
+        chain.join
+    }
+}
+
 impl<Q: HasJoins> Mod<Q> for JoinChain {
     fn apply(self, q: &mut Q) {
-        q.joins_mut().push(self.join);
+        q.joins_mut().push(self.into());
     }
 }
 
@@ -768,9 +774,36 @@ impl PlainJoinChain {
     }
 }
 
+impl From<PlainJoinChain> for Join {
+    fn from(chain: PlainJoinChain) -> Join {
+        chain.0.join
+    }
+}
+
 impl<Q: HasJoins> Mod<Q> for PlainJoinChain {
     fn apply(self, q: &mut Q) {
         self.0.apply(q);
+    }
+}
+
+impl TableChain<ExtraSlot> {
+    /// A join hanging off *this* comma-separated table reference rather than
+    /// off the leading one: ``FROM `a`, `b` INNER JOIN `c` ON …``.
+    ///
+    /// Grammatical because *15.2.15.2 JOIN Clause* reads
+    /// `table_references: escaped_table_reference [, escaped_table_reference] …`
+    /// and each `table_reference` — not just the first — may be a
+    /// `joined_table`. The comma has *lower* precedence than the join keywords
+    /// (the manual says so under the same section), so `b INNER JOIN c` is one
+    /// list entry and the join's left operand is this item alone. Takes
+    /// the same [`JoinChain`]/[`PlainJoinChain`] the standalone join mods are —
+    /// those reach the leading item through [`HasJoins`], which is why the
+    /// extra items take theirs by method instead. Several calls chain several
+    /// joins onto this item.
+    #[must_use]
+    pub fn join(mut self, join: impl Into<Join>) -> TableChain<ExtraSlot> {
+        self.table.joins.push(join.into());
+        self
     }
 }
 

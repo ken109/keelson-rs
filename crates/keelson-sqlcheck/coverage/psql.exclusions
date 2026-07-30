@@ -1,11 +1,15 @@
 # Tier D exclusions — psql constructs deliberately NOT in the manifest.
 #
-# Two kinds of entry live here, and each must say which it is in its reason:
+# Three kinds of entry live here, and each must say which it is in its reason:
 #   1. Constructs the library does not render yet: the reason says what the
 #      construct is and that it is planned, so the exclusion is auditable debt.
 #   2. Grammar defaults that are deliberately unrepresentable: writing them
 #      adds nothing to the SQL, and the library's design says the absence of
 #      the clause is how the default is spelled.
+#   3. Constructs rendered and pinned by named judged tests that the gate
+#      cannot tell apart from entries already in the manifest — counting them
+#      would double-count those entries. The reason names the composition and
+#      the tests that exercise it.
 #
 # Moving an entry from here into psql.manifest is how new rendering work
 # becomes gated.
@@ -27,3 +31,9 @@ reason = representable (frame_end lists UNBOUNDED PRECEDING) but unjudgeable: gr
 
 [expr.group]
 reason = plain parenthesisation (psql::group with one element) is not a parse-tree construct — PostgreSQL discards the parentheses — and it is exercised by every chained operator in the corpus
+
+[from.comma_item_joins]
+reason = rendered (TableChain::<ExtraSlot>::join — gram.y's from_list is `table_ref (',' table_ref)*` and every table_ref may be a joined_table) but not a construct of its own in the parse tree: the JoinExpr sitting in a non-leading from_list slot is the same node join.* already detects, and the comma list is from.comma_list, so a separate entry would double-count both; exercised by a_non_leading_from_item_takes_its_own_joins (keelson-psql/tests/grammar_select.rs), update_from_second_item_with_its_own_join and delete_using_second_item_with_its_own_join (keelson-psql/tests/grammar_dml.rs)
+
+[merge.source_join]
+reason = rendered (the merge module re-exports the join surface; gram.y's MergeStmt reads `USING table_ref ON a_expr`, so a joined_table source is grammatical) but not separately gateable: the tree detectors carry no position, so the source JoinExpr is the same node join.* already detects, and no token signature can tell a USING-source join from a FROM-list one; exercised by the_using_source_takes_joins in keelson-psql/tests/grammar_merge.rs

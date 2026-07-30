@@ -247,6 +247,29 @@ fn a_comma_separated_from_list() {
     );
 }
 
+/// A join written after the *comma* item of `UPDATE … FROM` — the `FROM` here
+/// is the same `join-clause` a `SELECT` has, and parse.y's
+/// `joinop ::= COMMA|JOIN` makes the comma and the join keywords one
+/// production, so a join may follow a comma item.
+#[test]
+fn a_further_comma_item_followed_by_its_join() {
+    built(
+        sqlite::update((
+            update::table(quote("posts")).as_("p"),
+            update::set_col("views").to(0),
+            update::from(quote("users")).as_("u"),
+            update::from_also(quote("comments")).as_("c").join(
+                update::inner_join(quote("post_tags"))
+                    .as_("pt")
+                    .on_eq(quote(("pt", "post_id")), quote(("c", "post_id"))),
+            ),
+            update::where_(quote(("u", "id")).eq(quote(("p", "user_id")))),
+            update::where_(quote(("c", "post_id")).eq(quote(("p", "id")))),
+        )),
+        r#"UPDATE "posts" AS "p" SET "views" = 0 FROM "users" AS "u", "comments" AS "c" INNER JOIN "post_tags" AS "pt" ON ("pt"."post_id" = "c"."post_id") WHERE ("u"."id" = "p"."user_id") AND ("c"."post_id" = "p"."id")"#,
+    );
+}
+
 #[test]
 fn update_from_a_sub_query() {
     let source = sqlite::select((

@@ -346,6 +346,47 @@ fn from_takes_a_comma_separated_list() {
     );
 }
 
+/// A join hanging off a *non-leading* comma item. gram.y's `from_list` is
+/// `table_ref (',' table_ref)*` and every `table_ref` may be a `joined_table`,
+/// so the second item can carry joins of its own — and the join binds tighter
+/// than the comma, so `"posts" INNER JOIN "comments"` is one from-item.
+#[test]
+fn a_non_leading_from_item_takes_its_own_joins() {
+    check(
+        &psql::select((
+            select::columns((quote(("u", "id")), quote(("c", "body")))),
+            select::from(quote("users")).as_("u"),
+            select::from_also(quote("posts")).as_("p").join(
+                select::inner_join(quote("comments"))
+                    .as_("c")
+                    .on_eq(quote(("c", "post_id")), quote(("p", "id"))),
+            ),
+        )),
+        r#"SELECT "u"."id", "c"."body" FROM "users" AS "u",
+           "posts" AS "p" INNER JOIN "comments" AS "c" ON ("c"."post_id" = "p"."id")"#,
+    );
+
+    // Several joins chain onto the one item, and a CROSS JOIN — the narrower
+    // chain — attaches the same way.
+    check(
+        &psql::select((
+            select::columns(quote(("u", "id"))),
+            select::from(quote("users")).as_("u"),
+            select::from_also(quote("posts"))
+                .as_("p")
+                .join(
+                    select::inner_join(quote("comments"))
+                        .as_("c")
+                        .on_eq(quote(("c", "post_id")), quote(("p", "id"))),
+                )
+                .join(select::cross_join(quote("post_tags")).as_("pt")),
+        )),
+        r#"SELECT "u"."id" FROM "users" AS "u",
+           "posts" AS "p" INNER JOIN "comments" AS "c" ON ("c"."post_id" = "p"."id")
+           CROSS JOIN "post_tags" AS "pt""#,
+    );
+}
+
 /// `LATERAL` on a comma-separated item, which is what lets it see the columns of
 /// the items before it. The keyword goes in front of the item, not on a join.
 #[test]

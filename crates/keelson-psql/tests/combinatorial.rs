@@ -1812,6 +1812,20 @@ fn extra_from_items_without_a_leading_item_are_a_build_error() {
         matches!(&err, psql::Error::Incomplete(what) if what.contains("USING")),
         "got: {err}"
     );
+
+    // An extra item carrying its own joins is refused the same way: the joins
+    // hang off *it*, but the item itself still has no list to be in. With a
+    // leading item the same shape builds — pinned by
+    // a_non_leading_from_item_takes_its_own_joins in grammar_select.rs.
+    let q = psql::select((
+        select::columns(quote("id")),
+        select::from_also(quote("users")).join(select::inner_join(quote("posts")).using(["id"])),
+    ));
+    let err = q.build().unwrap_err();
+    assert!(
+        matches!(&err, psql::Error::Incomplete(what) if what.contains("FROM")),
+        "got: {err}"
+    );
 }
 
 /// `LATERAL` in front of a bare table (or CTE) name is a syntax error in

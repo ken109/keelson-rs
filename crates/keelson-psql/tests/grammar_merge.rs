@@ -164,6 +164,65 @@ fn the_source_may_be_a_parenthesised_query() {
     assert_eq!(args, vec![Value::I32(100)]);
 }
 
+/// The source may be joined. The reference page's `data_source` spells only a
+/// table or a query, but gram.y's production is wider —
+/// `MergeStmt: … USING table_ref ON a_expr …` — and a `table_ref` may be a
+/// `joined_table`, which a real PostgreSQL PREPAREs. The join mods the merge
+/// module re-exports attach to the source, never to the target, whose
+/// `relation_expr_opt_alias` admits no joins.
+#[test]
+fn the_using_source_takes_joins() {
+    let q = psql::merge((
+        merge::into(quote("tags")).as_("t"),
+        merge::using(quote("posts")).as_("p"),
+        merge::inner_join(quote("users"))
+            .as_("u")
+            .on_eq(quote(("u", "id")), quote(("p", "user_id"))),
+        merge::on(quote(("t", "id")).eq(quote(("p", "id")))),
+        merge::when_matched().then_update(merge::set_col("name").to(quote(("u", "name")))),
+        merge::when_not_matched()
+            .then_insert()
+            .columns(["id", "name"])
+            .values((quote(("p", "id")), quote(("u", "name")))),
+    ));
+    assert!(
+        check(
+            &q,
+            r#"MERGE INTO "tags" AS "t"
+               USING "posts" AS "p" INNER JOIN "users" AS "u" ON ("u"."id" = "p"."user_id")
+               ON ("t"."id" = "p"."id")
+               WHEN MATCHED THEN UPDATE SET "name" = "u"."name"
+               WHEN NOT MATCHED THEN INSERT ("id", "name") VALUES ("p"."id", "u"."name")"#,
+        )
+        .is_empty()
+    );
+
+    // A LEFT JOIN with USING-columns on the source, plus an arm condition
+    // reading the joined table — the joined source is one `table_ref`, so
+    // everything a from-item's join takes is available here.
+    let q = psql::merge((
+        merge::into(quote("tags")).as_("t"),
+        merge::using(quote("posts")).as_("p"),
+        merge::left_join(quote("comments")).as_("c").using(["id"]),
+        merge::on(quote(("t", "id")).eq(quote(("p", "id")))),
+        merge::when_matched()
+            .and(quote(("c", "body")).is_null())
+            .then_delete(),
+        merge::when_matched().then_update(merge::set_col("name").to(quote(("p", "title")))),
+    ));
+    assert!(
+        check(
+            &q,
+            r#"MERGE INTO "tags" AS "t"
+               USING "posts" AS "p" LEFT JOIN "comments" AS "c" USING ("id")
+               ON ("t"."id" = "p"."id")
+               WHEN MATCHED AND ("c"."body" IS NULL) THEN DELETE
+               WHEN MATCHED THEN UPDATE SET "name" = "p"."title""#,
+        )
+        .is_empty()
+    );
+}
+
 /// Several arms of the same kind are legal — the first whose condition passes
 /// wins — and the multi-column assignment form is the `UPDATE` one, because a
 /// `merge_update` *is* an `UPDATE SET` list. Two columns, because a

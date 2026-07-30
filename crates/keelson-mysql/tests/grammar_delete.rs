@@ -214,6 +214,29 @@ fn several_using_items_are_comma_separated() {
     );
 }
 
+/// A join hanging off a *non-leading* `USING` entry: the `USING` list is
+/// *15.2.15.2*'s `table_references`, and each `table_reference` — not just the
+/// first — may be a `joined_table`.
+#[test]
+fn a_non_leading_using_entry_takes_its_own_joins() {
+    let q = mysql::delete((
+        delete::from(quote("post_tags")),
+        delete::using(quote("post_tags")),
+        delete::using_also(quote("posts")).join(
+            delete::inner_join(quote("users"))
+                .on_eq(quote(("users", "id")), quote(("posts", "user_id"))),
+        ),
+        delete::where_(quote(("post_tags", "post_id")).eq(quote(("posts", "id")))),
+        delete::where_(quote(("users", "is_active")).eq(arg(false))),
+    ));
+    check(
+        &q,
+        "DELETE FROM `post_tags` USING `post_tags`, \
+         `posts` INNER JOIN `users` ON (`users`.`id` = `posts`.`user_id`) \
+         WHERE (`post_tags`.`post_id` = `posts`.`id`) AND (`users`.`is_active` = ?)",
+    );
+}
+
 #[test]
 fn a_left_join_in_the_using_list_finds_the_orphans() {
     let q = mysql::delete((

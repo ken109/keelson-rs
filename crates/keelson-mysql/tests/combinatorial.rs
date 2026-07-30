@@ -1111,8 +1111,8 @@ fn delete_multi_table_every_clause_against_every_other() {
 /// The twin of the join-mods guard: the extra table references of
 /// `from_also` / `using_also` are second and later entries of the list the
 /// leading item opens, so with no leading item they used to be dropped
-/// silently — valid SQL, the caller's item simply gone. Now `build()` refuses
-/// (DEV-201). `UPDATE` diverges the same way it did for joins: its target list
+/// silently — valid SQL, the caller's item simply gone. Now `build()` refuses.
+/// `UPDATE` diverges the same way it did for joins: its target list
 /// *is* the `table_references`, and an absent target is already its own
 /// `Incomplete` before the list writer runs, so `table_also` can never be
 /// dropped — the error names the missing target instead.
@@ -1147,6 +1147,20 @@ fn extra_table_refs_without_a_leading_item_are_a_build_error() {
     let err = q.build().unwrap_err();
     assert!(
         matches!(&err, mysql::Error::Incomplete(what) if what.contains("UPDATE")),
+        "got: {err}"
+    );
+
+    // An extra entry carrying its own joins is refused the same way: the joins
+    // hang off *it*, but the entry itself still has no list to be in. With a
+    // leading entry the same shape builds — pinned by
+    // a_non_leading_from_entry_takes_its_own_joins in grammar_select.rs.
+    let q = mysql::select((
+        select::columns(quote("id")),
+        select::from_also(quote("users")).join(select::inner_join(quote("posts")).using(["id"])),
+    ));
+    let err = q.build().unwrap_err();
+    assert!(
+        matches!(&err, mysql::Error::Incomplete(what) if what.contains("FROM")),
         "got: {err}"
     );
 }

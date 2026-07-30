@@ -1,6 +1,8 @@
 use std::borrow::Cow;
 
-use keelson_core::clause::{HasReturning, HasTableRef, HasWith, Returning, Set, TableRef, With};
+use keelson_core::clause::{
+    HasJoins, HasReturning, HasTableRef, HasWith, Join, Returning, Set, TableRef, With,
+};
 use keelson_core::expr::{Expr, IntoExpr, IntoExprList};
 use keelson_core::{Dialect, Error, Expression, Mod, Query, QueryExtensions, QueryType, SqlWriter};
 
@@ -34,6 +36,10 @@ use crate::extras::Overriding;
 /// The target lives in [`HasTargetTable`] — like an `UPDATE`'s table — and the
 /// `USING` source in [`HasTableRef`], like a `DELETE`'s `USING` item, which is
 /// what lets one [`TableChain`](crate::shared::TableChain) serve both slots.
+/// The source also carries [`HasJoins`]: gram.y's `MergeStmt` reads
+/// `USING table_ref ON a_expr`, and a `table_ref` may be a `joined_table`, so a
+/// joined source is grammatical. The target is a `relation_expr_opt_alias`,
+/// which admits no joins — the same split an `UPDATE` has.
 ///
 /// Which actions a `WHEN` clause may take depends on which `WHEN` it is, and that
 /// is enforced by the chain types in [`crate::merge`] rather than re-checked
@@ -142,6 +148,16 @@ impl HasTargetTable for MergeQuery {
 impl HasTableRef for MergeQuery {
     fn table_ref_mut(&mut self) -> &mut TableRef {
         &mut self.source
+    }
+}
+
+impl HasJoins for MergeQuery {
+    fn joins_mut(&mut self) -> &mut Vec<Join> {
+        // The joins belong to the USING source — the one slot of a MERGE that
+        // is a full `table_ref` in gram.y. They cannot be dropped silently: an
+        // absent source is already recorded as Incomplete before rendering
+        // reaches the point where its joins would have been written.
+        &mut self.source.joins
     }
 }
 

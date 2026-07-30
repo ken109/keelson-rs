@@ -1,5 +1,5 @@
 # Tier D exclusions — sqlite constructs deliberately NOT in the manifest.
-# See psql.exclusions for the two kinds of entry and the rules.
+# See psql.exclusions for the three kinds of entry and the rules.
 
 [select.all]
 reason = SELECT ALL is the grammar default; deliberately unrepresentable — the absence of distinct() is what it means (keelson-sqlite select::distinct)
@@ -9,3 +9,6 @@ reason = SQLite's compound-select-stmt takes bare select-cores; parenthesised op
 
 [expr.group]
 reason = plain parenthesisation (sqlite::group) is not detectable at token level — every rendered statement contains parentheses — and it is exercised by every chained operator in the corpus
+
+[from.comma_item_joins]
+reason = rendered (TableChain::<ExtraSlot>::join — parse.y's `joinop ::= COMMA|JOIN` makes the comma one of the join operators, so a JOIN may follow a comma item) but token-indistinguishable as its own construct: any signature for "join after a comma item" also matches a leading-item join whose table is a call or list (`FROM f(a, b) INNER JOIN ...`), so gating it would either double-count from.comma_list plus join.* or misfire; exercised by a_further_comma_item_followed_by_its_joins (keelson-sqlite/tests/grammar_select.rs) and a_further_comma_item_followed_by_its_join (keelson-sqlite/tests/grammar_update.rs)

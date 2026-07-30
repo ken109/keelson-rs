@@ -446,9 +446,37 @@ impl JoinChain {
     }
 }
 
+impl From<JoinChain> for Join {
+    fn from(chain: JoinChain) -> Join {
+        chain.join
+    }
+}
+
 impl<Q: HasJoins> Mod<Q> for JoinChain {
     fn apply(self, q: &mut Q) {
-        q.joins_mut().push(self.join);
+        q.joins_mut().push(self.into());
+    }
+}
+
+impl TableChain<ExtraSlot> {
+    /// A join written after *this* comma-separated item rather than after the
+    /// leading one: `FROM "a", "b" INNER JOIN "c" ON …`.
+    ///
+    /// Grammatical because the comma *is* one of SQLite's join operators:
+    /// parse.y reads the whole `FROM` as one chain — `seltablist ::=
+    /// stl_prefix nm …`, `stl_prefix ::= seltablist joinop`, and
+    /// `joinop ::= COMMA|JOIN` — so a `JOIN` may follow a comma item. One
+    /// honest caveat, and it is SQLite's, not this method's: the operators are
+    /// processed left to right with no precedence, so the join's left operand
+    /// is everything before it in the list, not this item alone — unlike
+    /// PostgreSQL and MySQL, where the join binds tighter than the comma.
+    /// Takes the same [`JoinChain`] the standalone join mods are — those reach
+    /// the leading item through [`HasJoins`], which is why the extra items
+    /// take theirs by method instead. Several calls chain several joins.
+    #[must_use]
+    pub fn join(mut self, join: impl Into<Join>) -> TableChain<ExtraSlot> {
+        self.table.joins.push(join.into());
+        self
     }
 }
 

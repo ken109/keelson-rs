@@ -508,6 +508,49 @@ fn a_join_and_a_further_comma_item_together() {
     );
 }
 
+/// The mirror image: a join written after the *comma* item. Grammatical for
+/// the same reason — parse.y's `joinop ::= COMMA|JOIN` makes the comma and the
+/// join keywords the same production — but mind SQLite's semantics: the
+/// operators run left to right with no precedence, so the join's left operand
+/// is everything before it, not `"posts"` alone.
+#[test]
+fn a_further_comma_item_followed_by_its_joins() {
+    built(
+        sqlite::select((
+            select::columns((quote(("u", "id")), quote(("c", "body")))),
+            select::from(quote("users")).as_("u"),
+            select::from_also(quote("posts")).as_("p").join(
+                select::inner_join(quote("comments"))
+                    .as_("c")
+                    .on_eq(quote(("c", "post_id")), quote(("p", "id"))),
+            ),
+        )),
+        r#"SELECT "u"."id", "c"."body" FROM "users" AS "u", "posts" AS "p" INNER JOIN "comments" AS "c" ON ("c"."post_id" = "p"."id")"#,
+    );
+
+    // Several joins chain onto the one item, CROSS JOIN included — in SQLite
+    // it takes a constraint like any other join operator.
+    built(
+        sqlite::select((
+            select::columns(quote(("u", "id"))),
+            select::from(quote("users")).as_("u"),
+            select::from_also(quote("posts"))
+                .as_("p")
+                .join(
+                    select::inner_join(quote("comments"))
+                        .as_("c")
+                        .on_eq(quote(("c", "post_id")), quote(("p", "id"))),
+                )
+                .join(
+                    select::cross_join(quote("post_tags"))
+                        .as_("pt")
+                        .on_eq(quote(("pt", "post_id")), quote(("p", "id"))),
+                ),
+        )),
+        r#"SELECT "u"."id" FROM "users" AS "u", "posts" AS "p" INNER JOIN "comments" AS "c" ON ("c"."post_id" = "p"."id") CROSS JOIN "post_tags" AS "pt" ON ("pt"."post_id" = "p"."id")"#,
+    );
+}
+
 // ---------------------------------------------------------------------------
 // INDEXED BY — https://www.sqlite.org/syntax/qualified-table-name.html
 // ---------------------------------------------------------------------------

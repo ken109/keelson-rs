@@ -2,7 +2,12 @@
 //!
 //! [`into`] is the table being merged into; [`using`] is the data source —
 //! a table, or a [`subquery`](crate::subquery) with an alias — and [`on`] is the
-//! join condition between them. The `WHEN` clauses are chains, and the chain
+//! join condition between them. The source is gram.y's `table_ref`
+//! (`MergeStmt: … USING table_ref ON a_expr …`), so it may be a `joined_table`:
+//! the join mods ([`inner_join`], [`left_join`], [`right_join`], [`full_join`],
+//! [`cross_join`]) attach to it, never to the target, whose
+//! `relation_expr_opt_alias` production admits no joins. The `WHEN` clauses are
+//! chains, and the chain
 //! type is what enforces the grammar's split: a matched arm
 //! ([`when_matched`], [`when_not_matched_by_source`]) offers `UPDATE`/`DELETE`/
 //! `DO NOTHING`, a not-matched arm ([`when_not_matched`]) offers `INSERT`/
@@ -36,7 +41,10 @@ use keelson_core::{Mod, mod_fn};
 use crate::extras::Overriding;
 use crate::statement::{MergeAction, MergeInsert, MergeMatchKind, MergeQuery, MergeWhen};
 
-pub use crate::shared::{from_item as using, returning, set, set_col, target_table as into, with};
+pub use crate::shared::{
+    cross_join, from_item as using, full_join, inner_join, left_join, returning, right_join, set,
+    set_col, target_table as into, with,
+};
 
 /// The `ON` join condition between target and source. Several calls are
 /// `AND`-joined, as a join's `ON` conditions are.
