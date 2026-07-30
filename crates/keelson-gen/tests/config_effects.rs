@@ -24,6 +24,7 @@ fn table(name: &str, columns: Vec<ColumnDef>, pk: &[&str], fks: Vec<ForeignKey>)
         columns,
         primary_key: pk.iter().map(|s| (*s).to_owned()).collect(),
         foreign_keys: fks,
+        unique_keys: vec![],
     }
 }
 
@@ -292,11 +293,53 @@ fn hooks_on_a_select_only_model_are_a_config_error() {
     assert!(err.to_string().contains("after_select"), "{err}");
 }
 
+/// MySQL emits — with the recorded no-`RETURNING` divergences, not a copy of
+/// the `RETURNING` path.
 #[test]
-fn mysql_emission_refuses_honestly() {
+fn mysql_emission_takes_the_no_returning_shape() {
+    let files = generate(&library(), "dialect = \"mysql\"");
+    let books = file(&files, "books.rs");
+    assert!(books.contains("keelson_mysql::InsertQuery"));
+    assert!(!books.contains("returning"), "MySQL has no RETURNING");
+    assert!(
+        books.contains("pub fn by_pk("),
+        "the keyed read-back instead"
+    );
+    assert!(
+        books.contains("pub fn table() -> Books"),
+        "the marker, not ModelTable, carries the MySQL verbs"
+    );
+}
+
+/// What MySQL does *not* cover is still a loud, named failure — never a
+/// silent fallback.
+#[test]
+fn unmapped_mysql_types_and_ignored_config_are_loud() {
+    // A type with no honest mapping names the column.
+    let schema = Schema {
+        tables: vec![table(
+            "readings",
+            vec![col("id", "INTEGER", false), col("taken", "YEAR", false)],
+            &["id"],
+            vec![],
+        )],
+    };
     let config = Config::from_toml("dialect = \"mysql\"").unwrap();
-    let err = keelson_gen::generate_from_schema(&library(), &config).unwrap_err();
-    assert!(err.to_string().contains("MySQL emission"), "{err}");
+    let err = keelson_gen::generate_from_schema(&schema, &config).unwrap_err();
+    assert!(err.to_string().contains("readings.taken"), "{err}");
+
+    // A MySQL schema *is* a database, so `schema` cannot mean anything here;
+    // saying so beats silently ignoring it.
+    let config = Config::from_toml(
+        r#"
+        dialect = "mysql"
+        url = "mysql://root@127.0.0.1:1/app"
+        schema = "other"
+        "#,
+    )
+    .unwrap();
+    let err = keelson_gen::introspect::introspect(&config).unwrap_err();
+    assert!(err.to_string().contains("schema"), "{err}");
 }
 
 #[test]

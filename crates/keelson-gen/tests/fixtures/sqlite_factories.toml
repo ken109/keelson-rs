@@ -1,0 +1,22 @@
+# tests/fixtures/sqlite.toml with `[output] factories` on: the same models,
+# plus the generated `factories.rs` the factory acceptance test compiles and
+# runs the keelson-factory spec's assertions through. A separate fixture (and
+# a separate output directory) because factories are off by default, and the
+# no-factories fixture is what proves that default.
+dialect = "sqlite"
+
+[output]
+factories = true
+
+[hooks]
+module = "crate::hooks"
+
+[tables.users]
+hooks = ["before_insert", "after_insert"]
+
+[[types.override]]
+tables = ["posts"]
+rust_type = "chrono::NaiveDateTime"
+[types.override.match]
+name = "published_at"
+db_type = "TEXT"

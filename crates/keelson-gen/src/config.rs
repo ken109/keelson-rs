@@ -46,8 +46,8 @@ pub enum Dialect {
     /// SQLite: introspect `sqlite_master`/pragmas, emit against
     /// `keelson_sqlite`.
     Sqlite,
-    /// MySQL: accepted by the parser so the error is honest, but emission is
-    /// not implemented yet (no `RETURNING` path; see the crate docs).
+    /// MySQL: introspect `information_schema`, emit against `keelson_mysql`
+    /// — with the no-`RETURNING` mutation surface (see the crate docs).
     Mysql,
 }
 
@@ -153,6 +153,12 @@ pub struct Output {
     /// serde-attribute port of bob's Go struct-tag options).
     #[serde(default)]
     pub serde: bool,
+    /// Emit `factories.rs` beside the models: one keelson-factory template
+    /// module per writable table, as `keelson-factory/tests/spec_*.rs`
+    /// specifies. Off by default — a production crate has no reason to carry
+    /// test-data machinery it never calls.
+    #[serde(default)]
+    pub factories: bool,
 }
 
 /// Where hand-written hooks live.

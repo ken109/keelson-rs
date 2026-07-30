@@ -37,6 +37,16 @@ pub struct TableDef {
     pub primary_key: Vec<String>,
     /// Foreign keys in a stable catalog order.
     pub foreign_keys: Vec<ForeignKey>,
+    /// Declared `UNIQUE` constraints, each a column list in key order,
+    /// sorted by column list; the primary key is **not** repeated here.
+    ///
+    /// Read by the factory emitter, which backs a unique column with a
+    /// [`Sequence`](https://docs.rs/keelson-factory) value so
+    /// `create_many(&db, 100)` cannot collide. Only *declared constraints*
+    /// are introspected — a bare `CREATE UNIQUE INDEX` is an index, not a
+    /// constraint, and is deliberately not read (the generator would have no
+    /// honest way to tell a partial or expression index from a plain one).
+    pub unique_keys: Vec<Vec<String>>,
 }
 
 impl TableDef {

@@ -62,6 +62,15 @@ pub(crate) struct ModelColumn {
     pub overridden: bool,
     /// The declared database type (for the override's comment).
     pub db_type: String,
+    /// The column's default expression, when the schema declares one.
+    pub default: Option<String>,
+    /// Auto-increment: the engine assigns this column.
+    pub autoincrement: bool,
+    /// The column is unique **on its own** — a single-column `UNIQUE` key, or
+    /// a single-column primary key. A member of a composite key is not
+    /// unique by itself and is not marked. Read by the factory emitter, which
+    /// backs such a column with a sequence.
+    pub unique: bool,
 }
 
 /// A to-one relation: this model's `fk_column` points at
@@ -156,6 +165,16 @@ fn resolve_table(t: &TableDef, config: &Config) -> Result<Model> {
         .and_then(|a| a.singular.clone())
         .unwrap_or_else(|| crate::names::singular(&t.name, &config.inflections));
 
+    // Columns unique on their own: a single-column UNIQUE key, or a
+    // single-column primary key.
+    let single_unique: BTreeSet<&str> = t
+        .unique_keys
+        .iter()
+        .chain(std::iter::once(&t.primary_key))
+        .filter(|k| k.len() == 1)
+        .map(|k| k[0].as_str())
+        .collect();
+
     let mut columns = Vec::new();
     let mut kept: Vec<&str> = Vec::new();
     for c in &t.columns {
@@ -174,6 +193,9 @@ fn resolve_table(t: &TableDef, config: &Config) -> Result<Model> {
             nullable: c.nullable,
             overridden: resolved.overridden,
             db_type: c.db_type.clone(),
+            default: c.default.clone(),
+            autoincrement: c.autoincrement,
+            unique: single_unique.contains(c.name.as_str()),
         });
     }
     if columns.is_empty() {

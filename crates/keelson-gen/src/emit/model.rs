@@ -242,7 +242,14 @@ pub(crate) fn model_file(
     };
 
     // ── the entry point ──
+    //
+    // On a `RETURNING` dialect this is the generic `ModelTable`. On MySQL a
+    // writable model hands out the *marker* instead, whose inherent verbs are
+    // exactly the ones MySQL can honour — `ModelTable::insert(…).one()`
+    // decodes the `INSERT`'s own returned rows, which MySQL never produces,
+    // so it is made unreachable rather than left to fail at run time.
     let entry_fn = ident(entry);
+    let mysql_surface = is_table && !dial.returning;
     let entry_doc = format!(
         " The entry point: `{table}::{entry}().query(…)`{}.",
         if is_table {
@@ -251,10 +258,19 @@ pub(crate) fn model_file(
             " — a SELECT-only model"
         }
     );
-    let entry_item = quote! {
-        #[doc = #entry_doc]
-        pub fn #entry_fn() -> keelson_models::ModelTable<#marker> {
-            keelson_models::ModelTable::new()
+    let entry_item = if mysql_surface {
+        quote! {
+            #[doc = #entry_doc]
+            pub fn #entry_fn() -> #marker {
+                #marker
+            }
+        }
+    } else {
+        quote! {
+            #[doc = #entry_doc]
+            pub fn #entry_fn() -> keelson_models::ModelTable<#marker> {
+                keelson_models::ModelTable::new()
+            }
         }
     };
 
@@ -345,6 +361,13 @@ pub(crate) fn model_file(
         quote!()
     };
 
+    // ── the no-RETURNING mutation surface (MySQL) ──
+    let mysql_item = if mysql_surface {
+        no_returning_surface(m, dial, &marker, &row)?
+    } else {
+        quote!()
+    };
+
     // ── preload / then_load ──
     let preload_item = if is_table && !m.belongs_to.is_empty() {
         preload_mod(m, all, dial, &marker, &row)?
@@ -369,6 +392,7 @@ pub(crate) fn model_file(
         #all_columns_item
         #view_item
         #table_item
+        #mysql_item
         #preload_item
         #then_load_item
     })
@@ -480,6 +504,23 @@ fn table_impl(
         hook_items.push(item);
     }
 
+    // The `INSERT`'s row source is the same everywhere; what differs is
+    // whether it can carry `RETURNING` (and so whether an all-unset setter is
+    // `DEFAULT VALUES` or MySQL's `VALUES ()`, which the statement writes for
+    // itself when no row source is present).
+    let insert_stmt = if dial.returning {
+        quote! {
+            let mut q = #krate::insert((
+                #krate::insert::into(#krate::quote(#table)).columns(cols),
+                #krate::insert::returning(all_columns()),
+            ));
+        }
+    } else {
+        quote! {
+            let mut q = #krate::insert(#krate::insert::into(#krate::quote(#table)).columns(cols));
+        }
+    };
+
     Ok(quote! {
         impl keelson_models::Table for #marker {
             type Pk = #pk_type;
@@ -492,10 +533,7 @@ fn table_impl(
                 let mut cols: Vec<&'static str> = Vec::new();
                 let mut vals: Vec<keelson_core::expr::Expr> = Vec::new();
                 #(#pushes)*
-                let mut q = #krate::insert((
-                    #krate::insert::into(#krate::quote(#table)).columns(cols),
-                    #krate::insert::returning(all_columns()),
-                ));
+                #insert_stmt
                 if !vals.is_empty() {
                     q.apply(#krate::insert::values(vals));
                 }
@@ -520,6 +558,267 @@ fn table_impl(
             }
 
             #(#hook_items)*
+        }
+    })
+}
+
+/// Rust integer types the read-back can take from
+/// `ExecResult::last_insert_id` (an `i64`) — the only keys MySQL's
+/// `AUTO_INCREMENT` can produce.
+const INTEGER_KEYS: &[&str] = &[
+    "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "usize", "isize",
+];
+
+/// The mutation surface for a dialect without `RETURNING` (MySQL): the
+/// `Insert` that inserts and then re-`SELECT`s by key, the keyed read-back
+/// query itself, and `Update`/`Delete` wrappers that offer `exec` and no
+/// `all`.
+///
+/// The honesty this shape buys, and its cost, are recorded in
+/// `keelson-models/tests/spec_mysql.rs`: the read-back is a *second*
+/// statement, so it is not atomic with the `INSERT` and on a bare pool need
+/// not even share its connection — wrap the call in a transaction when that
+/// matters. `last_insert_id` itself is safe: it arrives in the `INSERT`'s own
+/// OK packet.
+fn no_returning_surface(
+    m: &Model,
+    dial: &Dial,
+    marker: &proc_macro2::Ident,
+    row: &proc_macro2::Ident,
+) -> Result<TokenStream> {
+    let krate = &dial.krate;
+    let table = &m.table;
+    let pk_cols: Vec<&ModelColumn> = m.pk.iter().map(|i| &m.columns[*i]).collect();
+
+    // ── the keyed read-back ──
+    let mut by_pk_params = Vec::new();
+    let mut by_pk_filters = Vec::new();
+    let mut key_names = Vec::new();
+    for (i, c) in pk_cols.iter().enumerate() {
+        let name = quote::format_ident!("k{i}");
+        let ty = parse_type(&c.rust_type, "primary key")?;
+        let col_fn = ident(&c.field);
+        by_pk_params.push(quote!(#name: #ty));
+        by_pk_filters.push(quote!(#col_fn().eq(#name)));
+        key_names.push(name);
+    }
+    let by_pk_doc = format!(
+        " The keyed read-back: `{table}`'s own columns, filtered by primary \
+         key. This is what stands in for `RETURNING` — a second statement, \
+         emitted as a function so its SQL is judged like any other."
+    );
+    let by_pk_item = quote! {
+        #[doc = #by_pk_doc]
+        pub fn by_pk(#(#by_pk_params),*) -> #krate::SelectQuery {
+            #krate::select((
+                #krate::select::columns(all_columns()),
+                #krate::select::from(#krate::quote(#table)),
+                #(#by_pk_filters,)*
+            ))
+        }
+    };
+
+    // ── capturing the key out of the setter, before it is consumed ──
+    let mut captures = Vec::new();
+    let mut resolves = Vec::new();
+    let mut uses_last_insert_id = false;
+    for (i, c) in pk_cols.iter().enumerate() {
+        let name = &key_names[i];
+        let f = ident(&c.field);
+        let take = if is_copy(&c.rust_type) {
+            quote!(Some(*v))
+        } else {
+            quote!(Some(v.clone()))
+        };
+        captures.push(quote! {
+            let #name = match &setter.#f {
+                keelson_models::Set::Value(v) => #take,
+                _ => None,
+            };
+        });
+        let ty = parse_type(&c.rust_type, "primary key")?;
+        // The `last_insert_id` fallback exists only for a single integer key:
+        // that is the only thing MySQL's AUTO_INCREMENT produces.
+        let has_fallback = pk_cols.len() == 1 && INTEGER_KEYS.contains(&c.rust_type.as_str());
+        uses_last_insert_id |= has_fallback;
+        let fallback = if has_fallback {
+            let msg = format!(
+                "{table}: the INSERT set no `{}` and MySQL reported no last_insert_id, \
+                 so the inserted row cannot be read back",
+                c.db_name
+            );
+            quote! {
+                let #name: #ty = #name
+                    .or_else(|| done.last_insert_id.and_then(|id| <#ty as std::convert::TryFrom<i64>>::try_from(id).ok()))
+                    .ok_or_else(|| keelson_exec::ExecError::other(#msg))?;
+            }
+        } else {
+            let msg = format!(
+                "{table}: `{}` must be set to insert with `one()` — MySQL reports \
+                 last_insert_id only for a single AUTO_INCREMENT integer key",
+                c.db_name
+            );
+            quote! {
+                let #name: #ty = #name
+                    .ok_or_else(|| keelson_exec::ExecError::other(#msg))?;
+            }
+        };
+        resolves.push(fallback);
+    }
+
+    // A composite key has no `last_insert_id` fallback, so nothing reads the
+    // insert's result — and an unused binding is a warning in the user's
+    // crate.
+    let done_binding = if uses_last_insert_id {
+        quote!(done)
+    } else {
+        quote!(_done)
+    };
+
+    let insert_doc = format!(
+        " A pending `INSERT` on `{table}`: the setter, held unbuilt so \
+         `before_insert` can still rewrite it, plus the deferred Layer 1 mods."
+    );
+    let one_doc = " Insert, then read the row back by key. **Not** `RETURNING`: the two \
+                   statements are not atomic — see the module's dialect notes.";
+
+    Ok(quote! {
+        impl #marker {
+            #[doc = " A `SELECT` over this model — the dialect-generic path."]
+            pub fn query(
+                self,
+                mods: impl keelson_core::Mod<keelson_models::ModelSelect<#marker>>,
+            ) -> keelson_models::ModelSelect<#marker> {
+                keelson_models::ModelTable::<#marker>::new().query(mods)
+            }
+
+            #[doc = " An `INSERT` of the setter's set fields, read back by key."]
+            pub fn insert(self, setter: Setter) -> Insert {
+                Insert { setter, mods: Vec::new() }
+            }
+
+            #[doc = " An `UPDATE` of the setter's set fields — `exec` only."]
+            pub fn update(
+                self,
+                setter: Setter,
+                mods: impl keelson_core::Mod<keelson_models::ModelUpdate<#marker>>,
+            ) -> Update {
+                Update(keelson_models::ModelTable::<#marker>::new().update(setter, mods))
+            }
+
+            #[doc = " A `DELETE` — `exec` only."]
+            pub fn delete(
+                self,
+                mods: impl keelson_core::Mod<keelson_models::ModelDelete<#marker>>,
+            ) -> Delete {
+                Delete(keelson_models::ModelTable::<#marker>::new().delete(mods))
+            }
+        }
+
+        #[doc = #insert_doc]
+        pub struct Insert {
+            setter: Setter,
+            #[allow(clippy::type_complexity)]
+            mods: Vec<Box<dyn FnOnce(&mut #krate::InsertQuery) + Send>>,
+        }
+
+        impl std::fmt::Debug for Insert {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.debug_struct("Insert")
+                    .field("setter", &self.setter)
+                    .field("mods", &self.mods.len())
+                    .finish()
+            }
+        }
+
+        impl Insert {
+            #[doc = " Defer Layer 1 mods onto the eventual statement."]
+            #[must_use]
+            pub fn with(
+                mut self,
+                mods: impl keelson_core::Mod<#krate::InsertQuery> + Send + 'static,
+            ) -> Self {
+                self.mods.push(Box::new(move |q| mods.apply(q)));
+                self
+            }
+
+            #[doc = #one_doc]
+            pub async fn one(
+                self,
+                db: &dyn keelson_exec::Executor,
+            ) -> Result<#row, keelson_exec::ExecError> {
+                use keelson_exec::Execute as _;
+                let Insert { mut setter, mods } = self;
+                <#marker as keelson_models::Table>::before_insert(db, &mut setter).await?;
+                #(#captures)*
+                let mut q = <#marker as keelson_models::Table>::insert_query(setter);
+                for m in mods {
+                    m(&mut q);
+                }
+                let #done_binding = q.execute(db).await?;
+                #(#resolves)*
+                let row: #row = by_pk(#(#key_names),*).fetch_one(db).await?;
+                <#marker as keelson_models::Table>::after_insert(db, std::slice::from_ref(&row))
+                    .await?;
+                Ok(row)
+            }
+
+            #[doc = " Insert for the side effect. `after_insert` still runs, with an empty row slice."]
+            pub async fn exec(
+                self,
+                db: &dyn keelson_exec::Executor,
+            ) -> Result<keelson_exec::ExecResult, keelson_exec::ExecError> {
+                use keelson_exec::Execute as _;
+                let Insert { mut setter, mods } = self;
+                <#marker as keelson_models::Table>::before_insert(db, &mut setter).await?;
+                let mut q = <#marker as keelson_models::Table>::insert_query(setter);
+                for m in mods {
+                    m(&mut q);
+                }
+                let done = q.execute(db).await?;
+                <#marker as keelson_models::Table>::after_insert(db, &[]).await?;
+                Ok(done)
+            }
+        }
+
+        #by_pk_item
+
+        #[doc = " A pending `UPDATE`. `exec` only: with no `RETURNING` there is nothing for an `all` verb to decode."]
+        #[derive(Debug)]
+        pub struct Update(keelson_models::ModelUpdate<#marker>);
+
+        impl Update {
+            #[doc = " Apply mods written against the concrete statement."]
+            pub fn apply(&mut self, mods: impl keelson_core::Mod<#krate::UpdateQuery>) {
+                self.0.apply(mods);
+            }
+
+            #[doc = " Update for the side effect; answers how many rows changed."]
+            pub async fn exec(
+                self,
+                db: &dyn keelson_exec::Executor,
+            ) -> Result<keelson_exec::ExecResult, keelson_exec::ExecError> {
+                self.0.exec(db).await
+            }
+        }
+
+        #[doc = " A pending `DELETE`. `exec` only, for the same reason as `Update`."]
+        #[derive(Debug)]
+        pub struct Delete(keelson_models::ModelDelete<#marker>);
+
+        impl Delete {
+            #[doc = " Apply mods written against the concrete statement."]
+            pub fn apply(&mut self, mods: impl keelson_core::Mod<#krate::DeleteQuery>) {
+                self.0.apply(mods);
+            }
+
+            #[doc = " Delete for the side effect; answers how many rows went."]
+            pub async fn exec(
+                self,
+                db: &dyn keelson_exec::Executor,
+            ) -> Result<keelson_exec::ExecResult, keelson_exec::ExecError> {
+                self.0.exec(db).await
+            }
         }
     })
 }

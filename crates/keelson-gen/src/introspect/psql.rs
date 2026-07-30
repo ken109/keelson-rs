@@ -132,11 +132,38 @@ fn table_def(client: &mut Client, oid: Oid, name: &str, kind: TableKind) -> Resu
         fk.ref_columns.push(r.get(3));
     }
 
+    // Declared UNIQUE constraints (`contype = 'u'`); a bare `CREATE UNIQUE
+    // INDEX` is an index rather than a constraint and is deliberately not
+    // read (see `TableDef::unique_keys`).
+    let uniq = client
+        .query(
+            "SELECT con.conname, a.attname \
+             FROM pg_catalog.pg_constraint con \
+             CROSS JOIN LATERAL unnest(con.conkey) WITH ORDINALITY AS k(attnum, ord) \
+             JOIN pg_catalog.pg_attribute a \
+               ON a.attrelid = con.conrelid AND a.attnum = k.attnum \
+             WHERE con.conrelid = $1 AND con.contype = 'u' \
+             ORDER BY con.conname, k.ord",
+            &[&oid],
+        )
+        .map_err(err)?;
+    let mut unique_keys: Vec<Vec<String>> = Vec::new();
+    let mut last: Option<String> = None;
+    for r in uniq {
+        let conname: String = r.get(0);
+        if last.as_deref() != Some(&conname) {
+            unique_keys.push(vec![]);
+            last = Some(conname);
+        }
+        unique_keys.last_mut().expect("just pushed").push(r.get(1));
+    }
+
     Ok(TableDef {
         name: name.to_owned(),
         kind,
         columns,
         primary_key,
         foreign_keys,
+        unique_keys,
     })
 }

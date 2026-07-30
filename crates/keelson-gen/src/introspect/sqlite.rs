@@ -131,12 +131,43 @@ fn table_def(conn: &Connection, name: &str, kind: TableKind) -> Result<TableDef>
         }
     }
 
+    // Unique constraints: `pragma_index_list` marks an index created by a
+    // `UNIQUE` constraint with origin `u` (`pk` is the primary key's, `c` a
+    // hand-written `CREATE UNIQUE INDEX`), so the same declared-constraints-
+    // only rule as the other dialects falls out of the origin column.
+    let mut stmt = conn
+        .prepare("SELECT name FROM pragma_index_list(?1) WHERE \"unique\" = 1 AND origin = 'u'")
+        .map_err(err)?;
+    let uniq_indexes: Vec<String> = stmt
+        .query_map([name], |r| r.get(0))
+        .map_err(err)?
+        .collect::<rusqlite::Result<_>>()
+        .map_err(err)?;
+    drop(stmt);
+    let mut unique_keys: Vec<Vec<String>> = Vec::new();
+    for index in uniq_indexes {
+        let mut stmt = conn
+            .prepare("SELECT name FROM pragma_index_info(?1) ORDER BY seqno")
+            .map_err(err)?;
+        let cols: Vec<Option<String>> = stmt
+            .query_map([&index], |r| r.get(0))
+            .map_err(err)?
+            .collect::<rusqlite::Result<_>>()
+            .map_err(err)?;
+        // A NULL name is an expression column; such an index keys nothing the
+        // generator can name, so it is skipped whole.
+        if let Some(cols) = cols.into_iter().collect::<Option<Vec<String>>>() {
+            unique_keys.push(cols);
+        }
+    }
+
     Ok(TableDef {
         name: name.to_owned(),
         kind,
         columns,
         primary_key,
         foreign_keys,
+        unique_keys,
     })
 }
 

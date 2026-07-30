@@ -1,14 +1,16 @@
-//! PostgreSQL generation: the offline lane emits from a hand-built
-//! [`keelson_gen::schema::Schema`] IR of `tests/schema/psql.sql` (emission
-//! and introspection are separate stages, so no server is needed to pin the
-//! emitted code); the `live-docker` lane introspects the real containerised
-//! PostgreSQL 17 and asserts it produces **exactly this IR** — together they
-//! pin the whole pipeline without making every CI run need Docker.
+//! Factory generation (`[output] factories = true`): the SQLite lane
+//! introspects a temp database built from `fixtures/sqlite_schema.sql`, the
+//! PostgreSQL lane emits from a hand-built IR, and both are pinned against
+//! checked-in fixtures that `generated_sqlite_factories.rs` /
+//! `generated_psql_factories.rs` compile and run.
 //!
-//! To regenerate the fixture after changing the emitter:
+//! Separate fixtures from `tests/generated/{sqlite,psql}`, because factories
+//! are **off by default** and those fixtures are what proves the default.
+//!
+//! To regenerate after changing the factory emitter:
 //!
 //! ```text
-//! KEELSON_GEN_BLESS=1 cargo test -p keelson-gen --test generate_psql
+//! KEELSON_GEN_BLESS=1 cargo test -p keelson-gen --test generate_factories
 //! ```
 
 use std::path::{Path, PathBuf};
@@ -39,8 +41,9 @@ fn fk(column: &str, ref_table: &str, ref_column: &str) -> ForeignKey {
     }
 }
 
-/// `tests/schema/psql.sql`, as `pg_catalog` reports it (`format_type`
-/// spellings, `pg_get_expr` default texts).
+/// The PostgreSQL rendition of the shared schema (the same IR
+/// `generate_psql.rs` pins against the live server), with the `tags.name`
+/// unique constraint the factory emitter keys a sequence on.
 fn psql_ir() -> Schema {
     Schema {
         tables: vec![
@@ -124,27 +127,40 @@ fn psql_ir() -> Schema {
     }
 }
 
-fn generate() -> Vec<(String, String)> {
-    let config = Config::load(manifest_path("tests/fixtures/psql.toml")).expect("fixture config");
+fn generate_sqlite() -> Vec<(String, String)> {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let db_path = std::env::temp_dir().join(format!(
+        "keelson-gen-fac-{}-{}.db",
+        std::process::id(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    let _ = std::fs::remove_file(&db_path);
+    let conn = rusqlite::Connection::open(&db_path).expect("creating the fixture database");
+    conn.execute_batch(include_str!("fixtures/sqlite_schema.sql"))
+        .expect("applying the fixture DDL");
+    drop(conn);
+
+    let mut config = Config::load(manifest_path("tests/fixtures/sqlite_factories.toml"))
+        .expect("fixture config");
+    config.url = Some(format!("sqlite://{}", db_path.display()));
+    let files = keelson_gen::generate(&config).expect("generation");
+    let _ = std::fs::remove_file(&db_path);
+    files
+}
+
+fn generate_psql() -> Vec<(String, String)> {
+    let config =
+        Config::load(manifest_path("tests/fixtures/psql_factories.toml")).expect("fixture config");
     keelson_gen::generate_from_schema(&psql_ir(), &config).expect("generation")
 }
 
-#[test]
-fn the_same_ir_generates_byte_identical_output_twice() {
-    assert_eq!(generate(), generate());
-}
-
-#[test]
-fn the_output_matches_the_checked_in_fixture() {
-    let files = generate();
-    let dir = manifest_path("tests/generated/psql");
-
+fn check_fixture(files: &[(String, String)], dir: &Path) {
     if std::env::var_os("KEELSON_GEN_BLESS").is_some() {
-        keelson_gen::write_files(&dir, &files).expect("blessing the fixture");
+        std::fs::create_dir_all(dir).expect("fixture dir");
+        keelson_gen::write_files(dir, files).expect("blessing the fixture");
         return;
     }
-
-    for (name, contents) in &files {
+    for (name, contents) in files {
         let checked_in = std::fs::read_to_string(dir.join(name))
             .unwrap_or_else(|e| panic!("{name}: reading the checked-in fixture: {e}"));
         assert_eq!(
@@ -153,7 +169,7 @@ fn the_output_matches_the_checked_in_fixture() {
              regenerate with KEELSON_GEN_BLESS=1"
         );
     }
-    let mut on_disk: Vec<String> = std::fs::read_dir(&dir)
+    let mut on_disk: Vec<String> = std::fs::read_dir(dir)
         .expect("fixture dir")
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
         .filter(|n| n.ends_with(".rs"))
@@ -164,15 +180,81 @@ fn the_output_matches_the_checked_in_fixture() {
     assert_eq!(on_disk, expected);
 }
 
-/// The live half: introspecting the real containerised PostgreSQL 17 (the
-/// shared schema, loaded by keelson-sqlcheck's container) produces exactly
-/// the IR the offline lane emits from.
-#[cfg(feature = "live-docker")]
 #[test]
-fn live_introspection_equals_the_hand_built_ir() {
-    let url = keelson_sqlcheck::live::psql_url().to_owned();
-    let mut config = Config::load(manifest_path("tests/fixtures/psql.toml")).unwrap();
-    config.url = Some(url);
-    let schema = keelson_gen::introspect::introspect(&config).expect("live introspection");
-    assert_eq!(schema, psql_ir());
+fn the_sqlite_factories_match_the_checked_in_fixture() {
+    check_fixture(
+        &generate_sqlite(),
+        &manifest_path("tests/generated/sqlite_factories"),
+    );
+}
+
+#[test]
+fn the_psql_factories_match_the_checked_in_fixture() {
+    check_fixture(
+        &generate_psql(),
+        &manifest_path("tests/generated/psql_factories"),
+    );
+}
+
+#[test]
+fn factories_are_off_by_default() {
+    let config = Config::load(manifest_path("tests/fixtures/sqlite.toml")).unwrap();
+    assert!(!config.output.factories);
+    let files = keelson_gen::generate_from_schema(&psql_ir(), &{
+        let mut c = Config::load(manifest_path("tests/fixtures/psql.toml")).unwrap();
+        c.out = None;
+        c
+    })
+    .unwrap();
+    assert!(
+        !files.iter().any(|(n, _)| n == "factories.rs"),
+        "no factories.rs without the switch"
+    );
+    assert!(
+        !files
+            .iter()
+            .any(|(n, c)| n == "mod.rs" && c.contains("pub mod factories")),
+        "and no module line for it either"
+    );
+}
+
+/// The shapes the factory spec fixes, read off the emitted text: the
+/// template, the parent triple, the child mod, and the sequence on a unique
+/// column that is not a primary key (`tags.name`).
+#[test]
+fn the_emitted_factories_carry_the_specs_shapes() {
+    let files = generate_psql();
+    let fac = &files
+        .iter()
+        .find(|(n, _)| n == "factories.rs")
+        .expect("factories.rs")
+        .1;
+
+    assert!(fac.contains("pub struct UserTemplate"));
+    assert!(fac.contains("pub struct CommentTemplate"));
+    // The FK pair: required parent, optional parent.
+    assert!(
+        fac.contains("pub post: keelson_factory::Parent<Box<super::posts::PostTemplate>, i32>")
+    );
+    assert!(fac.contains(
+        "pub user: keelson_factory::OptionalParent<Box<super::users::UserTemplate>, i32>"
+    ));
+    // The parent triple and the child mod.
+    for f in [
+        "pub fn post(",
+        "pub fn post_id(",
+        "pub fn for_post(",
+        "pub fn with_new_post(",
+        "pub fn with_new_comment(",
+    ] {
+        assert!(fac.contains(f), "missing {f}");
+    }
+    // Sequences: the primary key, and the non-key unique column as text.
+    assert!(fac.contains("SEQ.next_i32()"));
+    assert!(
+        fac.contains(r#"format!("tag-{}", SEQ.next_i32())"#),
+        "the unique `tags.name` is sequence-backed"
+    );
+    // Schema-defaulted columns stay out of the statement.
+    assert!(fac.contains("is_active: self.is_active.resolve(f, |_| keelson_models::Set::Unset)"));
 }

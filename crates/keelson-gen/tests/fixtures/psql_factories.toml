@@ -1,0 +1,12 @@
+# tests/fixtures/psql.toml with `[output] factories` on — the PostgreSQL half
+# of the factory acceptance (see sqlite_factories.toml).
+dialect = "psql"
+
+[output]
+factories = true
+
+[hooks]
+module = "crate::hooks"
+
+[tables.users]
+hooks = ["before_insert", "after_insert"]

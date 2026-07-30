@@ -10,12 +10,17 @@ authors.workspace = true
 
 [features]
 # The live-introspection parity tests: introspect the shared schema from the
-# containerised PostgreSQL 17 (via keelson-sqlcheck's containers and the
-# `KEELSON_LIVE_*_URL` overrides) and assert the result equals the hand-built
-# IR the offline tests emit from:
+# containerised PostgreSQL 17 and MySQL 8.4 (via keelson-sqlcheck's containers
+# and the `KEELSON_LIVE_*_URL` overrides) and assert the result equals the
+# hand-built IR the offline tests emit from — plus the end-to-end runs of the
+# generated MySQL model and factories:
 #
 #   cargo test -p keelson-gen --features live-docker
-live-docker = ["keelson-sqlcheck/live-docker", "keelson-sqlx/psql"]
+live-docker = [
+    "keelson-sqlcheck/live-docker",
+    "keelson-sqlx/psql",
+    "keelson-sqlx/mysql",
+]
 
 [dependencies]
 # The emission pipeline: TokenStreams built with quote, parsed into a
@@ -31,11 +36,22 @@ serde.workspace = true
 toml.workspace = true
 
 # Introspection drivers — the direct-catalog decision (see src/lib.rs docs):
-# rusqlite for sqlite_master/pragma, postgres for pg_catalog. Both are already
-# in the workspace for keelson-sqlcheck's live judges; sea-schema was
-# evaluated and rejected (the evaluation is in the crate docs).
+# rusqlite for sqlite_master/pragma, postgres for pg_catalog, mysql for
+# information_schema. All three are already in the workspace for
+# keelson-sqlcheck's live judges; sea-schema was evaluated and rejected (the
+# evaluation is in the crate docs).
 rusqlite.workspace = true
 postgres.workspace = true
+mysql.workspace = true
+
+# Layer 4 (src/queries): hand-written SQL → typed code. Inference needs a real
+# parse tree per dialect, so it borrows the two the judges already trust —
+# pg_query (libpg_query: PostgreSQL's own parser) and sqlite3-parser (lemon-rs:
+# SQLite's own parse.y). pg_query's tree is walked as JSON, so serde_json comes
+# with it. MySQL has neither and is refused, in writing.
+pg_query.workspace = true
+sqlite3-parser.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
 # What the *generated* code needs to compile and run: the checked-in
@@ -44,7 +60,9 @@ postgres.workspace = true
 # would depend on these.
 keelson-core = { workspace = true, features = ["chrono"] }
 keelson-exec.workspace = true
+keelson-factory.workspace = true
 keelson-models.workspace = true
+keelson-mysql.workspace = true
 keelson-psql.workspace = true
 keelson-sqlite.workspace = true
 keelson-sqlx = { workspace = true, features = ["sqlite", "chrono"] }

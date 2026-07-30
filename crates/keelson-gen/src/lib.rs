@@ -9,9 +9,10 @@
 //! decision-free, and `emit` renders TokenStreams built with `quote`,
 //! formatted with `prettyplease`. What it emits is exactly what the
 //! hand-written spec models in `keelson-models/tests/spec_psql.rs` /
-//! `spec_sqlite.rs` fix — those files are the authoritative specification,
-//! and this crate's tests run the generated code through the same
-//! assertions.
+//! `spec_sqlite.rs` / `spec_mysql.rs` fix — those files are the
+//! authoritative specification, and this crate's tests run the generated code
+//! through the same assertions. The factory half is specified the same way,
+//! by `keelson-factory/tests/spec_*.rs`.
 //!
 //! The main entry point is [`run`]; [`generate`] returns the files without
 //! writing them, and [`generate_from_schema`] skips introspection for
@@ -38,8 +39,10 @@
 //!
 //! So: SQLite via `sqlite_master` + `pragma_table_info` /
 //! `pragma_foreign_key_list` (rusqlite), PostgreSQL via `pg_catalog` +
-//! `format_type` (postgres). MySQL introspection would follow the same
-//! pattern over `information_schema` when MySQL emission lands.
+//! `format_type` (postgres), MySQL via `information_schema` + `COLUMN_TYPE`
+//! (mysql) — the same pattern, and the same reason for taking each type
+//! spelling verbatim (`COLUMN_TYPE`, not `DATA_TYPE`, because only the
+//! former distinguishes `tinyint(1)` from `tinyint`).
 //!
 //! **Schema provenance is the user's migration flow.** keelson-gen takes a
 //! connection string and reads what is there; it neither parses migration
@@ -74,15 +77,27 @@
 //! on that line, not in an inference swamp (the contract
 //! `keelson_exec::Bind` was built for).
 //!
-//! **Dialects.** PostgreSQL and SQLite emit today, identical in shape
-//! (both have `RETURNING` and `DEFAULT VALUES`); the machinery differences
-//! live entirely in which crate the statements come from. MySQL emission is
-//! deliberately not a copy of that path: the recorded divergences (no
-//! `RETURNING`: `insert(...).one()` via `last_insert_id` + keyed re-SELECT,
-//! no `update/delete(...).all()`, `INSERT INTO t () VALUES ()`) are a
-//! different `Table` impl body, left honestly unimplemented rather than
-//! wrongly implemented — the config parses `dialect = "mysql"` and the
-//! generator says so.
+//! **Dialects.** PostgreSQL and SQLite are identical in shape (both have
+//! `RETURNING` and `DEFAULT VALUES`); the machinery differences live
+//! entirely in which crate the statements come from. MySQL is deliberately
+//! *not* a copy of that path, because it has no `RETURNING` anywhere: its
+//! `Table` body writes a plain `INSERT` (an all-unset setter being MySQL's
+//! `VALUES ()`), and the model hands out its **marker** from `table()`
+//! rather than `ModelTable`, with inherent verbs that can be honoured —
+//! `insert(…).one()` inserts and then re-`SELECT`s by key (the setter's own
+//! primary key, else `last_insert_id`), `update`/`delete` offer `exec` and
+//! no `all`. The read-back is two statements and says so, in the generated
+//! docs and in `keelson-models/tests/spec_mysql.rs`, which is the
+//! specification this emits.
+//!
+//! **Factories are opt-in output, not a second generator.** `[output]
+//! factories = true` adds one `factories.rs` — a keelson-factory template
+//! module per writable table, exactly as `keelson-factory/tests/spec_*.rs`
+//! specifies, writing through the *model's* insert path so hooks fire. It is
+//! off by default: a production crate has no reason to carry test-data
+//! machinery it never calls. The per-column default rule (unique columns
+//! take sequences, defaulted columns are omitted, the rest are faked) is
+//! recorded in `emit/factory.rs`.
 //!
 //! **Recorded limitations.** Multi-column foreign keys are introspected but
 //! emit no relation (composite keys still work as `Pk` tuples); relations

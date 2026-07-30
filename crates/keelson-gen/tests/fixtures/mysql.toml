@@ -1,0 +1,17 @@
+# The configuration the checked-in tests/generated/mysql fixture was
+# generated with — the MySQL rendition of the shared schema (the no-RETURNING
+# dialect), hooks on `users` exactly as the hand-written spec model has them,
+# and the factory emitter switched on so one fixture proves both lanes.
+#
+# There is no `schema` key: a MySQL schema *is* a database, so the URL's
+# database name is the namespace (see src/introspect/mysql.rs).
+dialect = "mysql"
+
+[output]
+factories = true
+
+[hooks]
+module = "crate::hooks"
+
+[tables.users]
+hooks = ["before_insert", "after_insert"]

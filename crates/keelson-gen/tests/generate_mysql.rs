@@ -1,14 +1,14 @@
-//! PostgreSQL generation: the offline lane emits from a hand-built
-//! [`keelson_gen::schema::Schema`] IR of `tests/schema/psql.sql` (emission
-//! and introspection are separate stages, so no server is needed to pin the
-//! emitted code); the `live-docker` lane introspects the real containerised
-//! PostgreSQL 17 and asserts it produces **exactly this IR** — together they
-//! pin the whole pipeline without making every CI run need Docker.
+//! MySQL generation: the offline lane emits from a hand-built
+//! [`keelson_gen::schema::Schema`] IR of `tests/schema/mysql.sql`, and the
+//! `live-docker` lane introspects the real containerised MySQL 8.4 and
+//! asserts it produces **exactly this IR** — the same two-lane arrangement
+//! `generate_psql.rs` uses, so no CI run needs Docker to pin the emitted
+//! code.
 //!
 //! To regenerate the fixture after changing the emitter:
 //!
 //! ```text
-//! KEELSON_GEN_BLESS=1 cargo test -p keelson-gen --test generate_psql
+//! KEELSON_GEN_BLESS=1 cargo test -p keelson-gen --test generate_mysql
 //! ```
 
 use std::path::{Path, PathBuf};
@@ -39,25 +39,21 @@ fn fk(column: &str, ref_table: &str, ref_column: &str) -> ForeignKey {
     }
 }
 
-/// `tests/schema/psql.sql`, as `pg_catalog` reports it (`format_type`
-/// spellings, `pg_get_expr` default texts).
-fn psql_ir() -> Schema {
+/// `tests/schema/mysql.sql`, as `information_schema` reports it:
+/// `COLUMN_TYPE` spellings (so `tinyint(1)`, not `tinyint`), `COLUMN_DEFAULT`
+/// texts, and the `UNIQUE` constraint on `tags.name`.
+fn mysql_ir() -> Schema {
     Schema {
         tables: vec![
             TableDef {
                 name: "comments".to_owned(),
                 kind: TableKind::Table,
                 columns: vec![
-                    col("id", "integer", false, None),
-                    col("post_id", "integer", false, None),
-                    col("user_id", "integer", true, None),
+                    col("id", "int", false, None),
+                    col("post_id", "int", false, None),
+                    col("user_id", "int", true, None),
                     col("body", "text", false, None),
-                    col(
-                        "created_at",
-                        "timestamp with time zone",
-                        false,
-                        Some("now()"),
-                    ),
+                    col("created_at", "datetime", false, Some("CURRENT_TIMESTAMP")),
                 ],
                 primary_key: vec!["id".to_owned()],
                 foreign_keys: vec![fk("post_id", "posts", "id"), fk("user_id", "users", "id")],
@@ -67,8 +63,8 @@ fn psql_ir() -> Schema {
                 name: "post_tags".to_owned(),
                 kind: TableKind::Table,
                 columns: vec![
-                    col("post_id", "integer", false, None),
-                    col("tag_id", "integer", false, None),
+                    col("post_id", "int", false, None),
+                    col("tag_id", "int", false, None),
                 ],
                 primary_key: vec!["post_id".to_owned(), "tag_id".to_owned()],
                 foreign_keys: vec![fk("post_id", "posts", "id"), fk("tag_id", "tags", "id")],
@@ -78,12 +74,12 @@ fn psql_ir() -> Schema {
                 name: "posts".to_owned(),
                 kind: TableKind::Table,
                 columns: vec![
-                    col("id", "integer", false, None),
-                    col("user_id", "integer", false, None),
-                    col("title", "text", false, None),
-                    col("status", "text", true, None),
-                    col("views", "integer", false, Some("0")),
-                    col("published_at", "timestamp with time zone", true, None),
+                    col("id", "int", false, None),
+                    col("user_id", "int", false, None),
+                    col("title", "varchar(255)", false, None),
+                    col("status", "varchar(64)", true, None),
+                    col("views", "int", false, Some("0")),
+                    col("published_at", "datetime", true, None),
                 ],
                 primary_key: vec!["id".to_owned()],
                 foreign_keys: vec![fk("user_id", "users", "id")],
@@ -93,8 +89,8 @@ fn psql_ir() -> Schema {
                 name: "tags".to_owned(),
                 kind: TableKind::Table,
                 columns: vec![
-                    col("id", "integer", false, None),
-                    col("name", "text", false, None),
+                    col("id", "int", false, None),
+                    col("name", "varchar(255)", false, None),
                 ],
                 primary_key: vec!["id".to_owned()],
                 foreign_keys: vec![],
@@ -104,17 +100,12 @@ fn psql_ir() -> Schema {
                 name: "users".to_owned(),
                 kind: TableKind::Table,
                 columns: vec![
-                    col("id", "integer", false, None),
-                    col("name", "text", false, None),
-                    col("email", "text", true, None),
-                    col("age", "integer", true, None),
-                    col("is_active", "boolean", false, Some("true")),
-                    col(
-                        "created_at",
-                        "timestamp with time zone",
-                        false,
-                        Some("now()"),
-                    ),
+                    col("id", "int", false, None),
+                    col("name", "varchar(255)", false, None),
+                    col("email", "varchar(255)", true, None),
+                    col("age", "int", true, None),
+                    col("is_active", "tinyint(1)", false, Some("1")),
+                    col("created_at", "datetime", false, Some("CURRENT_TIMESTAMP")),
                 ],
                 primary_key: vec!["id".to_owned()],
                 foreign_keys: vec![],
@@ -125,8 +116,8 @@ fn psql_ir() -> Schema {
 }
 
 fn generate() -> Vec<(String, String)> {
-    let config = Config::load(manifest_path("tests/fixtures/psql.toml")).expect("fixture config");
-    keelson_gen::generate_from_schema(&psql_ir(), &config).expect("generation")
+    let config = Config::load(manifest_path("tests/fixtures/mysql.toml")).expect("fixture config");
+    keelson_gen::generate_from_schema(&mysql_ir(), &config).expect("generation")
 }
 
 #[test]
@@ -137,7 +128,7 @@ fn the_same_ir_generates_byte_identical_output_twice() {
 #[test]
 fn the_output_matches_the_checked_in_fixture() {
     let files = generate();
-    let dir = manifest_path("tests/generated/psql");
+    let dir = manifest_path("tests/generated/mysql");
 
     if std::env::var_os("KEELSON_GEN_BLESS").is_some() {
         keelson_gen::write_files(&dir, &files).expect("blessing the fixture");
@@ -164,15 +155,42 @@ fn the_output_matches_the_checked_in_fixture() {
     assert_eq!(on_disk, expected);
 }
 
-/// The live half: introspecting the real containerised PostgreSQL 17 (the
-/// shared schema, loaded by keelson-sqlcheck's container) produces exactly
-/// the IR the offline lane emits from.
+/// The MySQL model's `INSERT` carries no `RETURNING` — the emitted text is
+/// the proof, and the keyed read-back stands in its place.
+#[test]
+fn the_emitted_mysql_model_has_no_returning_and_reads_back_by_key() {
+    let files = generate();
+    let users = &files
+        .iter()
+        .find(|(n, _)| n == "users.rs")
+        .expect("users.rs")
+        .1;
+    assert!(
+        !users.contains("returning"),
+        "MySQL has no RETURNING on any statement"
+    );
+    assert!(users.contains("pub fn by_pk("), "the keyed read-back");
+    assert!(
+        users.contains("last_insert_id"),
+        "the auto-increment fallback"
+    );
+    // The generic ModelTable surface (whose `insert(…).one()` decodes the
+    // INSERT's own rows) is not what `table()` hands out.
+    assert!(
+        users.contains("pub fn table() -> Users"),
+        "table() returns the marker, not ModelTable"
+    );
+}
+
+/// The live half: introspecting the real containerised MySQL 8.4 (the shared
+/// schema, loaded by keelson-sqlcheck's container) produces exactly the IR
+/// the offline lane emits from.
 #[cfg(feature = "live-docker")]
 #[test]
 fn live_introspection_equals_the_hand_built_ir() {
-    let url = keelson_sqlcheck::live::psql_url().to_owned();
-    let mut config = Config::load(manifest_path("tests/fixtures/psql.toml")).unwrap();
+    let url = keelson_sqlcheck::live::mysql_url().to_owned();
+    let mut config = Config::load(manifest_path("tests/fixtures/mysql.toml")).unwrap();
     config.url = Some(url);
     let schema = keelson_gen::introspect::introspect(&config).expect("live introspection");
-    assert_eq!(schema, psql_ir());
+    assert_eq!(schema, mysql_ir());
 }

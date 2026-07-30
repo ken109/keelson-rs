@@ -9,13 +9,17 @@ repository.workspace = true
 authors.workspace = true
 
 [features]
-# The hand-written model's end-to-end tests against containerised
-# PostgreSQL 17, reusing keelson-sqlcheck's containers and
+# The hand-written models' end-to-end tests against containerised
+# PostgreSQL 17 and MySQL 8.4, reusing keelson-sqlcheck's containers and
 # `KEELSON_LIVE_*_URL` overrides (the SQLite lane needs no feature and runs in
 # every plain `cargo test`):
 #
 #   cargo test -p keelson-models --features live-docker
-live-docker = ["keelson-sqlcheck/live-docker", "keelson-sqlx/psql"]
+live-docker = [
+    "keelson-sqlcheck/live-docker",
+    "keelson-sqlx/psql",
+    "keelson-sqlx/mysql",
+]
 
 [dependencies]
 # Machinery only: the model layer is dialect-generic (it is written against
@@ -29,9 +33,11 @@ keelson-exec.workspace = true
 
 [dev-dependencies]
 # The hand-written users/posts model — the code generator's specification —
-# is written twice, once against keelson-psql (the demonstration dialect) and
-# once against keelson-sqlite (the always-on end-to-end lane).
+# is written three times: against keelson-psql (the demonstration dialect),
+# keelson-sqlite (the always-on end-to-end lane) and keelson-mysql (the
+# no-RETURNING dialect, whose divergences are a different `Table` body).
 keelson-core = { workspace = true, features = ["chrono"] }
+keelson-mysql.workspace = true
 keelson-psql.workspace = true
 keelson-sqlite.workspace = true
 keelson-sqlx = { workspace = true, features = ["sqlite", "chrono"] }

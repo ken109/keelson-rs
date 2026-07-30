@@ -111,9 +111,7 @@ fn default_type(dialect: Dialect, norm: &str, column: &ColumnDef) -> Option<&'st
     match dialect {
         Dialect::Psql => psql_default(norm),
         Dialect::Sqlite => sqlite_default(norm, column),
-        // MySQL emission is not implemented; its type table would land here
-        // with it.
-        Dialect::Mysql => None,
+        Dialect::Mysql => mysql_default(norm, column),
     }
 }
 
@@ -183,6 +181,53 @@ fn sqlite_default(norm: &str, column: &ColumnDef) -> Option<&'static str> {
     None
 }
 
+/// MySQL: keys are `information_schema.COLUMNS.COLUMN_TYPE`, normalised —
+/// which keeps the unsigned-ness (`int unsigned`) and, before normalisation,
+/// the display width the one width-carrying decision needs.
+///
+/// The two rules worth stating:
+///
+/// - **`TINYINT(1)` is `bool`.** MySQL has no boolean type; `BOOL`/`BOOLEAN`
+///   are aliases for `TINYINT(1)`, and every driver (sqlx included, see
+///   keelson-sqlx's `decode_value`) reports that exact declaration as
+///   `BOOLEAN`. A wider `TINYINT` is an integer, so the display width is read
+///   from the raw type text before precision is stripped.
+/// - **`DATETIME` is naive, `TIMESTAMP` is zoned.** `docs/type-mappings.md`
+///   maps `chrono::NaiveDateTime` onto `DATETIME` and
+///   `chrono::DateTime<Utc>` onto `TIMESTAMP` (which MySQL converts through
+///   the session zone the execution layer pins to `+00:00`).
+fn mysql_default(norm: &str, column: &ColumnDef) -> Option<&'static str> {
+    let raw = column.db_type.trim().to_lowercase();
+    if raw.starts_with("tinyint(1)") || norm == "bool" || norm == "boolean" {
+        return Some("bool");
+    }
+    Some(match norm {
+        "tinyint" => "i8",
+        "smallint" => "i16",
+        "mediumint" | "int" | "integer" => "i32",
+        "bigint" => "i64",
+        "tinyint unsigned" => "u8",
+        "smallint unsigned" => "u16",
+        "mediumint unsigned" | "int unsigned" | "integer unsigned" => "u32",
+        "bigint unsigned" => "u64",
+        "float" => "f32",
+        "double" | "double precision" | "real" => "f64",
+        "decimal" | "numeric" => "rust_decimal::Decimal",
+        "char" | "varchar" | "tinytext" | "text" | "mediumtext" | "longtext" | "enum" | "set" => {
+            "String"
+        }
+        "binary" | "varbinary" | "tinyblob" | "blob" | "mediumblob" | "longblob" => "Vec<u8>",
+        "date" => "chrono::NaiveDate",
+        "time" => "chrono::NaiveTime",
+        "datetime" => "chrono::NaiveDateTime",
+        "timestamp" => "chrono::DateTime<chrono::Utc>",
+        "json" => "serde_json::Value",
+        // `YEAR`, `BIT`, the spatial types and anything else stay unmapped —
+        // a loud error naming the column, never a silent `String`.
+        _ => return None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -207,6 +252,7 @@ mod tests {
             columns,
             primary_key: vec![],
             foreign_keys: vec![],
+            unique_keys: vec![],
         }
     }
 
@@ -263,6 +309,40 @@ mod tests {
                 .rust_type,
             "chrono::NaiveDateTime"
         );
+    }
+
+    #[test]
+    fn the_mysql_defaults_follow_the_type_table_including_tinyint_one() {
+        assert_eq!(plain(Dialect::Mysql, "int"), "i32");
+        assert_eq!(plain(Dialect::Mysql, "bigint"), "i64");
+        assert_eq!(plain(Dialect::Mysql, "bigint unsigned"), "u64");
+        assert_eq!(plain(Dialect::Mysql, "varchar(255)"), "String");
+        assert_eq!(plain(Dialect::Mysql, "text"), "String");
+        assert_eq!(plain(Dialect::Mysql, "datetime"), "chrono::NaiveDateTime");
+        assert_eq!(
+            plain(Dialect::Mysql, "timestamp"),
+            "chrono::DateTime<chrono::Utc>"
+        );
+        assert_eq!(
+            plain(Dialect::Mysql, "decimal(10,2)"),
+            "rust_decimal::Decimal"
+        );
+        assert_eq!(plain(Dialect::Mysql, "json"), "serde_json::Value");
+        assert_eq!(plain(Dialect::Mysql, "blob"), "Vec<u8>");
+
+        // The one width-carrying decision: TINYINT(1) is MySQL's boolean,
+        // every wider TINYINT is an integer.
+        assert_eq!(plain(Dialect::Mysql, "tinyint(1)"), "bool");
+        assert_eq!(plain(Dialect::Mysql, "tinyint"), "i8");
+        assert_eq!(plain(Dialect::Mysql, "tinyint(4)"), "i8");
+    }
+
+    #[test]
+    fn an_unmapped_mysql_type_is_a_loud_error_too() {
+        let c = col("born", "year", false);
+        let t = table("people", vec![c.clone()]);
+        let err = resolve(Dialect::Mysql, &Types::default(), &t, &c).unwrap_err();
+        assert!(err.to_string().contains("people.born"), "{err}");
     }
 
     #[test]
