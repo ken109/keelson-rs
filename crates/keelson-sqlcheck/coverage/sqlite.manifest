@@ -521,3 +521,9 @@ sig = IS NOT ?
 sig = IS NOT "
 sig = IS NOT '
 sig = IS NOT (
+
+# --- VALUES as a from-item ---------------------------------------------------
+
+[values.from_item]
+api = subquery of a VALUES select-core as a table-or-subquery
+sig = FROM (VALUES

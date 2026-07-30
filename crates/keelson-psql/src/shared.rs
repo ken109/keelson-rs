@@ -556,6 +556,18 @@ impl JoinChain {
         self.join.append_using(columns);
         self
     }
+
+    /// `USING (…) AS "alias"` — name the row of merged join columns
+    /// (PostgreSQL 16+), so `"alias"."id"` refers to the merged column.
+    ///
+    /// Belongs to the `USING` clause: without [`using`](Self::using) columns
+    /// this records a `build()` error, because there is no merged row for the
+    /// alias to name.
+    #[must_use]
+    pub fn using_alias(mut self, alias: impl Into<Cow<'static, str>>) -> JoinChain {
+        self.join.using_alias = Some(alias.into());
+        self
+    }
 }
 
 impl<Q: HasJoins> Mod<Q> for JoinChain {

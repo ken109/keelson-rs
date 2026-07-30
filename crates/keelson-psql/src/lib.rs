@@ -1,8 +1,9 @@
 //! The PostgreSQL dialect for keelson.
 //!
-//! Four statement types, each shaped by the production in PostgreSQL's own
-//! reference manual, plus the mods that fill them in and the expression starters
-//! they are filled in with.
+//! The statement types — `SELECT`, `INSERT`, `UPDATE`, `DELETE`, `MERGE`, and
+//! the `VALUES` and `TABLE` shorthands — each shaped by the production in
+//! PostgreSQL's own reference manual, plus the mods that fill them in and the
+//! expression starters they are filled in with.
 //!
 //! ```
 //! use keelson_psql as psql;
@@ -65,8 +66,11 @@ mod statement;
 pub mod delete;
 pub mod frame;
 pub mod insert;
+pub mod merge;
 pub mod select;
+pub mod table;
 pub mod update;
+pub mod values;
 pub mod window;
 
 pub use dialect::Psql;
@@ -74,7 +78,8 @@ pub use extras::{Distinct, Overriding, cube, excluded, grouping_sets, query, rol
 pub use function::{ColumnDef, Function, TableFunction};
 pub use ops::PsqlOps;
 pub use statement::{
-    DeleteQuery, HasExtraTables, HasTargetTable, InsertQuery, SelectQuery, UpdateQuery,
+    DeleteQuery, HasExtraTables, HasTargetTable, InsertQuery, MergeAction, MergeInsert,
+    MergeMatchKind, MergeQuery, MergeWhen, SelectQuery, TableQuery, UpdateQuery, ValuesQuery,
 };
 
 // The core vocabulary a caller needs in order to use any of the above, re-exported
@@ -119,6 +124,40 @@ pub fn update(mods: impl Mod<UpdateQuery>) -> UpdateQuery {
 /// Build a `DELETE` from one mod.
 pub fn delete(mods: impl Mod<DeleteQuery>) -> DeleteQuery {
     let mut q = DeleteQuery::default();
+    mods.apply(&mut q);
+    q
+}
+
+/// Build a `MERGE` from one mod (PostgreSQL 15+).
+///
+/// The grammar requires a target ([`merge::into`]), a source ([`merge::using`]),
+/// an [`merge::on`] condition and at least one `WHEN` clause; a `MERGE` missing
+/// any of them is a [`build()`](keelson_core::Query::build) error naming the
+/// absent piece.
+pub fn merge(mods: impl Mod<MergeQuery>) -> MergeQuery {
+    let mut q = MergeQuery::default();
+    mods.apply(&mut q);
+    q
+}
+
+/// Build a standalone `VALUES` statement from one mod.
+///
+/// The rows come from [`values::row`]/[`values::rows`]; with none the statement
+/// is a [`build()`](keelson_core::Query::build) error, because `VALUES` with no
+/// rows is not a statement.
+pub fn values(mods: impl Mod<ValuesQuery>) -> ValuesQuery {
+    let mut q = ValuesQuery::default();
+    mods.apply(&mut q);
+    q
+}
+
+/// Build a `TABLE name` command from one mod — PostgreSQL's shorthand for
+/// `SELECT * FROM name`.
+///
+/// The table comes from [`table::name`]; with none the statement is a
+/// [`build()`](keelson_core::Query::build) error.
+pub fn table(mods: impl Mod<TableQuery>) -> TableQuery {
+    let mut q = TableQuery::default();
     mods.apply(&mut q);
     q
 }
@@ -257,6 +296,10 @@ mod tests {
         assert_eq!(insert(()).query_type(), QueryType::Insert);
         assert_eq!(update(()).query_type(), QueryType::Update);
         assert_eq!(delete(()).query_type(), QueryType::Delete);
+        assert_eq!(merge(()).query_type(), QueryType::Merge);
+        // VALUES and TABLE are SELECT shorthands: rows come back.
+        assert_eq!(values(()).query_type(), QueryType::Select);
+        assert_eq!(table(()).query_type(), QueryType::Select);
     }
 
     #[test]

@@ -23,6 +23,12 @@ pub enum QueryType {
     Update,
     /// `DELETE`.
     Delete,
+    /// `MERGE` — PostgreSQL's conditional insert/update/delete against a source.
+    ///
+    /// A fifth statement kind rather than a flavour of the four: whether it
+    /// returns rows depends on its `RETURNING` clause, exactly as for the three
+    /// mutations, but it is none of them.
+    Merge,
 }
 
 impl fmt::Display for QueryType {
@@ -33,6 +39,7 @@ impl fmt::Display for QueryType {
             QueryType::Insert => "INSERT",
             QueryType::Update => "UPDATE",
             QueryType::Delete => "DELETE",
+            QueryType::Merge => "MERGE",
         })
     }
 }
@@ -117,6 +124,7 @@ mod tests {
         assert_eq!(QueryType::Insert.to_string(), "INSERT");
         assert_eq!(QueryType::Update.to_string(), "UPDATE");
         assert_eq!(QueryType::Delete.to_string(), "DELETE");
+        assert_eq!(QueryType::Merge.to_string(), "MERGE");
         assert_eq!(QueryType::Unknown.to_string(), "UNKNOWN");
         assert_eq!(QueryType::default(), QueryType::Unknown);
     }

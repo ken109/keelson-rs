@@ -132,6 +132,28 @@ queries. So every spelling is representable (`Offset::rows`,
 form: bare `OFFSET n`, which every dialect accepts, and `FETCH NEXT … ROWS`,
 which is what the clause rendered before the other spellings existed.
 
+## `MERGE` writes `WHEN NOT MATCHED` bare; `BY TARGET` only on request
+
+```sql
+WHEN NOT MATCHED THEN INSERT …            -- the default
+WHEN NOT MATCHED BY TARGET THEN INSERT …  -- NotMatchedChain::by_target()
+```
+
+PostgreSQL 17 added `BY TARGET` as an explicit spelling of what `WHEN NOT
+MATCHED` already means, so it exists to read well next to `WHEN NOT MATCHED BY
+SOURCE`. Same policy as `OFFSET n ROWS` and `FETCH FIRST` above: the synonym is
+representable because a human diffs SQL against existing queries, and the
+default is the tersest form — which here is also the only one PostgreSQL 15 and
+16 accept.
+
+Two smaller `MERGE`-adjacent spellings, decided the same way by their grammars
+rather than by taste: MySQL's standalone `VALUES` statement writes each row as
+`ROW(…)` with the keyword welded to the parenthesis, because that is the
+`row_constructor` production's own spelling (an `INSERT`'s `VALUES (…)` list
+has no `ROW`); and a `MERGE` arm's `THEN UPDATE SET` list is the ordinary
+`UPDATE` assignment list, keyword supplied by the arm, for the same reason
+`Set` never writes its own `SET`.
+
 ## A clause with nowhere to go is a `build()` error, never a guess
 
 ```sql

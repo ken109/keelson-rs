@@ -1,18 +1,19 @@
 use std::borrow::Cow;
 
+use crate::error::Error;
 use crate::expr::{Expr, IntoExpr};
 use crate::writer::{Expression, SqlWriter};
 
 use super::from::TableRef;
 use super::{MaybeAbsent, write_quoted_list};
 
-/// `[NATURAL] <kind> <table> [ON a AND b] [USING (cols)]`
+/// `[NATURAL] <kind> <table> [ON a AND b] [USING (cols) [AS alias]]`
 ///
 /// From PostgreSQL 17's `from_item`:
 ///
 /// ```text
 /// from_item [ NATURAL ] join_type from_item
-///     [ ON join_condition | USING ( join_column [, ...] ) ]
+///     [ ON join_condition | USING ( join_column [, ...] ) [ AS join_using_alias ] ]
 /// ```
 ///
 /// `ON` and `USING` are alternatives, and `NATURAL` excludes both; nothing here
@@ -31,6 +32,11 @@ pub struct Join {
     pub on: Vec<Expr>,
     /// `USING` columns, quoted on output.
     pub using: Vec<Cow<'static, str>>,
+    /// `USING (…) AS alias` — a name for the row of merged join columns
+    /// (PostgreSQL 16+). Quoted on output. Belongs to the `USING` clause, so with
+    /// no [`using`](Self::using) columns it is a recorded build error rather than
+    /// something to guess a rendering for.
+    pub using_alias: Option<Cow<'static, str>>,
 }
 
 impl Join {
@@ -78,6 +84,17 @@ impl Expression for Join {
 
         w.write_slice(&self.on, " ON ", " AND ", "");
         write_quoted_list(w, &self.using, " USING (", ", ", ")");
+        if let Some(alias) = &self.using_alias {
+            if self.using.is_empty() {
+                // The alias names the row `USING` merges; with no USING there is
+                // no such row, and writing ` AS alias` after an ON (or nothing)
+                // would be valid-looking SQL meaning something else.
+                w.record_error(Error::Incomplete("the USING columns its join alias names"));
+                return;
+            }
+            w.push_str(" AS ");
+            w.push_quoted(&[alias]);
+        }
     }
 }
 
@@ -195,6 +212,38 @@ mod tests {
         let mut j = Join::new(JoinKind::Left, to("tags"));
         j.append_using(["id", "name"]);
         assert_frag_sql(FRAME, &sql(&j), r#"LEFT JOIN "tags" USING ("id", "name")"#);
+    }
+
+    #[test]
+    fn a_using_alias_names_the_merged_join_columns() {
+        // PostgreSQL 17 from_item (the alias is 16+):
+        //   USING ( join_column [, ...] ) [ AS join_using_alias ]
+        // The alias follows the parenthesised column list.
+        let mut j = Join::new(JoinKind::Inner, to("tags"));
+        j.append_using(["id"]);
+        j.using_alias = Some("t".into());
+        assert_frag_sql(
+            r#"SELECT "t"."id" FROM users {}"#,
+            &sql(&j),
+            r#"INNER JOIN "tags" USING ("id") AS "t""#,
+        );
+    }
+
+    #[test]
+    fn a_using_alias_without_using_columns_is_a_recorded_failure() {
+        // The alias belongs to the USING clause; with no columns there is no
+        // merged row for it to name, and rendering ` AS "t"` after an ON —
+        // or after nothing — would be valid SQL that means something else.
+        let mut j = Join::new(JoinKind::Inner, to("tags"));
+        j.append_on("true");
+        j.using_alias = Some("t".into());
+        let err = build(&Numbered, &j).unwrap_err();
+        // The substring names the SQL concept (the missing USING columns), not
+        // the message wording.
+        assert!(
+            matches!(&err, crate::Error::Incomplete(what) if what.contains("USING")),
+            "got: {err}"
+        );
     }
 
     #[test]

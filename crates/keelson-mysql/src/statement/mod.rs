@@ -1,4 +1,5 @@
-//! The five statement types, each shaped by MySQL's own grammar.
+//! The statement types, each shaped by MySQL's own grammar: the five DML ones,
+//! and the `VALUES` and `TABLE` statements of MySQL 8.0.19+.
 //!
 //! Every one composes the shared clause structs as named fields, in the order
 //! *13.2 Data Manipulation Statements* lists them, and implements the `Has*`
@@ -39,13 +40,17 @@ mod delete;
 mod insert;
 mod replace;
 mod select;
+mod table;
 mod update;
+mod values;
 
 pub use delete::DeleteQuery;
 pub use insert::InsertQuery;
 pub use replace::ReplaceQuery;
 pub use select::SelectQuery;
+pub use table::TableQuery;
 pub use update::UpdateQuery;
+pub use values::ValuesQuery;
 
 use std::borrow::Cow;
 

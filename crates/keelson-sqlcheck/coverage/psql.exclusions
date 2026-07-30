@@ -10,18 +10,6 @@
 # Moving an entry from here into psql.manifest is how new rendering work
 # becomes gated.
 
-[stmt.merge]
-reason = not rendered yet — MERGE (PostgreSQL 15+) is planned work, not an oversight
-
-[stmt.table]
-reason = not rendered yet — the `TABLE name` shorthand for SELECT * FROM name is planned work
-
-[values.standalone]
-reason = not rendered yet — a standalone VALUES statement (VALUES (…), (…) as a query of its own); planned work
-
-[combine.operand_parens]
-reason = not rendered yet — parenthesising a set-operation operand that carries its own ORDER BY/LIMIT; planned work
-
 [select.all]
 reason = SELECT ALL is the grammar default; deliberately unrepresentable, the absence of DISTINCT is what it means (see keelson-psql extras::Distinct)
 

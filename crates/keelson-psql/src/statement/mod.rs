@@ -1,4 +1,5 @@
-//! The four statement types, each shaped by PostgreSQL's own grammar.
+//! The statement types, each shaped by PostgreSQL's own grammar: the four core
+//! ones, `MERGE`, and the two `SELECT` shorthands (`VALUES`, `TABLE`).
 //!
 //! Every one composes the shared clause structs as named fields, in the order the
 //! reference manual lists them, and implements the `Has*` traits for the clauses it
@@ -9,8 +10,8 @@
 //!
 //! # Which table a mod means
 //!
-//! Two statements have two tables, and the two `Has*` traits below are how they are
-//! told apart:
+//! Three statements have two tables, and the two `Has*` traits below are how they
+//! are told apart:
 //!
 //! | statement | [`HasTableRef`](keelson_core::clause::HasTableRef) | [`HasTargetTable`] | [`HasExtraTables`] |
 //! |---|---|---|---|
@@ -18,21 +19,29 @@
 //! | `INSERT` | `INTO` target | — | — |
 //! | `UPDATE` | `FROM` item | the updated table | further `FROM` items |
 //! | `DELETE` | `USING` item | the deleted-from table | further `USING` items |
+//! | `MERGE` | `USING` source | the merged-into table | — |
+//! | `TABLE` | the table | — | — |
 //!
 //! So `HasTableRef` always means "the from-item", which is what makes one
-//! `select::from` / `update::from` / `delete::using` chain type serve all three, and
-//! what puts joins in the right place — `HasJoins` reaches the from-item's joins,
-//! never the target's.
+//! `select::from` / `update::from` / `delete::using` / `merge::using` chain type
+//! serve them all, and what puts joins in the right place — `HasJoins` reaches
+//! the from-item's joins, never the target's.
 
 mod delete;
 mod insert;
+mod merge;
 mod select;
+mod table;
 mod update;
+mod values;
 
 pub use delete::DeleteQuery;
 pub use insert::InsertQuery;
+pub use merge::{MergeAction, MergeInsert, MergeMatchKind, MergeQuery, MergeWhen};
 pub use select::SelectQuery;
+pub use table::TableQuery;
 pub use update::UpdateQuery;
+pub use values::ValuesQuery;
 
 use keelson_core::clause::TableRef;
 

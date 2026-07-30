@@ -892,6 +892,23 @@ fn a_values_core_compounds_with_a_select_core() {
     );
 }
 
+/// A `VALUES` select-core is a select-stmt, so a parenthesised one is a
+/// `table-or-subquery` — the from-item form. SQLite has no column-alias list on
+/// the alias, so the columns keep their generated names, `column1` and
+/// `column2`.
+#[test]
+fn a_values_core_is_a_from_item_under_an_alias() {
+    let vals = sqlite::select(select::rows([(arg(1i32), arg("a")), (arg(2i32), arg("b"))]));
+    let args = built(
+        sqlite::select((
+            select::columns((quote(("v", "column1")), quote(("v", "column2")))),
+            select::from(subquery(vals)).as_("v"),
+        )),
+        r#"SELECT "v"."column1", "v"."column2" FROM (VALUES (?1, ?2), (?3, ?4)) AS "v""#,
+    );
+    assert_eq!(args.len(), 4);
+}
+
 // ---------------------------------------------------------------------------
 // ORDER BY / LIMIT
 // ---------------------------------------------------------------------------

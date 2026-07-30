@@ -624,3 +624,87 @@ api = PsqlOps::is_unknown
 
 [op.is_not_unknown]
 api = PsqlOps::is_not_unknown
+
+# --- MERGE (PostgreSQL 15+) ------------------------------------------------
+#
+# Signature entries throughout: the tree walker's detector list is a frozen
+# inventory (coverage.rs PSQL_DETECTABLE), and MergeStmt is not in it, so each
+# construct is claimed by a token unique to MERGE's own productions.
+
+[stmt.merge]
+api = psql::merge
+sig = MERGE INTO
+
+[merge.when_matched]
+api = merge::when_matched
+sig = WHEN MATCHED
+
+[merge.when_not_matched]
+api = merge::when_not_matched
+sig = WHEN NOT MATCHED
+
+[merge.by_target]
+api = NotMatchedChain::by_target (PostgreSQL 17+ spelling)
+sig = WHEN NOT MATCHED BY TARGET
+
+[merge.by_source]
+api = merge::when_not_matched_by_source (PostgreSQL 17+)
+sig = WHEN NOT MATCHED BY SOURCE
+
+[merge.condition]
+api = MatchedChain::and / NotMatchedChain::and
+sig = MATCHED AND
+sig = BY SOURCE AND
+sig = BY TARGET AND
+
+[merge.update]
+api = MatchedChain::then_update
+sig = THEN UPDATE SET
+
+[merge.delete]
+api = MatchedChain::then_delete
+sig = THEN DELETE
+
+[merge.do_nothing]
+api = MatchedChain::then_do_nothing / NotMatchedChain::then_do_nothing
+sig = THEN DO NOTHING
+
+[merge.insert]
+api = NotMatchedChain::then_insert
+sig = THEN INSERT
+
+[merge.insert_default_values]
+api = NotMatchedChain::then_insert with no values row
+sig = INSERT DEFAULT VALUES
+
+[merge.returning]
+api = merge::returning (PostgreSQL 17+)
+sig = THEN DELETE RETURNING
+
+# --- VALUES and TABLE statements -------------------------------------------
+
+[values.standalone]
+api = psql::values
+sig = VALUES ({*}) ORDER BY
+
+[values.from_item]
+api = subquery(psql::values(..)) as a from-item
+sig = FROM (VALUES
+
+[stmt.table]
+api = psql::table
+sig = TABLE "
+sig = TABLE ONLY
+
+# --- set-operation operand parenthesisation ---------------------------------
+
+[combine.operand_parens]
+api = a query carrying its own ORDER BY/LIMIT as an operand value (IntoExpr into union/intersect/except), and the leading query's wrapping (Combines::parenthesises_leading_query)
+sig = LIMIT {*}) EXCEPT
+sig = OFFSET {*}) UNION
+
+# --- join USING alias -------------------------------------------------------
+
+[join.using_alias]
+api = JoinChain::using_alias (PostgreSQL 16+)
+sig = USING ({*}) AS

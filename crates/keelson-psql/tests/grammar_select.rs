@@ -557,6 +557,23 @@ fn join_using_one_column_and_several() {
     );
 }
 
+/// **PostgreSQL 16+**: `USING ( join_column [, ...] ) [ AS join_using_alias ]`
+/// — the alias names the row of merged join columns, so `"j"."id"` refers to
+/// the merged column itself rather than to either side's.
+#[test]
+fn pg16_join_using_takes_an_alias_for_the_merged_columns() {
+    check(
+        &psql::select((
+            select::columns(quote(("j", "id"))),
+            select::from(quote("posts")),
+            select::inner_join(quote("comments"))
+                .using(["id"])
+                .using_alias("j"),
+        )),
+        r#"SELECT "j"."id" FROM "posts" INNER JOIN "comments" USING ("id") AS "j""#,
+    );
+}
+
 #[test]
 fn several_joins_chain_left_to_right() {
     check(
@@ -1816,6 +1833,41 @@ fn an_interior_set_operation_needs_a_nested_query() {
         )),
         r#"SELECT "id" FROM "posts" UNION (SELECT "post_id" FROM "post_tags"
            INTERSECT (SELECT "post_id" FROM "comments"))"#,
+    );
+}
+
+/// The other half of the manual's parenthesisation rule:
+///
+/// > `ORDER BY` and `LIMIT` … can be attached to a subexpression if it is
+/// > enclosed in parentheses.
+///
+/// An operand slot always brings the parentheses, and a query is a value — so a
+/// query carrying its own `ORDER BY`/`LIMIT` goes straight in as an operand and
+/// keeps its tail clauses inside its parentheses, where they apply to it alone.
+/// (A middle operand, so the shape is visible between two operators rather than
+/// at the end of the statement.)
+#[test]
+fn an_operand_keeps_its_own_tail_clauses_inside_the_parentheses() {
+    let newest_comment = psql::select((
+        select::columns(quote("id")),
+        select::from(quote("comments")),
+        select::order_by(quote("id")).desc(),
+        select::limit(1),
+    ));
+    let tagged = psql::select((
+        select::columns(quote("post_id")),
+        select::from(quote("post_tags")),
+    ));
+    check(
+        &psql::select((
+            select::columns(quote("id")),
+            select::from(quote("posts")),
+            select::union(newest_comment),
+            select::except(tagged),
+        )),
+        r#"SELECT "id" FROM "posts"
+           UNION (SELECT "id" FROM "comments" ORDER BY "id" DESC LIMIT 1)
+           EXCEPT (SELECT "post_id" FROM "post_tags")"#,
     );
 }
 

@@ -86,7 +86,9 @@ pub mod frame;
 pub mod insert;
 pub mod replace;
 pub mod select;
+pub mod table;
 pub mod update;
+pub mod values;
 pub mod window;
 
 pub use dialect::Mysql;
@@ -98,7 +100,7 @@ pub use function::Function;
 pub use ops::MysqlOps;
 pub use statement::{
     DeleteQuery, HasDeleteTables, HasExtraTables, HasTargetTable, InsertQuery, ReplaceQuery,
-    SelectQuery, UpdateQuery,
+    SelectQuery, TableQuery, UpdateQuery, ValuesQuery,
 };
 
 // The core vocabulary a caller needs in order to use any of the above, re-exported
@@ -153,6 +155,28 @@ pub fn update(mods: impl Mod<UpdateQuery>) -> UpdateQuery {
 /// Build a `DELETE` from one mod.
 pub fn delete(mods: impl Mod<DeleteQuery>) -> DeleteQuery {
     let mut q = DeleteQuery::default();
+    mods.apply(&mut q);
+    q
+}
+
+/// Build a standalone `VALUES` statement from one mod (MySQL 8.0.19+).
+///
+/// The rows come from [`values::row`]/[`values::rows`] and are spelled
+/// `ROW(…)`, as the standalone grammar requires; with none the statement is a
+/// [`build()`](keelson_core::Query::build) error.
+pub fn values(mods: impl Mod<ValuesQuery>) -> ValuesQuery {
+    let mut q = ValuesQuery::default();
+    mods.apply(&mut q);
+    q
+}
+
+/// Build a `TABLE` statement from one mod (MySQL 8.0.19+) — MySQL's shorthand
+/// for `SELECT * FROM t`.
+///
+/// The table comes from [`table::name`]; with none the statement is a
+/// [`build()`](keelson_core::Query::build) error.
+pub fn table(mods: impl Mod<TableQuery>) -> TableQuery {
+    let mut q = TableQuery::default();
     mods.apply(&mut q);
     q
 }

@@ -673,6 +673,8 @@ const PSQL_ACCOUNTED_KINDS: &[&str] = &[
     "InsertStmt",
     "UpdateStmt",
     "DeleteStmt",
+    "MergeStmt",
+    "MergeWhenClause",
     "JoinExpr",
     "RangeVar",
     "RangeSubselect",

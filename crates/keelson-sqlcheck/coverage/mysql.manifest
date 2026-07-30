@@ -665,3 +665,17 @@ sig =  ALL (
 [op.binary]
 api = MysqlOps::binary
 sig = (BINARY
+
+# --- VALUES and TABLE statements (MySQL 8.0.19+) ----------------------------
+
+[stmt.values]
+api = mysql::values (the standalone VALUES statement; each row is ROW(…))
+sig = VALUES ROW(
+
+[values.from_item]
+api = subquery(mysql::values(..)) as a derived table
+sig = FROM (VALUES ROW(
+
+[stmt.table]
+api = mysql::table (the TABLE statement)
+sig = TABLE `
