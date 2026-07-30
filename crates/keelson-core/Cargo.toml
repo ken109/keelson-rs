@@ -1,0 +1,25 @@
+[package]
+name = "keelson-core"
+description = "Core primitives for keelson: Value, Expression, SqlWriter, Dialect and Mod."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[features]
+# Exposes `keelson_core::testing`, the stand-in dialects. Dialect crates enable it
+# as a dev-dependency feature; it is never on in a normal build.
+testing = []
+
+[dependencies]
+# `Value` serialises as a bare scalar so a built argument list can be compared,
+# logged or shipped as plain JSON. That is the only reason serde is here.
+serde.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true
