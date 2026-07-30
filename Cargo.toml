@@ -13,6 +13,8 @@ authors = ["Kensuke Kubo"]
 [workspace.dependencies]
 keelson-core = { path = "crates/keelson-core" }
 keelson-exec = { path = "crates/keelson-exec" }
+keelson-factory = { path = "crates/keelson-factory" }
+keelson-gen = { path = "crates/keelson-gen" }
 keelson-models = { path = "crates/keelson-models" }
 keelson-sqlcheck = { path = "crates/keelson-sqlcheck" }
 keelson-sqlx = { path = "crates/keelson-sqlx" }
@@ -36,6 +38,16 @@ sqlite3-parser = "0.17"
 sqlparser = "0.62"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+# keelson-gen's emission pipeline (build TokenStreams with quote, format with
+# prettyplease) and its TOML configuration. `syn` needs `full` because
+# prettyplease prints whole files, and generated bodies contain closures.
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", default-features = false, features = ["full", "parsing", "printing", "clone-impls", "proc-macro"] }
+prettyplease = "0.2"
+toml = "0.8"
+trybuild = "1"
 
 # Optional first-class Value types (keelson-core's "chrono"/"uuid"/"decimal"
 # features). Default features are switched off so core does not inherit chrono's

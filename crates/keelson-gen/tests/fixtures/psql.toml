@@ -1,0 +1,10 @@
+# The configuration the checked-in tests/generated/psql fixture was
+# generated with — the PostgreSQL rendition of the shared schema, hooks on
+# `users` exactly as the hand-written spec model has them.
+dialect = "psql"
+
+[hooks]
+module = "crate::hooks"
+
+[tables.users]
+hooks = ["before_insert", "after_insert"]

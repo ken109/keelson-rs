@@ -1,0 +1,22 @@
+# The configuration the checked-in tests/generated/sqlite fixture was
+# generated with. `url` is injected by the tests (a temp database built from
+# fixtures/sqlite_schema.sql).
+dialect = "sqlite"
+
+[hooks]
+module = "crate::hooks"
+
+# The same hooks the hand-written spec model implements; the application's
+# implementations live in the test binary's `hooks` module.
+[tables.users]
+hooks = ["before_insert", "after_insert"]
+
+# The schema cannot say that `posts.published_at` (a plain TEXT column with
+# no default) holds a datetime — the override records the intent, and its
+# assert_bind line proves the replacement type binds.
+[[types.override]]
+tables = ["posts"]
+rust_type = "chrono::NaiveDateTime"
+[types.override.match]
+name = "published_at"
+db_type = "TEXT"
