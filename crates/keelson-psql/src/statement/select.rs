@@ -4,7 +4,7 @@ use keelson_core::clause::{
     Having, Join, Limit, Locks, Offset, OrderBy, SelectList, TableRef, Where, Windows, With,
 };
 use keelson_core::expr::{Expr, IntoExpr, IntoExprList};
-use keelson_core::{Dialect, Expression, Mod, Query, QueryExtensions, QueryType, SqlWriter};
+use keelson_core::{Dialect, Error, Expression, Mod, Query, QueryExtensions, QueryType, SqlWriter};
 
 use super::{HasExtraTables, write_from_list};
 use crate::Psql;
@@ -101,6 +101,16 @@ impl SelectQuery {
 
 impl Expression for SelectQuery {
     fn write_sql(&self, w: &mut SqlWriter<'_>) {
+        // gram.y `select_limit`: `LIMIT` and `FETCH` are one production's two
+        // spellings, so a statement gets one of them, never both. Rendering
+        // both would not parse, and picking one would let mod application
+        // order change meaning — so the collision is recorded instead. (The
+        // combination's own pair is judged the same way, in `Combines`.)
+        if !self.limit.is_empty() && !self.fetch.is_empty() {
+            w.record_error(Error::conflicting_clauses("LIMIT", "FETCH"));
+            return;
+        }
+
         w.write_if(!self.with.is_empty(), "", &self.with, " ");
 
         let parens = self
@@ -118,7 +128,13 @@ impl Expression for SelectQuery {
         // The one clause whose absent rendering is not empty: `*`.
         w.write_expr(&self.select_list);
 
-        write_from_list(w, " FROM ", &self.from, &self.extra_from);
+        write_from_list(
+            w,
+            " FROM ",
+            &self.from,
+            &self.extra_from,
+            "the FROM item its joins attach to",
+        );
 
         w.write_if(!self.where_.is_empty(), " ", &self.where_, "");
         w.write_if(!self.group_by.is_empty(), " ", &self.group_by, "");

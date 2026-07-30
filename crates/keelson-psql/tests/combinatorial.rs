@@ -382,15 +382,20 @@ fn sel_args(c: &SelCfg) -> usize {
         + (c[S_OFFSET] == 1) as usize
 }
 
-/// Combinations PostgreSQL's *grammar* has no sentence for.
+/// Combinations PostgreSQL's *grammar* has no sentence for. The first two are
+/// also combinations the builder itself now refuses with a `build()` error
+/// (see the "Refused combinations" tests at the bottom), so they cannot run
+/// the rendering invariants at all.
 fn sel_grammar_ok(c: &SelCfg) -> bool {
     // gram.y `select_limit`: LIMIT and FETCH are the same production's two
-    // spellings — a statement gets one of them, never both.
+    // spellings — a statement gets one of them, never both, and setting both
+    // is a build() error (`limit_and_fetch_together_are_a_build_error`).
     if c[S_LIMIT] > 0 && c[S_FETCH] > 0 {
         return false;
     }
-    // A combined tail clause renders after the set operations; without any, it
-    // collides with the direct tail clauses. See the pinned_wart tests.
+    // A combined tail clause applies to the result of the set operations;
+    // without any there is no result, and it is a build() error
+    // (`combined_tail_without_a_set_operation_is_a_build_error`).
     if (c[S_COMB_ORDER] > 0 || c[S_COMB_LIMIT] > 0) && c[S_COMBINE] == 0 {
         return false;
     }
@@ -1058,8 +1063,8 @@ fn upd_args(c: &UpdCfg) -> usize {
 }
 
 /// The joins hang off the from-item, deliberately — without a FROM there is
-/// nothing for a join to attach to (and today it is silently dropped; see
-/// `pinned_wart_update_join_without_from_is_silently_dropped`).
+/// nothing for a join to attach to, and the builder refuses with a `build()`
+/// error (see `update_join_without_from_is_a_build_error`).
 fn upd_grammar_ok(c: &UpdCfg) -> bool {
     !(c[U_JOIN] == 1 && c[U_FROM] == 0)
 }
@@ -1148,6 +1153,9 @@ fn del_args(c: &DelCfg) -> usize {
     c[D_WITH] + c[D_WHERE]
 }
 
+/// Same rule as `upd_grammar_ok`: joins with no USING item to attach to are a
+/// `build()` error (see `update_join_without_from_is_a_build_error`, which
+/// covers the DELETE shape too).
 fn del_grammar_ok(c: &DelCfg) -> bool {
     !(c[D_JOIN] == 1 && c[D_USING] == 0)
 }
@@ -1244,7 +1252,9 @@ struct JoinCase {
 impl JoinCase {
     /// LATERAL is grammatical only in front of a sub-query or function-ish
     /// item — `JOIN LATERAL "posts"` is a syntax error (verified while writing
-    /// this file), so a bare table or CTE name never gets the flag.
+    /// this file), so a bare table or CTE name never gets the flag. Asking for
+    /// it anyway is a `build()` error
+    /// (`lateral_on_a_bare_table_is_a_build_error`).
     fn lateral_allowed(self) -> bool {
         matches!(self.item, JItem::Sub | JItem::Func | JItem::Values)
     }
@@ -1671,85 +1681,94 @@ fn self_joins() {
 }
 
 // ===========================================================================
-// Pinned warts — combinations where the builder emits unparseable SQL (or
-// silently drops a clause) without recording an error
+// Refused combinations — shapes the matrices found rendering unparseable SQL
+// (or silently dropping a clause) with no recorded error
 // ===========================================================================
 //
-// These were found by the matrices above while this file was written. They
-// contradict the design rule that rendering failures are recorded on the
-// writer and surfaced once by `build()`. Each test pins today's behaviour so
-// the fix — when it lands — breaks the pin loudly and the matrices' skip
-// predicates can be tightened.
+// These four were pinned as warts when this file was written (Linear
+// DEV-197..200). They are fixed: each is now a recorded failure that
+// `build()` surfaces — never a guess, never a silent drop — and each test
+// asserts the exact error a caller sees. The matrices' skip predicates still
+// exclude these shapes, because a configuration that refuses to build cannot
+// run the rendering invariants; these tests are where the refusal itself is
+// the invariant.
 
-/// A combined tail clause without any set operation renders after the direct
-/// tail clauses — `LIMIT $1 ORDER BY 1` — which no PostgreSQL grammar accepts,
-/// and `build()` reports no error.
+/// A combined tail clause exists to apply to the result of a set operation.
+/// With no operation there is no such result — rendering it anyway used to
+/// produce `LIMIT $1 ORDER BY 1`, which no PostgreSQL grammar accepts — so
+/// `build()` refuses (DEV-197).
 #[test]
-fn pinned_wart_combined_tail_without_set_op_renders_unparseable_sql() {
+fn combined_tail_without_a_set_operation_is_a_build_error() {
     let q = psql::select((
         select::columns(quote("id")),
         select::from(quote("users")),
         select::limit(arg(1i64)),
         select::order_by_combined(raw("1")),
     ));
-    let (sql, _) = q.build().expect("build() reports no error today");
-    assert!(
-        keelson_sqlcheck::check_psql(&sql).is_err(),
-        "if this now parses the wart was fixed — drop the comb-tail restriction \
-         from sel_grammar_ok and delete this pin: {sql}"
+    assert_eq!(
+        q.build().unwrap_err().to_string(),
+        "query is missing the set operation its combined ORDER BY applies to"
     );
 }
 
-/// `LIMIT` and `FETCH` are two spellings of one grammar production; setting
-/// both renders `LIMIT $1 FETCH NEXT $2 ROWS ONLY`, which does not parse, and
-/// `build()` reports no error.
+/// `LIMIT` and `FETCH` are two spellings of one grammar production
+/// (gram.y `select_limit`), so a statement gets one of them, never both.
+/// Not last-write-wins: mod application order must not change meaning, so
+/// `build()` refuses instead of picking a winner (DEV-198).
 #[test]
-fn pinned_wart_limit_and_fetch_together_render_unparseable_sql() {
+fn limit_and_fetch_together_are_a_build_error() {
     let q = psql::select((
         select::columns(quote("id")),
         select::from(quote("users")),
         select::limit(arg(1i64)),
         select::fetch(arg(2i64)),
     ));
-    let (sql, _) = q.build().expect("build() reports no error today");
-    assert!(
-        keelson_sqlcheck::check_psql(&sql).is_err(),
-        "if this now parses the wart was fixed — drop the LIMIT/FETCH \
-         restriction from sel_grammar_ok and delete this pin: {sql}"
+    assert_eq!(
+        q.build().unwrap_err().to_string(),
+        "LIMIT and FETCH are both set, but they are two spellings of one clause — set only one"
     );
 }
 
-/// An UPDATE's joins attach to the FROM item; with no FROM the join is
-/// *silently dropped* — the built SQL is valid and simply misses a clause the
-/// caller asked for, which neither a grammar nor an engine can notice.
+/// An UPDATE's joins attach to the FROM item; with no FROM they used to be
+/// *silently dropped* — the built SQL was valid and simply missed a clause the
+/// caller asked for, which neither a grammar nor an engine can notice. Now the
+/// missing item is a `build()` error, and DELETE/USING — the same shape — is
+/// guarded the same way (DEV-199).
 #[test]
-fn pinned_wart_update_join_without_from_is_silently_dropped() {
+fn update_join_without_from_is_a_build_error() {
     let q = psql::update((
         psql::update::table(quote("posts")),
         psql::update::set_col("views").to(arg(1i32)),
         psql::update::inner_join(quote("users")).using(["id"]),
     ));
-    let (sql, _) = q.build().expect("build() reports no error today");
-    assert!(
-        !sql.contains("JOIN"),
-        "if the join now renders (or build() errors) the wart was fixed — \
-         extend the UPDATE matrix to cover it and delete this pin: {sql}"
+    assert_eq!(
+        q.build().unwrap_err().to_string(),
+        "query is missing the FROM item its joins attach to"
+    );
+
+    let q = psql::delete((
+        psql::delete::from(quote("comments")),
+        psql::delete::inner_join(quote("users")).using(["id"]),
+    ));
+    assert_eq!(
+        q.build().unwrap_err().to_string(),
+        "query is missing the USING item its joins attach to"
     );
 }
 
-/// `LATERAL` in front of a bare table name is a syntax error in PostgreSQL's
-/// grammar; the builder writes it anyway and `build()` reports no error.
+/// `LATERAL` in front of a bare table (or CTE) name is a syntax error in
+/// PostgreSQL's grammar — the keyword is grammatical only before a sub-query
+/// or function item. `.lateral()` on such an item now records the error at the
+/// call, and `build()` refuses (DEV-200).
 #[test]
-fn pinned_wart_lateral_on_a_bare_table_renders_unparseable_sql() {
+fn lateral_on_a_bare_table_is_a_build_error() {
     let q = psql::select((
         select::from(quote("users")),
         select::inner_join(quote("posts")).lateral().on(raw("TRUE")),
     ));
-    let (sql, _) = q.build().expect("build() reports no error today");
-    assert!(
-        keelson_sqlcheck::check_psql(&sql).is_err(),
-        "if this now parses (or build() errors) the wart was fixed — allow \
-         lateral tables in the join matrix and delete this pin: {sql}"
+    assert_eq!(
+        q.build().unwrap_err().to_string(),
+        "LATERAL is set on a bare table or CTE name, but LATERAL can precede only a sub-query or a function item"
     );
 }
 

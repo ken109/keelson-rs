@@ -107,7 +107,13 @@ impl Expression for DeleteQuery {
             w.push_str(")");
         }
 
-        write_table_list(w, " USING ", &self.using, &self.extra_using);
+        write_table_list(
+            w,
+            " USING ",
+            &self.using,
+            &self.extra_using,
+            "the USING item its joins attach to",
+        );
 
         w.write_if(!self.where_.is_empty(), " ", &self.where_, "");
         w.write_if(!self.order_by.is_empty(), " ", &self.order_by, "");

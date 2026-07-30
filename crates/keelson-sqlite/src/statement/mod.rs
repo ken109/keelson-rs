@@ -72,13 +72,24 @@ pub trait HasExtraTables {
 /// An entry with no table renders nothing, so it must not contribute a comma
 /// either; and if the leading item is absent the whole clause goes, because
 /// `FROM , "x"` is not a repair of anything.
+///
+/// One thing must not go with it: joins. They hang off the leading item, so
+/// with no item they have nowhere to attach — and dropping a join the caller
+/// asked for would build *valid* SQL that silently means something else, which
+/// no grammar or engine can catch after the fact. That is recorded as
+/// [`Error::Incomplete`](keelson_core::Error::Incomplete) with `missing`
+/// naming the absent item.
 fn write_from_list(
     w: &mut keelson_core::SqlWriter<'_>,
     keyword: &str,
     first: &TableRef,
     rest: &[TableRef],
+    missing: &'static str,
 ) {
     if first.is_empty() {
+        if !first.joins.is_empty() {
+            w.record_error(keelson_core::Error::Incomplete(missing));
+        }
         return;
     }
     let items = std::iter::once(first)

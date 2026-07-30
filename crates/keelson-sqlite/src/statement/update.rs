@@ -94,7 +94,13 @@ impl Expression for UpdateQuery {
         w.push_str(" SET ");
         w.write_expr(&self.set);
 
-        write_from_list(w, " FROM ", &self.from, &self.extra_from);
+        write_from_list(
+            w,
+            " FROM ",
+            &self.from,
+            &self.extra_from,
+            "the FROM item its joins attach to",
+        );
 
         w.write_if(!self.where_.is_empty(), " ", &self.where_, "");
         w.write_if(!self.returning.is_empty(), " ", &self.returning, "");

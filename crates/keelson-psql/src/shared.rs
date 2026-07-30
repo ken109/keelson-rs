@@ -34,7 +34,7 @@ use keelson_core::clause::{
 use keelson_core::expr::{Expr, IntoExpr, IntoExprList, IntoIdent};
 use keelson_core::{Mod, mod_fn};
 
-use crate::extras::{Incomplete, Sample, SampledTable};
+use crate::extras::{Incomplete, LateralBareName, Sample, SampledTable};
 use crate::function::Function;
 use crate::statement::{HasExtraTables, HasTargetTable};
 
@@ -310,9 +310,13 @@ impl<S> TableChain<S> {
     }
 
     /// `LATERAL` — let this item refer to columns of the ones before it.
+    ///
+    /// Only grammatical in front of a sub-query or function item; on a bare
+    /// table or CTE name this records a `build()` error instead, because
+    /// `FROM LATERAL "posts"` is a syntax error with nothing to mean.
     #[must_use]
     pub fn lateral(mut self) -> TableChain<S> {
-        self.table.lateral = true;
+        self.table = lateral_table(self.table);
         self
     }
 
@@ -349,6 +353,20 @@ impl<S> TableChain<S> {
         }
         self
     }
+}
+
+/// Mark a table reference `LATERAL`, refusing the one item shape the grammar
+/// has no sentence for: a bare table or CTE name ([`Expr::Ident`]). The item
+/// is wrapped in [`LateralBareName`], which records the error `build()`
+/// surfaces — catching the mistake at the `.lateral()` call rather than
+/// letting valid-looking SQL leave with `LATERAL "posts"` in it.
+fn lateral_table(mut table: TableRef) -> TableRef {
+    table.lateral = true;
+    if matches!(table.expression, Some(Expr::Ident(_))) {
+        let name = table.expression.take().expect("just matched Some");
+        table.expression = Some(Expr::custom(LateralBareName(name)));
+    }
+    table
 }
 
 /// Fold an alias, column aliases and a sampling clause into one expression.
@@ -454,11 +472,15 @@ impl JoinChain {
         self
     }
 
-    /// `LATERAL` on the joined table — which is what lets a joined sub-query see
+    /// `LATERAL` on the joined item — which is what lets a joined sub-query see
     /// the columns of the item it is joined to.
+    ///
+    /// Only grammatical in front of a sub-query or function item; on a bare
+    /// table or CTE name this records a `build()` error instead, because
+    /// `JOIN LATERAL "posts"` is a syntax error with nothing to mean.
     #[must_use]
     pub fn lateral(mut self) -> JoinChain {
-        self.join.to.lateral = true;
+        self.join.to = lateral_table(self.join.to);
         self
     }
 

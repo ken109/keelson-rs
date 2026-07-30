@@ -132,6 +132,38 @@ queries. So every spelling is representable (`Offset::rows`,
 form: bare `OFFSET n`, which every dialect accepts, and `FETCH NEXT … ROWS`,
 which is what the clause rendered before the other spellings existed.
 
+## A clause with nowhere to go is a `build()` error, never a guess
+
+```sql
+SELECT "id" FROM "users" LIMIT $1 ORDER BY 1    -- what these shapes used to render
+UPDATE "posts" SET "views" = $1                  -- …or worse: valid SQL missing the join
+```
+
+Four shapes found by the combinatorial suite (DEV-197..200) had the builder
+hand back garbage — or, worse, valid SQL that silently dropped a clause —
+with `build()` reporting `Ok`. All four are now recorded on the writer and
+surfaced once by `build()`, extending the rule that rendering is infallible
+and errors travel through the writer:
+
+- **A combined tail clause without a set operation** (`order_by_combined`
+  et al. with no `union`/`intersect`/`except`) is
+  `Error::Incomplete`: the combined clauses exist to apply to the result of
+  the combination, and with none they would render after the query's own tail
+  clauses, which no grammar accepts.
+- **`LIMIT` and `FETCH` together** is `Error::ConflictingClauses`: gram.y's
+  `select_limit` makes them two spellings of one production. Deliberately not
+  last-write-wins — like the MySQL modifier ordering above, mod application
+  order must never change what a query means.
+- **Join mods with no `FROM`/`USING` item to attach to** (PostgreSQL/SQLite
+  `UPDATE … FROM`, `DELETE … USING`, and `SELECT`) is `Error::Incomplete`.
+  This was the worst of the four: the SQL built *valid* and simply omitted
+  the join the caller asked for. MySQL's `UPDATE` differs legitimately — its
+  target list *is* a `table_references`, joins and all — and keeps rendering.
+- **`.lateral()` on a bare table or CTE name** records an error at the call
+  (keelson-psql wraps the item): `LATERAL` is grammatical only before a
+  sub-query or function item. Raw fragments stay trusted — progressive
+  enhancement means hand-written SQL is never judged.
+
 ## Formatting is not part of the contract
 
 Tests compare with `keelson_sqlcheck::normalize`, which trims and collapses runs of

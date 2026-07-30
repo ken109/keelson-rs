@@ -47,6 +47,20 @@ pub enum Error {
     /// A query is missing a clause it cannot be rendered without.
     Incomplete(&'static str),
 
+    /// Two clauses were both set that are alternative spellings of one grammar
+    /// production — `LIMIT` and `FETCH` — so no statement can carry both.
+    ///
+    /// Deliberately not last-write-wins: the order mods are applied must never
+    /// change what a query means (see the modifier-ordering entry in
+    /// `docs/sql-rendering.md`), so the collision is reported instead of
+    /// resolved.
+    ConflictingClauses {
+        /// One of the colliding clauses, as its keyword.
+        first: &'static str,
+        /// The other.
+        second: &'static str,
+    },
+
     /// A dialect-specific or generated-code failure that has no shared shape.
     Other(String),
 }
@@ -64,6 +78,11 @@ impl Error {
             args,
             clause: clause.into(),
         }
+    }
+
+    /// Shorthand for [`Error::ConflictingClauses`].
+    pub fn conflicting_clauses(first: &'static str, second: &'static str) -> Self {
+        Error::ConflictingClauses { first, second }
     }
 
     /// Shorthand for [`Error::Other`].
@@ -88,6 +107,10 @@ impl fmt::Display for Error {
                 write!(f, "cannot read {found} as {expected}")
             }
             Error::Incomplete(what) => write!(f, "query is missing {what}"),
+            Error::ConflictingClauses { first, second } => write!(
+                f,
+                "{first} and {second} are both set, but they are two spellings of one clause — set only one"
+            ),
             Error::Other(msg) => f.write_str(msg),
         }
     }
@@ -114,6 +137,14 @@ mod tests {
         assert_eq!(
             e.to_string(),
             "Bad Statement: has 2 placeholders but 0 args: SELECT a, b FROM alphabet WHERE c = ? AND d <= ?"
+        );
+    }
+
+    #[test]
+    fn conflicting_clauses_names_what_the_caller_set() {
+        assert_eq!(
+            Error::conflicting_clauses("LIMIT", "FETCH").to_string(),
+            "LIMIT and FETCH are both set, but they are two spellings of one clause — set only one"
         );
     }
 

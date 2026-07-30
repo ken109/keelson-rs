@@ -170,6 +170,30 @@ impl Expression for Incomplete {
     }
 }
 
+/// A from-item that was marked `LATERAL` but is a bare table or CTE name.
+///
+/// PostgreSQL's grammar puts `LATERAL` only in front of a sub-query or a
+/// function item — `JOIN LATERAL "posts"` is a syntax error, and there is
+/// nothing for the keyword to mean on a name anyway (a table cannot reference
+/// the items before it). The chain methods swap this in when `.lateral()` is
+/// called on such an item, so the mistake is caught where it is made; the item
+/// still renders, keeping the debug print honest, while `build()` refuses.
+///
+/// Only [`Expr::Ident`] items are judged. A raw fragment could be anything —
+/// progressive enhancement means hand-written SQL is trusted — and sub-queries
+/// and function calls arrive as other variants.
+#[derive(Debug)]
+pub(crate) struct LateralBareName(pub(crate) Expr);
+
+impl Expression for LateralBareName {
+    fn write_sql(&self, w: &mut SqlWriter<'_>) {
+        w.record_error(keelson_core::Error::other(
+            "LATERAL is set on a bare table or CTE name, but LATERAL can precede only a sub-query or a function item",
+        ));
+        w.write_expr(&self.0);
+    }
+}
+
 /// Wrap a grouping element, refusing an empty one.
 fn grouping_element(kind: GroupingSetKind, groups: impl IntoExprList) -> Expr {
     let set = GroupingSet::new(kind, groups);

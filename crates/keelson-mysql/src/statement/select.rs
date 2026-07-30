@@ -118,7 +118,13 @@ impl Expression for SelectQuery {
         // The one clause whose absent rendering is not empty: `*`.
         w.write_expr(&self.select_list);
 
-        write_table_list(w, " FROM ", &self.from, &self.extra_from);
+        write_table_list(
+            w,
+            " FROM ",
+            &self.from,
+            &self.extra_from,
+            "the FROM item its joins attach to",
+        );
 
         w.write_if(!self.where_.is_empty(), " ", &self.where_, "");
         w.write_if(!self.group_by.is_empty(), " ", &self.group_by, "");

@@ -83,10 +83,40 @@ impl Combines {
 
 impl Expression for Combines {
     fn write_sql(&self, w: &mut SqlWriter<'_>) {
-        // Each part supplies its own separator only when something precedes it, so
-        // a combination that is nothing but a trailing `LIMIT` — which is legal,
-        // and is how a set operation's own limit is set before its operands are —
-        // does not come out with a leading space.
+        // A combined tail clause exists to apply to the result of a set
+        // operation; with no operation there is no such result, and rendering
+        // the clause anyway would put it after the query's own tail clauses —
+        // `LIMIT $1 ORDER BY 1` — which no grammar accepts. The caller reached
+        // for a `*_combined` mod on a query that combines nothing, and that is
+        // recorded rather than guessed at. (Mods apply in any order, so the
+        // operation may well arrive after its tail clauses; this is judged only
+        // at render time, when everything has been applied.)
+        if self.queries.is_empty() {
+            if self.is_empty() {
+                return;
+            }
+            let missing = if !self.order_by.is_empty() {
+                "the set operation its combined ORDER BY applies to"
+            } else if !self.limit.is_empty() {
+                "the set operation its combined LIMIT applies to"
+            } else if !self.offset.is_empty() {
+                "the set operation its combined OFFSET applies to"
+            } else {
+                "the set operation its combined FETCH applies to"
+            };
+            w.record_error(Error::Incomplete(missing));
+            return;
+        }
+
+        // `LIMIT` and `FETCH` are two spellings of one grammar production, so
+        // the combination cannot carry both. Never last-write-wins: mod
+        // application order must not change meaning.
+        if !self.limit.is_empty() && !self.fetch.is_empty() {
+            w.record_error(Error::conflicting_clauses("LIMIT", "FETCH"));
+            return;
+        }
+
+        // Each part supplies its own separator only when something precedes it.
         let mut written = !self.queries.is_empty();
         write_present(w, &self.queries, "", " ", "");
 
@@ -321,13 +351,40 @@ mod tests {
     }
 
     #[test]
-    fn a_tail_clause_alone_is_still_a_non_empty_combines() {
-        // It has to be: `SELECT … ORDER BY` written through the combination's
-        // ORDER BY with nothing combined would otherwise be silently dropped.
+    fn a_tail_clause_without_a_set_operation_is_a_recorded_failure() {
+        // A combined tail clause with nothing combined has no result to apply
+        // to, and rendering it would collide with the query's own tail clauses
+        // (`LIMIT $1 ORDER BY 1`). It still makes the `Combines` non-empty —
+        // that is what routes it into `write_sql`, where it is recorded.
         let mut cs = Combines::default();
         cs.fetch.set_fetch(2i64);
         assert!(!cs.is_empty());
-        assert_frag_sql(FRAME, &sql(&cs), "FETCH NEXT 2 ROWS ONLY");
+        assert_eq!(
+            build(&Numbered, &cs).unwrap_err().to_string(),
+            "query is missing the set operation its combined FETCH applies to"
+        );
+
+        let mut cs = Combines::default();
+        cs.order_by.append_order("1");
+        assert_eq!(
+            build(&Numbered, &cs).unwrap_err().to_string(),
+            "query is missing the set operation its combined ORDER BY applies to"
+        );
+    }
+
+    #[test]
+    fn a_combined_limit_and_fetch_together_are_a_recorded_failure() {
+        // gram.y `select_limit`: LIMIT and FETCH are one production's two
+        // spellings, so the combination's tail cannot carry both — and which
+        // was applied last must not decide which wins.
+        let mut cs = Combines::default();
+        cs.append_combine(Combine::new(SetOp::Union, sub(1)));
+        cs.limit.set_limit(10i64);
+        cs.fetch.set_fetch(2i64);
+        assert_eq!(
+            build(&Numbered, &cs).unwrap_err().to_string(),
+            "LIMIT and FETCH are both set, but they are two spellings of one clause — set only one"
+        );
     }
 
     #[test]

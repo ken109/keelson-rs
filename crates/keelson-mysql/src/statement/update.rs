@@ -82,7 +82,15 @@ impl Expression for UpdateQuery {
 
         w.push_str("UPDATE ");
         write_hints_and_modifiers(w, &self.hints, &self.modifiers);
-        write_table_list(w, "", &self.table, &self.extra_tables);
+        // The guard inside cannot fire here: an empty target was already an
+        // `Incomplete` above, and MySQL's joins legitimately live on it.
+        write_table_list(
+            w,
+            "",
+            &self.table,
+            &self.extra_tables,
+            "the table of an UPDATE",
+        );
 
         // `Set` writes no keyword of its own — `ON DUPLICATE KEY UPDATE` takes the
         // same list bare — so the `SET` belongs here.
