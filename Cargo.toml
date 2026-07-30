@@ -20,6 +20,7 @@ keelson-sqlite = { path = "crates/keelson-sqlite" }
 
 pg_query = "6"
 regex = "1"
+rusqlite = { version = "0.40", features = ["bundled"] }
 sqlite3-parser = "0.17"
 sqlparser = "0.62"
 serde = { version = "1", features = ["derive"] }

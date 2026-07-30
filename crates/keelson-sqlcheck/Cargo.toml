@@ -9,8 +9,14 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 
+[features]
+# Validate against real engines instead of only their grammars. SQLite needs no
+# infrastructure (it is a library); psql and mysql will additionally need Docker.
+live = ["dep:rusqlite"]
+
 [dependencies]
 pg_query.workspace = true
+rusqlite = { workspace = true, optional = true }
 sqlite3-parser.workspace = true
 sqlparser.workspace = true
 

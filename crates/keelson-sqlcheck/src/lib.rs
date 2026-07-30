@@ -6,20 +6,36 @@
 //! string are wrong together and the test still passes. Running the output through
 //! the dialect's actual parser is what rules that out.
 //!
-//! Every backend here is **catalog-free**: it checks syntax without resolving
-//! tables or columns, so tests can name fictional tables. That rules out
-//! `rusqlite::prepare` and a real MySQL `PREPARE`, both of which fail on an
-//! unknown table for reasons that have nothing to do with the SQL we generated.
+//! There are two tiers, answering different questions.
 //!
-//! | dialect | parser | what it is |
-//! | ------- | ------ | ---------- |
-//! | psql | [`pg_query`] | libpg_query — the actual PostgreSQL server parser |
-//! | sqlite | [`sqlite3_parser`] | SQLite's grammar, reimplemented in Rust |
-//! | mysql | [`sqlparser`] | generic SQL parser with a MySQL dialect |
+//! # Tier 1 — the grammars (this module, always available)
 //!
-//! The psql and sqlite backends are authoritative. The MySQL one is weaker — a
-//! generic parser rather than MySQL's own — so treat a MySQL pass as "plausible"
-//! and a MySQL failure as worth investigating.
+//! Catalog-free syntax checks, so they are fast and need no infrastructure.
+//!
+//! | dialect | backend | what it actually is |
+//! | ------- | ------- | ------------------- |
+//! | psql | [`pg_query`] | bundles libpg_query — the PostgreSQL server's own parser source |
+//! | sqlite | [`sqlite3_parser`] | `lemon-rs`: SQLite's `parse.y` and lexer ported C→Rust, synced 2026-04 |
+//! | mysql | [`sqlparser`] | a *generic* SQL parser wearing a MySQL dialect |
+//!
+//! Trust follows from what each one is, and is measured in the tests rather than
+//! assumed. psql is as good as PostgreSQL for syntax. sqlite is a port of the real
+//! grammar, so close but able to drift. **MySQL is advisory only**: it accepts
+//! PostgreSQL-only `DISTINCT ON` *and* rejects valid multi-table
+//! `UPDATE a, b SET …`. Wrong in both directions.
+//!
+//! # Tier 2 — real engines ([`live`], behind the `live` feature)
+//!
+//! No grammar can catch a *semantic* error. `PREPARE` on a real engine parses and
+//! analyses: it resolves tables and columns, checks set-operation arity, and
+//! enforces rules a grammar cannot express. [`live::check_sqlite`] rejects five
+//! statements that Tier 1 happily accepts — see its tests.
+//!
+//! The cost is that the analyser resolves names, so statements must refer to real
+//! tables. That is what the shared schema in `tests/schema/` is for, and why
+//! grammar tests name its tables rather than inventing their own.
+
+pub mod live;
 
 /// Which grammar to validate against.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
