@@ -1,0 +1,25 @@
+[package]
+name = "keelson-sqlite"
+description = "The SQLite dialect for keelson."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[features]
+# Adds the containerised server engines to the test judge. SQLite itself is a
+# library, so `cargo test` already runs both the lemon-rs grammar tier *and* a
+# real SQLite through keelson-sqlcheck's `live`; this feature only exists so the
+# whole workspace can be tested with one flag.
+live-docker = ["keelson-sqlcheck/live-docker"]
+
+[dependencies]
+keelson-core.workspace = true
+
+[dev-dependencies]
+keelson-sqlcheck = { workspace = true, features = ["live"] }
+
+[lints]
+workspace = true
