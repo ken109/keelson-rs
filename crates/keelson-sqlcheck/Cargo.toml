@@ -15,8 +15,18 @@ authors.workspace = true
 live = ["dep:rusqlite"]
 # The server engines. Separate because these need Docker, while `live` does not.
 live-docker = ["live", "dep:testcontainers", "dep:testcontainers-modules", "dep:postgres", "dep:mysql"]
+# Exposes `keelson_sqlcheck::testing`: a stand-in `keelson_core::Dialect` plus the
+# assertions that pair it with the psql judges, so a crate with no dialect of its
+# own can still have its SQL judged. Off by default because it is the one thing
+# here that depends on the workspace.
+testing = ["dep:keelson-core"]
 
 [dependencies]
+# For `testing` only, and only for the `Dialect` / `Expression` traits.
+# keelson-core dev-depends on this crate in turn: a cycle through
+# dev-dependencies is the one Cargo permits, and it is the whole reason the
+# stand-in dialect lives here rather than in a dialect crate.
+keelson-core = { workspace = true, optional = true }
 pg_query.workspace = true
 mysql = { workspace = true, optional = true }
 postgres = { workspace = true, optional = true }

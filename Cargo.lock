@@ -1271,6 +1271,7 @@ name = "keelson-core"
 version = "0.0.0"
 dependencies = [
  "keelson-core",
+ "keelson-sqlcheck",
  "serde",
  "serde_json",
 ]
@@ -1295,6 +1296,7 @@ dependencies = [
 name = "keelson-sqlcheck"
 version = "0.0.0"
 dependencies = [
+ "keelson-core",
  "mysql",
  "pg_query",
  "postgres",

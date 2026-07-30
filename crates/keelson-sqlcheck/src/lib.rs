@@ -35,7 +35,16 @@
 //! tables. That is what the shared schema in `tests/schema/` is for, and why
 //! grammar tests name its tables rather than inventing their own.
 
+//! # A dialect for crates that have none ([`testing`], behind the `testing` feature)
+//!
+//! Rendering needs a `keelson_core::Dialect`, and `keelson-core` cannot depend on
+//! a dialect crate because every dialect crate depends on it. [`testing::PgLike`]
+//! is a stand-in that lives here instead, where the dependency is a
+//! dev-dependency cycle Cargo allows.
+
 pub mod live;
+#[cfg(feature = "testing")]
+pub mod testing;
 
 /// Collapse insignificant whitespace so an expected string can be written
 /// readably without pinning the builder's exact line breaks.
