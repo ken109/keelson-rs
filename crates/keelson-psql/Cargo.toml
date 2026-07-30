@@ -1,0 +1,24 @@
+[package]
+name = "keelson-psql"
+description = "The PostgreSQL dialect for keelson."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[features]
+# Adds the containerised PostgreSQL engine to the test judge. `cargo test` on its
+# own already runs the libpg_query grammar tier plus real SQLite through
+# keelson-sqlcheck's `live`; this is what makes the psql server itself answer.
+live-docker = ["keelson-sqlcheck/live-docker"]
+
+[dependencies]
+keelson-core.workspace = true
+
+[dev-dependencies]
+keelson-sqlcheck = { workspace = true, features = ["live"] }
+
+[lints]
+workspace = true
