@@ -14,6 +14,10 @@ authors.workspace = true
 # real SQLite through keelson-sqlcheck's `live`; this feature only exists so the
 # whole workspace can be tested with one flag.
 live-docker = ["keelson-sqlcheck/live-docker"]
+# Widens the combinatorial suite (`tests/combinatorial.rs`) from one representative
+# variant per clause to every variant — join kinds, compound operators, ordering
+# decorations. The clause-by-clause cross product always runs; this multiplies it.
+exhaustive = []
 
 [dependencies]
 keelson-core.workspace = true
