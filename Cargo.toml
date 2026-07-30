@@ -1,0 +1,29 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.90"
+license = "MIT"
+repository = "https://github.com/ken109/keelson-rs"
+authors = ["Kensuke Kubo"]
+
+[workspace.dependencies]
+keelson-core = { path = "crates/keelson-core" }
+keelson-golden = { path = "crates/keelson-golden" }
+keelson-mysql = { path = "crates/keelson-mysql" }
+keelson-psql = { path = "crates/keelson-psql" }
+keelson-sqlite = { path = "crates/keelson-sqlite" }
+
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[workspace.lints.rust]
+missing_debug_implementations = "warn"
+unreachable_pub = "warn"
+
+[workspace.lints.clippy]
+todo = "warn"
