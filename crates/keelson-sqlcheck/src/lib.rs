@@ -138,6 +138,38 @@ pub fn assert_valid(dialect: Dialect, sql: &str) {
     }
 }
 
+/// The assertion every builder test should make: valid, and what we meant.
+///
+/// Runs all the checking available in this build in one call, so a test cannot
+/// accidentally perform only some of it:
+///
+/// 1. the dialect's grammar accepts `produced`;
+/// 2. a real engine accepts it too, when one is compiled in ([`live::available`]);
+/// 3. `produced` equals `expected` once [`normalize`]d.
+///
+/// Steps 1 and 2 answer "is this valid SQL". Only step 3 answers "is this the SQL
+/// we meant", and it is worth no more than the provenance of `expected` — derive
+/// that from the dialect's grammar, never by pasting whatever the builder happened
+/// to emit, or the test degenerates into asserting that the code equals itself.
+///
+/// # Panics
+/// On the first check that fails, naming which one it was.
+#[track_caller]
+pub fn assert_sql(dialect: Dialect, produced: &str, expected: &str) {
+    assert_valid(dialect, produced);
+
+    if live::available().contains(&dialect) {
+        live::assert_valid(dialect, produced);
+    }
+
+    let got = normalize(produced);
+    let want = normalize(expected);
+    assert!(
+        got == want,
+        "{dialect:?} SQL is valid but not what was expected\n  expected: {want}\n  actual:   {got}"
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -246,5 +278,47 @@ mod tests {
         assert!(!Dialect::Mysql.is_authoritative());
         assert!(Dialect::Psql.is_authoritative());
         assert!(Dialect::Sqlite.is_authoritative());
+    }
+}
+
+#[cfg(all(test, feature = "live"))]
+mod assert_sql_tests {
+    use super::*;
+
+    #[test]
+    fn passes_when_valid_and_matching() {
+        assert_sql(
+            Dialect::Sqlite,
+            "SELECT   id,\n  name\nFROM users",
+            "SELECT id, name FROM users",
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "rejected the generated SQL")]
+    fn fails_on_invalid_syntax_even_if_expected_matches() {
+        assert_sql(Dialect::Sqlite, "SELECT FORM users", "SELECT FORM users");
+    }
+
+    #[test]
+    #[should_panic(expected = "real Sqlite rejected")]
+    fn fails_on_semantic_error_even_if_expected_matches() {
+        // Valid syntax, unknown column. The string comparison alone would pass,
+        // which is exactly the hole the engine tier closes.
+        assert_sql(
+            Dialect::Sqlite,
+            "SELECT nope FROM users",
+            "SELECT nope FROM users",
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "not what was expected")]
+    fn fails_when_valid_but_different_from_intent() {
+        assert_sql(
+            Dialect::Sqlite,
+            "SELECT id FROM users WHERE id = 1 AND (name = 'a' OR name = 'b')",
+            "SELECT id FROM users WHERE (id = 1 AND name = 'a') OR name = 'b'",
+        );
     }
 }
