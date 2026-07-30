@@ -13,12 +13,21 @@ authors.workspace = true
 # own already runs the libpg_query grammar tier plus real SQLite through
 # keelson-sqlcheck's `live`; this is what makes the psql server itself answer.
 live-docker = ["keelson-sqlcheck/live-docker"]
+# The expensive tier of tests/combinatorial.rs: every co-occurrence of up to
+# three clauses plus a stratified random sample, each PREPAREd against the real
+# PostgreSQL container. Implies `live-docker`, because a real engine is that
+# tier's judge. Plain `cargo test` still runs the grammar-tier cross product.
+exhaustive = ["live-docker"]
 
 [dependencies]
 keelson-core.workspace = true
 
 [dev-dependencies]
 keelson-sqlcheck = { workspace = true, features = ["live"] }
+# tests/{combinatorial,property}.rs inspect the parse tree directly (clause
+# presence, and no others) — that is pg_query's protobuf, which
+# keelson-sqlcheck deliberately does not re-export.
+pg_query.workspace = true
 
 [lints]
 workspace = true
