@@ -18,6 +18,12 @@
 //! writing them, and [`generate_from_schema`] skips introspection for
 //! callers (and tests) that already hold an IR.
 //!
+//! The generator has a second, independent output: [`queries`] turns
+//! **hand-written `.sql` files** into typed modules (the sqlc-shaped half),
+//! keyed off the `[queries]` section of the same config and reading the same
+//! [`schema::Schema`]. Its docs carry the nullability decision table and the
+//! two-faces design; nothing in the model pipeline depends on it.
+//!
 //! # The decisions, recorded
 //!
 //! **Introspection: direct catalog queries, not sea-schema.** sea-schema
@@ -112,6 +118,7 @@ mod emit;
 mod error;
 pub mod introspect;
 mod names;
+pub mod queries;
 mod resolve;
 pub mod schema;
 mod typemap;

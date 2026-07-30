@@ -139,6 +139,10 @@ pub struct Config {
     /// The user-overridable type map.
     #[serde(default)]
     pub types: Types,
+    /// Hand-written SQL → typed code (Layer 4). Absent means no query files
+    /// are generated from; see [`crate::queries`].
+    #[serde(default)]
+    pub queries: Option<crate::queries::QueriesConfig>,
 }
 
 fn default_schema() -> String {

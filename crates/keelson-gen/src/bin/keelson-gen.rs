@@ -6,6 +6,12 @@
 //!
 //! `--url` and `--out` override the config file's values, so the connection
 //! string can stay out of committed configuration.
+//!
+//! One invocation generates whatever the config asks for: the models, and —
+//! when a `[queries]` section is present — one module per hand-written `.sql`
+//! file as well (`keelson_gen::queries`). The two outputs go to different
+//! directories and never share a file, so a config with only `[queries]`
+//! generates Layer 4 alone.
 
 use std::process::ExitCode;
 
@@ -51,9 +57,20 @@ fn real_main() -> Result<(), String> {
         config.out = out;
     }
 
-    let written = keelson_gen::run(&config).map_err(|e| e.to_string())?;
-    for path in &written {
-        println!("wrote {}", path.display());
+    // The models. A config that carries only a `[queries]` section is
+    // generating Layer 4 alone and needs no `out`; otherwise a missing `out`
+    // is the same error it has always been.
+    if config.out.is_some() || config.queries.is_none() {
+        for path in keelson_gen::run(&config).map_err(|e| e.to_string())? {
+            println!("wrote {}", path.display());
+        }
+    }
+    // Layer 4: one module per hand-written `.sql` file (see
+    // `keelson_gen::queries`).
+    if config.queries.is_some() {
+        for path in keelson_gen::queries::run(&config).map_err(|e| e.to_string())? {
+            println!("wrote {}", path.display());
+        }
     }
     Ok(())
 }

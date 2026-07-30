@@ -1,0 +1,8 @@
+# The configuration the checked-in tests/generated/psql_queries fixture was
+# generated with: Layer 4 only (hand-written SQL → typed code), against the
+# same shared schema the model fixtures use.
+dialect = "psql"
+
+[queries]
+dir = "tests/queries/psql"
+out = "tests/generated/psql_queries"

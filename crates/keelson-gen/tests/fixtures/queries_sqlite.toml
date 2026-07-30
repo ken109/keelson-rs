@@ -1,0 +1,18 @@
+# The configuration the checked-in tests/generated/sqlite_queries fixture was
+# generated with. `url` is injected by the tests (a temp database built from
+# fixtures/sqlite_schema.sql).
+dialect = "sqlite"
+
+[queries]
+dir = "tests/queries/sqlite"
+out = "tests/generated/sqlite_queries"
+
+# `posts.published_at` is a plain TEXT column, so the schema cannot say it
+# holds a datetime — the same override the model fixture carries, so a query
+# selecting the column and a model reading it agree on its type.
+[[types.override]]
+tables = ["posts"]
+rust_type = "chrono::NaiveDateTime"
+[types.override.match]
+name = "published_at"
+db_type = "TEXT"
