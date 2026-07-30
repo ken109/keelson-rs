@@ -1,5 +1,6 @@
 //! The MySQL driver: [`Pool`] implements
-//! [`Executor`](keelson_exec::Executor), [`Begin`](keelson_exec::Begin) and
+//! [`Executor`](keelson_exec::Executor), [`Begin`](keelson_exec::Begin),
+//! [`BeginWith`](keelson_exec::BeginWith) and
 //! [`StreamExecutor`](keelson_exec::StreamExecutor).
 //!
 //! [`Pool::connect`] pins `time_zone = '+00:00'` on **every** connection it
@@ -11,8 +12,8 @@ use std::sync::Arc;
 
 use keelson_core::Value;
 use keelson_exec::{
-    Begin, Column, ExecError, ExecFuture, ExecResult, Executor, Family, RawConnection, Row,
-    RowStream, Statement, StreamExecutor, Transaction,
+    Begin, BeginWith, Column, ExecError, ExecFuture, ExecResult, Executor, Family, RawConnection,
+    Row, RowStream, Statement, StreamExecutor, Transaction, TxConflict, TxConflictError, TxOptions,
 };
 use sqlx::mysql::{MySqlArguments, MySqlRow};
 use sqlx::{Column as _, MySql, Row as _, TypeInfo as _, ValueRef as _};
@@ -89,6 +90,17 @@ impl Begin for Pool {
     }
 }
 
+impl BeginWith for Pool {
+    fn begin_with(&self, opts: TxOptions) -> ExecFuture<'_, Result<Transaction, ExecError>> {
+        Box::pin(async move {
+            // Refuse before taking a connection out of the pool.
+            opts.check(Family::MySql)?;
+            let conn = self.inner.acquire().await.map_err(ExecError::driver)?;
+            Transaction::begin_on_with(Box::new(RawConn { conn }), opts).await
+        })
+    }
+}
+
 impl StreamExecutor for Pool {
     fn fetch_stream(&self, stmt: Statement) -> ExecFuture<'_, Result<RowStream, ExecError>> {
         Box::pin(async move {
@@ -154,6 +166,33 @@ impl RawConnection for RawConn {
     }
 }
 
+/// A driver failure, with concurrency conflicts classified out of it.
+///
+/// MySQL uses SQLSTATE as a coarse category and the error *number* as the
+/// precise one, so the number is what is matched: `1213` `ER_LOCK_DEADLOCK`
+/// (SQLSTATE `40001` — a deadlock is how InnoDB reports a serialization
+/// failure) and `1205` `ER_LOCK_WAIT_TIMEOUT`. Everything else stays an
+/// opaque driver error.
+fn driver_err(e: sqlx::Error) -> ExecError {
+    if let sqlx::Error::Database(db) = &e
+        && let Some(my) = db.try_downcast_ref::<sqlx::mysql::MySqlDatabaseError>()
+    {
+        let kind = match my.number() {
+            1213 => Some(TxConflict::Deadlock),
+            1205 => Some(TxConflict::LockTimeout),
+            _ => None,
+        };
+        if let Some(kind) = kind {
+            let code = my.number().to_string();
+            let message = my.message().to_owned();
+            return TxConflictError::new(kind, code, message)
+                .with_source(e)
+                .into_exec_error();
+        }
+    }
+    ExecError::driver(e)
+}
+
 async fn do_fetch<'e, E>(exec: E, sql: &str, args: Vec<Value>) -> Result<Vec<Row>, ExecError>
 where
     E: sqlx::Executor<'e, Database = MySql>,
@@ -161,7 +200,7 @@ where
     let rows = bind_args(sql, args)?
         .fetch_all(exec)
         .await
-        .map_err(ExecError::driver)?;
+        .map_err(driver_err)?;
     let mut header: Option<Arc<[Column]>> = None;
     rows.iter().map(|r| decode_row(r, &mut header)).collect()
 }
@@ -175,12 +214,12 @@ where
     // prepared-statement protocol, and nothing is gained by preparing an
     // argument-less statement anyway.
     let done = if args.is_empty() {
-        exec.execute(sql).await.map_err(ExecError::driver)?
+        exec.execute(sql).await.map_err(driver_err)?
     } else {
         bind_args(sql, args)?
             .execute(exec)
             .await
-            .map_err(ExecError::driver)?
+            .map_err(driver_err)?
     };
     let last = i64::try_from(done.last_insert_id())
         .ok()

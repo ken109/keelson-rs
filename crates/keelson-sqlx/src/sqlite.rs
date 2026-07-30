@@ -1,5 +1,6 @@
 //! The SQLite driver: [`Pool`] implements
-//! [`Executor`](keelson_exec::Executor), [`Begin`](keelson_exec::Begin) and
+//! [`Executor`](keelson_exec::Executor), [`Begin`](keelson_exec::Begin),
+//! [`BeginWith`](keelson_exec::BeginWith) and
 //! [`StreamExecutor`](keelson_exec::StreamExecutor).
 //!
 //! SQLite has no native storage class for the mapped types, so every one of
@@ -11,8 +12,8 @@ use std::sync::Arc;
 
 use keelson_core::Value;
 use keelson_exec::{
-    Begin, Column, ExecError, ExecFuture, ExecResult, Executor, Family, RawConnection, Row,
-    RowStream, Statement, StreamExecutor, Transaction,
+    Begin, BeginWith, Column, ExecError, ExecFuture, ExecResult, Executor, Family, RawConnection,
+    Row, RowStream, Statement, StreamExecutor, Transaction, TxConflict, TxConflictError, TxOptions,
 };
 use sqlx::sqlite::{SqliteArguments, SqliteRow};
 use sqlx::{Column as _, Row as _, Sqlite, TypeInfo as _, ValueRef as _};
@@ -82,6 +83,19 @@ impl Begin for Pool {
     }
 }
 
+impl BeginWith for Pool {
+    fn begin_with(&self, opts: TxOptions) -> ExecFuture<'_, Result<Transaction, ExecError>> {
+        Box::pin(async move {
+            // Refuse before taking a connection out of the pool — which is
+            // most of what SQLite does with this entry point, since the
+            // standard isolation levels are not on offer here.
+            opts.check(Family::Sqlite)?;
+            let conn = self.inner.acquire().await.map_err(ExecError::driver)?;
+            Transaction::begin_on_with(Box::new(RawConn { conn }), opts).await
+        })
+    }
+}
+
 impl StreamExecutor for Pool {
     fn fetch_stream(&self, stmt: Statement) -> ExecFuture<'_, Result<RowStream, ExecError>> {
         Box::pin(async move {
@@ -147,6 +161,32 @@ impl RawConnection for RawConn {
     }
 }
 
+/// A driver failure, with lock conflicts classified out of it.
+///
+/// sqlx reports SQLite's *extended* result code as a decimal string; the low
+/// byte is the primary code, so `SQLITE_BUSY` (5) covers `BUSY_SNAPSHOT`
+/// (517) and friends, and `SQLITE_LOCKED` (6) covers its extensions too.
+/// This is SQLite's whole concurrency-conflict vocabulary: it has no
+/// serialization failure because it never runs two writers at once.
+fn driver_err(e: sqlx::Error) -> ExecError {
+    const SQLITE_BUSY: i32 = 5;
+    const SQLITE_LOCKED: i32 = 6;
+    if let sqlx::Error::Database(db) = &e {
+        let primary = db
+            .code()
+            .and_then(|c| c.parse::<i32>().ok())
+            .map(|c| c & 0xff);
+        if matches!(primary, Some(SQLITE_BUSY | SQLITE_LOCKED)) {
+            let code = db.code().unwrap_or_default().into_owned();
+            let message = db.message().to_owned();
+            return TxConflictError::new(TxConflict::Busy, code, message)
+                .with_source(e)
+                .into_exec_error();
+        }
+    }
+    ExecError::driver(e)
+}
+
 async fn do_fetch<'e, E>(exec: E, sql: &str, args: Vec<Value>) -> Result<Vec<Row>, ExecError>
 where
     E: sqlx::Executor<'e, Database = Sqlite>,
@@ -154,7 +194,7 @@ where
     let rows = bind_args(sql, args)?
         .fetch_all(exec)
         .await
-        .map_err(ExecError::driver)?;
+        .map_err(driver_err)?;
     let mut header: Option<Arc<[Column]>> = None;
     rows.iter().map(|r| decode_row(r, &mut header)).collect()
 }
@@ -168,12 +208,12 @@ where
     // prepared-statement protocol, and nothing is gained by preparing an
     // argument-less statement anyway.
     let done = if args.is_empty() {
-        exec.execute(sql).await.map_err(ExecError::driver)?
+        exec.execute(sql).await.map_err(driver_err)?
     } else {
         bind_args(sql, args)?
             .execute(exec)
             .await
-            .map_err(ExecError::driver)?
+            .map_err(driver_err)?
     };
     let last = Some(done.last_insert_rowid()).filter(|id| *id != 0);
     Ok(ExecResult::new(done.rows_affected(), last))

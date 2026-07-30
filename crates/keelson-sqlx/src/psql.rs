@@ -1,13 +1,14 @@
 //! The PostgreSQL driver: [`Pool`] implements
-//! [`Executor`](keelson_exec::Executor), [`Begin`](keelson_exec::Begin) and
+//! [`Executor`](keelson_exec::Executor), [`Begin`](keelson_exec::Begin),
+//! [`BeginWith`](keelson_exec::BeginWith) and
 //! [`StreamExecutor`](keelson_exec::StreamExecutor).
 
 use std::sync::Arc;
 
 use keelson_core::Value;
 use keelson_exec::{
-    Begin, Column, ExecError, ExecFuture, ExecResult, Executor, Family, RawConnection, Row,
-    RowStream, Statement, StreamExecutor, Transaction,
+    Begin, BeginWith, Column, ExecError, ExecFuture, ExecResult, Executor, Family, RawConnection,
+    Row, RowStream, Statement, StreamExecutor, Transaction, TxConflict, TxConflictError, TxOptions,
 };
 use sqlx::postgres::{PgArgumentBuffer, PgArguments, PgRow, PgTypeInfo};
 use sqlx::{Column as _, Postgres, Row as _, TypeInfo as _, ValueRef as _};
@@ -67,6 +68,18 @@ impl Begin for Pool {
         Box::pin(async move {
             let conn = self.inner.acquire().await.map_err(ExecError::driver)?;
             Transaction::begin_on(Box::new(RawConn { conn })).await
+        })
+    }
+}
+
+impl BeginWith for Pool {
+    fn begin_with(&self, opts: TxOptions) -> ExecFuture<'_, Result<Transaction, ExecError>> {
+        Box::pin(async move {
+            // Refuse before taking a connection out of the pool: an
+            // unsupported option costs nothing and disturbs nothing.
+            opts.check(Family::Postgres)?;
+            let conn = self.inner.acquire().await.map_err(ExecError::driver)?;
+            Transaction::begin_on_with(Box::new(RawConn { conn }), opts).await
         })
     }
 }
@@ -138,6 +151,31 @@ impl RawConnection for RawConn {
     }
 }
 
+/// A driver failure, with concurrency conflicts classified out of it.
+///
+/// PostgreSQL reports them as SQLSTATEs, so this is a table lookup rather
+/// than message matching: `40001` serialization_failure, `40P01`
+/// deadlock_detected, `55P03` lock_not_available (what `lock_timeout` and
+/// `NOWAIT` raise). Everything else stays an opaque driver error.
+fn driver_err(e: sqlx::Error) -> ExecError {
+    if let sqlx::Error::Database(db) = &e {
+        let kind = match db.code().as_deref() {
+            Some("40001") => Some(TxConflict::Serialization),
+            Some("40P01") => Some(TxConflict::Deadlock),
+            Some("55P03") => Some(TxConflict::LockTimeout),
+            _ => None,
+        };
+        if let Some(kind) = kind {
+            let code = db.code().unwrap_or_default().into_owned();
+            let message = db.message().to_owned();
+            return TxConflictError::new(kind, code, message)
+                .with_source(e)
+                .into_exec_error();
+        }
+    }
+    ExecError::driver(e)
+}
+
 async fn do_fetch<'e, E>(exec: E, sql: &str, args: Vec<Value>) -> Result<Vec<Row>, ExecError>
 where
     E: sqlx::Executor<'e, Database = Postgres>,
@@ -145,7 +183,7 @@ where
     let rows = bind_args(sql, args)?
         .fetch_all(exec)
         .await
-        .map_err(ExecError::driver)?;
+        .map_err(driver_err)?;
     let mut header: Option<Arc<[Column]>> = None;
     rows.iter().map(|r| decode_row(r, &mut header)).collect()
 }
@@ -159,12 +197,12 @@ where
     // prepared-statement protocol, and nothing is gained by preparing an
     // argument-less statement anyway.
     let done = if args.is_empty() {
-        exec.execute(sql).await.map_err(ExecError::driver)?
+        exec.execute(sql).await.map_err(driver_err)?
     } else {
         bind_args(sql, args)?
             .execute(exec)
             .await
-            .map_err(ExecError::driver)?
+            .map_err(driver_err)?
     };
     // PostgreSQL has no last-insert-id; RETURNING is the honest story.
     Ok(ExecResult::new(done.rows_affected(), None))

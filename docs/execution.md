@@ -195,7 +195,136 @@ pub type ExecLoader = Arc<dyn for<'a> Fn(&'a dyn Executor, &'a [Row]) -> ExecFut
 `MapperMod` is deferred to Layer 2, which owns the row-mapper it would
 modify.
 
-Isolation levels / access modes: a later, additive `begin_with(opts)`.
+## Q2b. Isolation levels and access modes
+
+**Chosen: an opt-in `BeginWith` trait carrying a `TxOptions` value, whose
+per-engine rendering lives in keelson-exec — and which *refuses* any option
+the engine would only appear to honour.**
+
+This is the first place the three engines stop agreeing, so the deliverable is
+handling the disagreement honestly rather than presenting a uniform API that
+quietly means different things per backend.
+
+**The rule, one sentence: a level is accepted only when the engine runs the
+transaction at that level.** No substitution, no downgrade, no no-op. The SQL
+standard permits an implementation to run *stricter* than asked, so
+substituting would be conformant — and would still be a lie to a caller who
+asked for a level in order to get particular behaviour. Rejected alternative:
+"accept everything everywhere, document the differences", which is what most
+toolkits do and what makes `READ UNCOMMITTED` on PostgreSQL a silent no-op.
+
+| | PostgreSQL | MySQL / InnoDB | SQLite |
+|---|---|---|---|
+| READ UNCOMMITTED | **refused** — accepted by the server, run as READ COMMITTED | yes (a real dirty read) | **refused** |
+| READ COMMITTED | yes (default) | yes | **refused** |
+| REPEATABLE READ | yes | yes (default) | **refused** |
+| SERIALIZABLE | yes | yes | yes — SQLite's only level |
+| `READ ONLY` | yes | yes | **refused** |
+| `SqliteBegin::{Deferred,Immediate,Exclusive}` | **refused** | **refused** | yes |
+
+Same name, different semantics, recorded rather than smoothed over:
+PostgreSQL's REPEATABLE READ raises a serialization failure when a transaction
+writes a row that changed since its snapshot; InnoDB's coexists with locking
+reads and an `UPDATE` that takes the *current* row. Nothing in keelson tries
+to reconcile those — `Isolation` is a request, and each engine's meaning is
+documented on the variant.
+
+**SQLite — the decision that had to be made, and why.** SQLite has no
+per-transaction isolation levels in the standard sense; it has begin modes and
+a connection-level `read_uncommitted` pragma. Three options were on the table:
+map the standard levels onto begin modes, reject them, or expose the begin
+modes as their own vocabulary. **Chosen: reject the standard levels, and
+expose the begin modes as their own type (`SqliteBegin`), except
+`Serializable`, which is accepted because it is literally what SQLite runs.**
+Mapping was rejected because the two axes are not the same axis — a begin mode
+says *when locks are taken*, not *which anomalies are permitted*, so
+`ReadCommitted → BEGIN DEFERRED` would be a coincidence dressed as a
+translation. Blanket rejection including `Serializable` was rejected too: it
+would force every portable call site to branch on `Family` to ask for a level
+SQLite genuinely provides. `SqliteBegin` is named for its engine precisely so
+that no reader mistakes it for a portable knob; asking for it on PostgreSQL or
+MySQL is an error, not an ignored field. The `read_uncommitted` pragma is not
+exposed at all: it is connection-level, it only does anything in shared-cache
+mode, and keelson does not set connection state behind a pooled connection's
+back (the same rule that keeps `PRAGMA query_only` out — which is why SQLite
+refuses `READ ONLY` rather than emulating it).
+
+**Read-only is in the same entry point**, because on the two engines that have
+it, it is spelled in the same place the level is (`BEGIN … READ ONLY`,
+`START TRANSACTION READ ONLY`) — a second entry point would have been a second
+way to say one thing. `Access::ReadWrite` is accepted everywhere it is the
+default, so stating the default explicitly is allowed.
+
+**Where the SQL is composed: keelson-exec, per family, in `TxOptions::plan`**
+— the same argument as §Q2's "the vocabulary is written once so semantics
+cannot drift per backend", except that here the vocabulary is genuinely three
+vocabularies, so what is written once is the *decision table*. A backend's
+`begin_with` is three lines: `opts.check(family)?`, take a connection, hand it
+to `Transaction::begin_on_with`. `plan` is public, so "what does keelson
+actually send?" is answerable without a packet capture:
+
+- PostgreSQL — one statement: `BEGIN [ISOLATION LEVEL …] [READ ONLY|READ WRITE]`.
+- MySQL — two: `SET TRANSACTION ISOLATION LEVEL …` then `START TRANSACTION …`.
+  InnoDB cannot carry a level on `START TRANSACTION` and refuses
+  `SET TRANSACTION` once a transaction is open. Unqualified — no `SESSION`, no
+  `GLOBAL` — the `SET` scopes to the *next* transaction on that connection,
+  which is the scope wanted: it expires with the transaction instead of riding
+  the connection back into the pool.
+- SQLite — one: `BEGIN [DEFERRED|IMMEDIATE|EXCLUSIVE]`.
+
+With no options set, all three plans are exactly `BEGIN` — `begin_with` with
+defaults is byte-identical to `begin`.
+
+**A new trait, not a new method on `Begin`** — §Q7's semver rule
+("`Executor`, `Begin`, `RawConnection`, `StreamExecutor` never grow methods;
+new capabilities arrive as new opt-in traits") applied to its first real
+customer. `BeginWith: Begin` follows the `StreamExecutor` template, and
+`BeginWithExt::within_with` mirrors `within`.
+
+**Two failure modes, handled where they are invisible.** (1) An option this
+engine cannot honour is refused *before* a connection is taken out of the
+pool, so a rejected configuration disturbs nothing. (2) If a plan statement
+fails halfway — MySQL's `SET` landing without its `START TRANSACTION` — the
+connection is **abandoned**, not returned: it carries a pending
+next-transaction characteristic nobody can see, and reusing it would apply a
+level to a transaction that never asked for one.
+
+**Serialization failures are a matchable value, not a message.**
+`TxConflict::{Serialization, Deadlock, LockTimeout, Busy}` with
+`TxConflict::of(&err) -> Option<TxConflict>`; a backend that recognises a
+conflict reports it as a `TxConflictError` carrying the engine's own code and
+the driver error as its `source`. keelson-sqlx classifies by code, never by
+message text: PostgreSQL SQLSTATE `40001`/`40P01`/`55P03`, MySQL error numbers
+`1213`/`1205` (SQLSTATE is only a category there), SQLite's `SQLITE_BUSY`/
+`SQLITE_LOCKED` primary result codes. Every variant means the same thing to a
+caller — retry the transaction from the top. Rejected: a new `ExecError`
+variant, which is where this belongs long-term; the reopening condition is a
+consumer that wants to `match` rather than call `TxConflict::of`, at which
+point the variant lands in `ExecError` (it is `#[non_exhaustive]` for exactly
+this) and `of` becomes its accessor.
+
+**Tested as behaviour, not as strings.** The statement text is pinned by unit
+tests in keelson-exec (derived from each engine's `BEGIN`/`SET TRANSACTION`
+grammar, never from builder output); what the levels *do* is proved in
+`keelson-sqlx/tests/transactions.rs` against real engines, always with two
+concurrent transactions:
+
+- PostgreSQL: REPEATABLE READ keeps its snapshot while a concurrently-opened
+  default-level transaction on another pooled connection sees the commit —
+  which is simultaneously the proof that the level landed on the transaction's
+  own connection and nowhere else; a write-write conflict surfacing as
+  `TxConflict::Serialization`; a `READ ONLY` transaction refusing a write.
+- MySQL: the same per-connection proof, plus six subsequent transactions on
+  the returned connection all still at the default (a `SET SESSION` would fail
+  every round); READ COMMITTED showing a non-repeatable read and REPEATABLE
+  READ not; a genuine dirty read under READ UNCOMMITTED (which is what makes
+  refusing PostgreSQL's a considered decision rather than a blanket one); a
+  deadlock surfacing as `TxConflict::Deadlock`; `READ ONLY` refusing a write.
+- SQLite: a plain transaction *cannot* be made to show a non-repeatable read
+  while a concurrent writer commits — the behavioural half of refusing READ
+  COMMITTED — and `BEGIN IMMEDIATE` taking the write lock at begin time, so a
+  second one loses immediately with `TxConflict::Busy` where two `DEFERRED`
+  transactions coexist.
 
 ## Q3. Row mapping
 
@@ -452,7 +581,8 @@ round-tripped on all three engines and asserted equal everywhere.
 against `&dyn Begin` alone — commit persists, drop-without-commit rolls
 back, explicit rollback discards, savepoints nest and partially roll back,
 `within` commits on `Ok` and rolls back on `Err` — run against all three
-engines. And the **full-path suite** (`query_path.rs`): dialect-built
+engines, **plus** the deliberately non-generic isolation-level tests (§Q2b),
+which are per engine because that is where the engines stop agreeing. And the **full-path suite** (`query_path.rs`): dialect-built
 queries through the `Execute` verbs, `FromRow` structs, `RETURNING` as a
 fetch, column-named decode errors end to end, and the streaming path
 including mid-stream cancellation.
@@ -468,7 +598,7 @@ constructs* — the two gates stay separate on purpose.
 
 | from | kept | deviated |
 |---|---|---|
-| sqlx | `fetch_one/optional/all` verb names; consuming commit; per-connection statement cache; per-db drivers | object-safe `&self` `Executor` (no `'c`, no `&mut`); rows decode via `Value`, one `FromRow` for all backends; `fetch_one`/`fetch_optional` reject extra rows; keelson-exec speaks its own BEGIN/SAVEPOINT over `RawConnection` instead of driver tx machinery; `Any` driver rejected; streaming opt-in rather than the core contract |
+| sqlx | `fetch_one/optional/all` verb names; consuming commit; per-connection statement cache; per-db drivers | object-safe `&self` `Executor` (no `'c`, no `&mut`); rows decode via `Value`, one `FromRow` for all backends; `fetch_one`/`fetch_optional` reject extra rows; keelson-exec speaks its own BEGIN/SAVEPOINT over `RawConnection` instead of driver tx machinery; isolation levels an engine would only appear to honour are refused rather than passed through (§Q2b); `Any` driver rejected; streaming opt-in rather than the core contract |
 | SeaORM | shared-ref executor a transaction also implements; closure transaction (`within`, and closure savepoints) | no runtime backend enum — backends are crates, `Family` is metadata; no ActiveValue machinery at this layer |
 | bob (Go) | hooks resolve through the query's own extension points (`QueryExtensions`), run on the caller's executor | hook payloads are typed (`ExecHook`), not runtime type-asserts |
 
@@ -480,7 +610,10 @@ constructs* — the two gates stay separate on purpose.
   then `bind_newtype!` + the documented `FromRow` pattern are the product
   path.
 - **Corpus in `keelson_exec::testing`** — reopen with the second backend.
-- **`begin_with(opts)` (isolation levels), `persistent(bool)`, typed-stream
-  sugar (`fetch_stream::<T>` on `Execute`), `Stream` impl for `RowStream`,
-  transaction-spanning trace span** — all additive; each waits for a
-  concrete consumer.
+- **`persistent(bool)`, typed-stream sugar (`fetch_stream::<T>` on
+  `Execute`), `Stream` impl for `RowStream`, transaction-spanning trace
+  span** — all additive; each waits for a concrete consumer.
+- **A typed `ExecError` variant for refused transaction options and for
+  conflicts** — refusals are `ExecError::Other` with a described message and
+  conflicts are `TxConflict::of`; reopen when a consumer needs to `match`
+  (§Q2b).

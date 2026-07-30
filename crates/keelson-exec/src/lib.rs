@@ -14,6 +14,8 @@
 //!   funnel every backend flows through.
 //! - [`Transaction`] and [`Begin`] — an owned, lifetime-free transaction that
 //!   consumes itself on commit/rollback; savepoints are closures.
+//!   [`BeginWith`] adds isolation levels and access modes ([`TxOptions`]),
+//!   refusing per engine anything that engine would only appear to honour.
 //! - [`Row`] and [`FromRow`] — rows decoded once, at the driver seam, into
 //!   [`Value`](keelson_core::Value)s; every decode error names its column.
 //! - [`RawConnection`] — the seam a backend implements per driver; this crate
@@ -45,7 +47,10 @@ pub use executor::{
     ExecFuture, ExecResult, Executor, Family, RowStream, Statement, StreamExecutor,
 };
 pub use row::{Column, FromRow, Row};
-pub use transaction::{Begin, BeginExt, ExecHook, ExecLoader, RawConnection, Transaction};
+pub use transaction::{
+    Access, Begin, BeginExt, BeginWith, BeginWithExt, ExecHook, ExecLoader, Isolation,
+    RawConnection, SqliteBegin, Transaction, TxConflict, TxConflictError, TxOptions,
+};
 
 // For `bind_newtype!` expansion only.
 #[doc(hidden)]
