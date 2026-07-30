@@ -32,11 +32,8 @@ mod model {
     pub mod users {
         use chrono::NaiveDateTime;
         use keelson_core::expr::Expr;
-        use keelson_core::mod_fn;
         use keelson_exec::{ExecError, Execute as _, Executor, FromRow, Row};
-        use keelson_models::{
-            Column, ModelSelect, ModelTable, Set, Table, View, attach_to_many, loader,
-        };
+        use keelson_models::{Column, ModelTable, Set, Table, ThenLoad, View, attach_to_many};
         use keelson_sqlite::{Mod, arg, delete, insert, quote, select, update};
 
         /// The model marker.
@@ -232,34 +229,24 @@ mod model {
         pub mod then_load {
             use super::*;
 
-            /// Load each user's posts (to-many) with one keyed query.
-            pub fn posts() -> impl Mod<ModelSelect<Users>> {
-                mod_fn(|q: &mut ModelSelect<Users>| {
-                    q.add_loader(loader(|db, users| Box::pin(load_posts(db, users))));
-                })
-            }
-
-            async fn load_posts(db: &dyn Executor, users: &mut [User]) -> Result<(), ExecError> {
-                let mut ids: Vec<i64> = users.iter().map(|u| u.id).collect();
-                ids.sort_unstable();
-                ids.dedup();
-                if ids.is_empty() {
-                    return Ok(());
-                }
-                let posts = super::super::posts::table()
-                    .query(super::super::posts::user_id().in_(ids))
-                    .all(db)
-                    .await?;
-                attach_to_many(
-                    users,
-                    posts,
-                    |u| u.id,
-                    |p| p.user_id,
-                    |u, ps| {
-                        u.rel.posts = ps;
+            /// Load each user's posts (to-many) with one keyed query per
+            /// batch. `.then(…)` hangs the next level off it.
+            pub fn posts() -> ThenLoad<Users, super::super::posts::Posts, i64> {
+                ThenLoad::new(
+                    |users: &[User]| users.iter().map(|u| u.id).collect(),
+                    |keys, q| super::super::posts::user_id().in_(keys).apply(q),
+                    |users: &mut [User], posts| {
+                        attach_to_many(
+                            users,
+                            posts,
+                            |u| u.id,
+                            |p| p.user_id,
+                            |u, ps| {
+                                u.rel.posts = ps;
+                            },
+                        );
                     },
-                );
-                Ok(())
+                )
             }
         }
     }
@@ -269,9 +256,9 @@ mod model {
         use chrono::NaiveDateTime;
         use keelson_core::expr::Expr;
         use keelson_core::mod_fn;
-        use keelson_exec::{ExecError, Executor, FromRow, Row};
+        use keelson_exec::{ExecError, FromRow, Row};
         use keelson_models::{
-            Column, ModelSelect, ModelTable, Set, Table, View, attach_to_one, loader, mapper_mod,
+            Column, ModelSelect, ModelTable, Set, Table, ThenLoad, View, attach_to_one, mapper_mod,
         };
         use keelson_sqlite::{Chain as _, Mod, delete, insert, quote, select, update};
 
@@ -487,34 +474,24 @@ mod model {
         pub mod then_load {
             use super::*;
 
-            /// Load each post's user (to-one) with one keyed second query.
-            pub fn user() -> impl Mod<ModelSelect<Posts>> {
-                mod_fn(|q: &mut ModelSelect<Posts>| {
-                    q.add_loader(loader(|db, posts| Box::pin(load_user(db, posts))));
-                })
-            }
-
-            async fn load_user(db: &dyn Executor, posts: &mut [Post]) -> Result<(), ExecError> {
-                let mut ids: Vec<i64> = posts.iter().map(|p| p.user_id).collect();
-                ids.sort_unstable();
-                ids.dedup();
-                if ids.is_empty() {
-                    return Ok(());
-                }
-                let users = super::super::users::table()
-                    .query(super::super::users::id().in_(ids))
-                    .all(db)
-                    .await?;
-                attach_to_one(
-                    posts,
-                    users,
-                    |p| p.user_id,
-                    |u| u.id,
-                    |p, u| {
-                        p.rel.user = u;
+            /// Load each post's user (to-one) with one keyed query per batch.
+            /// `.then(…)` hangs the next level off it.
+            pub fn user() -> ThenLoad<Posts, super::super::users::Users, i64> {
+                ThenLoad::new(
+                    |posts: &[Post]| posts.iter().map(|p| p.user_id).collect(),
+                    |keys, q| super::super::users::id().in_(keys).apply(q),
+                    |posts: &mut [Post], users| {
+                        attach_to_one(
+                            posts,
+                            users,
+                            |p| p.user_id,
+                            |u| u.id,
+                            |p, u| {
+                                p.rel.user = u;
+                            },
+                        );
                     },
-                );
-                Ok(())
+                )
             }
         }
     }
@@ -817,6 +794,365 @@ async fn preload_and_then_load_fill_rel_both_ways() {
         .await
         .unwrap();
     assert_eq!(with_user.rel.user.unwrap().name, "Ada");
+}
+
+// ──────────────────── nested then-load (relations of relations) ────────────
+
+/// An executor that records every statement it runs. Nesting is only worth
+/// having if it costs one query per *level* rather than one per row, so the
+/// specs assert the count — a regression to N+1 fails the test instead of
+/// merely being slower.
+#[derive(Debug)]
+struct Counting {
+    inner: Pool,
+    sql: std::sync::Mutex<Vec<String>>,
+}
+
+impl Counting {
+    fn new(inner: Pool) -> Self {
+        Counting {
+            inner,
+            sql: std::sync::Mutex::new(Vec::new()),
+        }
+    }
+
+    /// The statements seen since the last [`reset`](Counting::reset).
+    fn seen(&self) -> Vec<String> {
+        self.sql.lock().unwrap().clone()
+    }
+
+    fn reset(&self) {
+        self.sql.lock().unwrap().clear();
+    }
+}
+
+impl Executor for Counting {
+    fn family(&self) -> keelson_exec::Family {
+        self.inner.family()
+    }
+
+    fn fetch(
+        &self,
+        stmt: Statement,
+    ) -> keelson_exec::ExecFuture<'_, Result<Vec<keelson_exec::Row>, ExecError>> {
+        self.sql.lock().unwrap().push(stmt.sql.clone());
+        self.inner.fetch(stmt)
+    }
+
+    fn execute(
+        &self,
+        stmt: Statement,
+    ) -> keelson_exec::ExecFuture<'_, Result<keelson_exec::ExecResult, ExecError>> {
+        self.sql.lock().unwrap().push(stmt.sql.clone());
+        self.inner.execute(stmt)
+    }
+}
+
+#[track_caller]
+fn assert_sqlite(sql: &str, expected: &str) {
+    keelson_sqlcheck::assert_sql(keelson_sqlcheck::Dialect::Sqlite, sql, expected);
+}
+
+/// How many bound parameters a recorded statement carries — the size of an
+/// `IN` list, which is what batching and deduplication are about.
+fn args_in(sql: &str) -> usize {
+    sql.matches('?').count()
+}
+
+const SQLITE_USER_COLS: &str = concat!(
+    r#""users"."id", "users"."name", "users"."email", "users"."age", "#,
+    r#""users"."is_active", "users"."created_at""#
+);
+
+const SQLITE_POST_COLS: &str = concat!(
+    r#""posts"."id", "posts"."user_id", "posts"."title", "posts"."status", "#,
+    r#""posts"."views", "posts"."published_at""#
+);
+
+/// Stephen with two posts, Ada with one — so the author of two posts is the
+/// deduplication case, and every level has something to attach.
+async fn seed_two_authors(db: &dyn Executor) {
+    for name in ["Stephen", "Ada"] {
+        users::table()
+            .insert(users::Setter {
+                name: set(name),
+                ..Default::default()
+            })
+            .exec(db)
+            .await
+            .unwrap();
+    }
+    for (uid, title) in [(1i64, "keel laid"), (1, "second"), (2, "notes")] {
+        posts::table()
+            .insert(posts::Setter {
+                user_id: set(uid),
+                title: set(title),
+                ..Default::default()
+            })
+            .exec(db)
+            .await
+            .unwrap();
+    }
+}
+
+/// posts → author → the author's posts: three queries for three levels, the
+/// nested objects correctly associated, and the shared author loaded once.
+#[tokio::test]
+async fn a_nested_then_load_costs_one_query_per_level() {
+    let db = Counting::new(db().await);
+    seed_two_authors(&db).await;
+    db.reset();
+
+    let posts = posts::table()
+        .query((
+            posts::then_load::user().then(users::then_load::posts()),
+            select::order_by(posts::id()),
+        ))
+        .all(&db)
+        .await
+        .unwrap();
+
+    let sql = db.seen();
+    assert_eq!(
+        sql.len(),
+        3,
+        "one query per level — the caller's, the authors', the authors' posts: {sql:#?}"
+    );
+    assert_sqlite(
+        &sql[0],
+        &format!(r#"SELECT {SQLITE_POST_COLS} FROM "posts" ORDER BY "posts"."id""#),
+    );
+    assert_sqlite(
+        &sql[1],
+        &format!(r#"SELECT {SQLITE_USER_COLS} FROM "users" WHERE ("users"."id" IN (?1, ?2))"#),
+    );
+    assert_sqlite(
+        &sql[2],
+        &format!(r#"SELECT {SQLITE_POST_COLS} FROM "posts" WHERE ("posts"."user_id" IN (?1, ?2))"#),
+    );
+    assert_eq!(
+        args_in(&sql[1]),
+        2,
+        "three posts, two distinct authors: the key is deduplicated before the query"
+    );
+
+    // Level 2 arrived, associated to the right parents.
+    let authors: Vec<&str> = posts
+        .iter()
+        .map(|p| p.rel.user.as_ref().expect("author").name.as_str())
+        .collect();
+    assert_eq!(authors, vec!["Stephen", "Stephen", "Ada"]);
+
+    // Level 3 arrived, associated to the right level-2 object.
+    let stephens_posts: Vec<&str> = posts[0]
+        .rel
+        .user
+        .as_ref()
+        .unwrap()
+        .rel
+        .posts
+        .iter()
+        .map(|p| p.title.as_str())
+        .collect();
+    assert_eq!(stephens_posts, vec!["keel laid", "second"]);
+    let adas_posts: Vec<&str> = posts[2]
+        .rel
+        .user
+        .as_ref()
+        .unwrap()
+        .rel
+        .posts
+        .iter()
+        .map(|p| p.title.as_str())
+        .collect();
+    assert_eq!(adas_posts, vec!["notes"]);
+
+    // The shared author was loaded once and cloned into both posts, with its
+    // own relation already filled — not loaded twice, not filled for one post
+    // and empty for the other.
+    assert_eq!(posts[0].rel.user, posts[1].rel.user);
+}
+
+/// A single level is unchanged: still one extra query, still no nesting cost.
+#[tokio::test]
+async fn one_level_is_still_one_extra_query() {
+    let db = Counting::new(db().await);
+    seed_two_authors(&db).await;
+    db.reset();
+
+    let posts = posts::table()
+        .query(posts::then_load::user())
+        .all(&db)
+        .await
+        .unwrap();
+    assert_eq!(db.seen().len(), 2, "the caller's query and one keyed query");
+    assert!(posts.iter().all(|p| p.rel.user.is_some()));
+    assert!(
+        posts[0].rel.user.as_ref().unwrap().rel.posts.is_empty(),
+        "a level that was not asked for is not loaded"
+    );
+}
+
+/// A cyclic path — posts → author → the author's posts → *their* authors —
+/// terminates, because a path is a finite value and not a graph traversal.
+#[tokio::test]
+async fn a_cyclic_path_terminates_where_it_was_written() {
+    let db = Counting::new(db().await);
+    seed_two_authors(&db).await;
+    db.reset();
+
+    let posts = posts::table()
+        .query((
+            posts::then_load::user().then(users::then_load::posts().then(posts::then_load::user())),
+            select::order_by(posts::id()),
+        ))
+        .all(&db)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        db.seen().len(),
+        4,
+        "four levels written, four queries — the cycle does not run away"
+    );
+
+    let author = posts[0].rel.user.as_ref().expect("author");
+    let their_post = &author.rel.posts[0];
+    let same_author = their_post.rel.user.as_ref().expect("the author again");
+    assert_eq!(
+        same_author.id, author.id,
+        "the cycle closed on the same row"
+    );
+    assert!(
+        same_author.rel.posts.is_empty(),
+        "and stopped: the fourth level was the last one written"
+    );
+}
+
+/// The batch cap, at a size small enough to see: five distinct keys in
+/// batches of two are three queries, and the last one is the remainder.
+/// `with` shapes every one of them.
+#[tokio::test]
+async fn a_level_batches_its_keys_and_shapes_every_batch() {
+    use keelson_sqlite::Mod as _;
+
+    let db = Counting::new(db().await);
+    for name in ["a", "b", "c", "d", "e"] {
+        users::table()
+            .insert(users::Setter {
+                name: set(name),
+                ..Default::default()
+            })
+            .exec(&db)
+            .await
+            .unwrap();
+    }
+    for uid in 1..=5i64 {
+        posts::table()
+            .insert(posts::Setter {
+                user_id: set(uid),
+                title: set(format!("post {uid}")),
+                ..Default::default()
+            })
+            .exec(&db)
+            .await
+            .unwrap();
+    }
+    db.reset();
+
+    let posts = posts::table()
+        .query(
+            posts::then_load::user()
+                .batch(2)
+                .with(|q| users::is_active().eq(true).apply(q)),
+        )
+        .all(&db)
+        .await
+        .unwrap();
+
+    let sql = db.seen();
+    assert_eq!(sql.len(), 4, "the caller's query, then ceil(5 / 2) batches");
+    assert_eq!(
+        sql[1..].iter().map(|s| args_in(s)).collect::<Vec<_>>(),
+        vec![3, 3, 2],
+        "two keys plus the shaping mod's argument, then the remainder"
+    );
+    assert_sqlite(
+        &sql[3],
+        &format!(
+            concat!(
+                r#"SELECT {} FROM "users" "#,
+                r#"WHERE ("users"."id" IN (?1)) AND ("users"."is_active" = ?2)"#
+            ),
+            SQLITE_USER_COLS
+        ),
+    );
+    assert!(
+        posts.iter().all(|p| p.rel.user.is_some()),
+        "every batch attached"
+    );
+}
+
+/// The default cap is real: one key over [`KEY_BATCH`] is two queries, and
+/// the engine answers both. Seeded with raw SQL because 901 rows through the
+/// model layer is 901 statements.
+#[tokio::test]
+async fn the_default_batch_boundary_holds_against_the_engine() {
+    let db = Counting::new(db().await);
+    let n = keelson_models::KEY_BATCH + 1;
+    db.execute(Statement::new(
+        format!(
+            "WITH RECURSIVE c(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM c WHERE n < {n}) \
+             INSERT INTO users (id, name) SELECT n, 'user ' || n FROM c"
+        ),
+        vec![],
+    ))
+    .await
+    .unwrap();
+    db.execute(Statement::new(
+        format!(
+            "WITH RECURSIVE c(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM c WHERE n < {n}) \
+             INSERT INTO posts (id, user_id, title) SELECT n, n, 'post ' || n FROM c"
+        ),
+        vec![],
+    ))
+    .await
+    .unwrap();
+    db.reset();
+
+    let posts = posts::table()
+        .query((posts::then_load::user(), select::order_by(posts::id())))
+        .all(&db)
+        .await
+        .unwrap();
+
+    let sql = db.seen();
+    assert_eq!(posts.len(), n);
+    assert_eq!(
+        sql.len(),
+        3,
+        "the caller's query plus two batches — {} keys is one over the cap",
+        n
+    );
+    assert_eq!(
+        sql[1..].iter().map(|s| args_in(s)).collect::<Vec<_>>(),
+        vec![keelson_models::KEY_BATCH, 1],
+        "a full batch and the one key that did not fit"
+    );
+    assert!(
+        posts
+            .iter()
+            .all(|p| p.rel.user.as_ref().is_some_and(|u| u.id == p.user_id)),
+        "every row across both batches got its own author"
+    );
+}
+
+/// A batch of no keys makes no progress; substituting a size silently would
+/// hide the caller's mistake.
+#[test]
+#[should_panic(expected = "at least 1")]
+fn a_zero_batch_is_refused() {
+    let _ = posts::then_load::user().batch(0);
 }
 
 #[tokio::test]

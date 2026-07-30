@@ -62,6 +62,15 @@
 //! first's keys, to-one and to-many, attached by
 //! [`attach_to_one`]/[`attach_to_many`].
 //!
+//! **Nested loads are chained values, not paths in a string.** A then-load is
+//! a [`ThenLoad`], and another one hangs off it:
+//! `posts::then_load::user().then(users::then_load::posts())` is
+//! posts → author → the author's posts in three queries, checked by the
+//! compiler (the inner level must load onto *this* level's child model).
+//! One batched `IN` query per level, [`KEY_BATCH`] keys at a time, over the
+//! deduplicated child set — the design and its alternatives are recorded in
+//! `load.rs`.
+//!
 //! **Relation field naming: `rel`, not bob's `r`.** The row struct carries
 //! `post.rel.user` / `user.rel.posts`. `r` is a Go-ism (single-letter
 //! receivers are idiomatic there; in Rust a one-letter public field reads as
@@ -122,7 +131,7 @@ mod set;
 mod table;
 
 pub use column::{Column, Filter};
-pub use load::{attach_to_many, attach_to_one};
+pub use load::{IntoLoader, KEY_BATCH, ThenLoad, attach_to_many, attach_to_one};
 pub use model::{Table, View};
 pub use mutate::{ModelDelete, ModelInsert, ModelUpdate};
 pub use select::{Loader, MapperMod, ModelSelect, hook, loader, mapper_mod};

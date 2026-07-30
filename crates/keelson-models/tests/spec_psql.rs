@@ -28,11 +28,8 @@ mod model {
     pub mod users {
         use chrono::{DateTime, Utc};
         use keelson_core::expr::Expr;
-        use keelson_core::mod_fn;
         use keelson_exec::{ExecError, ExecFuture, Execute as _, Executor, FromRow, Row};
-        use keelson_models::{
-            Column, ModelSelect, ModelTable, Set, Table, View, attach_to_many, loader,
-        };
+        use keelson_models::{Column, ModelTable, Set, Table, ThenLoad, View, attach_to_many};
         use keelson_psql::{Mod, arg, delete, insert, quote, select, update};
 
         /// The model marker `users::table()` hangs off. Carries no data — the
@@ -232,38 +229,30 @@ mod model {
             }
         }
 
-        /// Then-load mods: a second query keyed by the first's rows.
+        /// Then-load mods: a second query keyed by the first's rows, plus
+        /// whatever deeper levels the caller hangs off them.
         pub mod then_load {
             use super::*;
 
-            /// Load each user's posts (to-many) with one keyed query.
-            pub fn posts() -> impl Mod<ModelSelect<Users>> {
-                mod_fn(|q: &mut ModelSelect<Users>| {
-                    q.add_loader(loader(|db, users| Box::pin(load_posts(db, users))));
-                })
-            }
-
-            async fn load_posts(db: &dyn Executor, users: &mut [User]) -> Result<(), ExecError> {
-                let mut ids: Vec<i32> = users.iter().map(|u| u.id).collect();
-                ids.sort_unstable();
-                ids.dedup();
-                if ids.is_empty() {
-                    return Ok(());
-                }
-                let posts = super::super::posts::table()
-                    .query(super::super::posts::user_id().in_(ids))
-                    .all(db)
-                    .await?;
-                attach_to_many(
-                    users,
-                    posts,
-                    |u| u.id,
-                    |p| p.user_id,
-                    |u, ps| {
-                        u.rel.posts = ps;
+            /// Load each user's posts (to-many), one keyed query per batch of
+            /// [`KEY_BATCH`](keelson_models::KEY_BATCH) keys. `.then(…)`
+            /// loads a relation *of* those posts.
+            pub fn posts() -> ThenLoad<Users, super::super::posts::Posts, i32> {
+                ThenLoad::new(
+                    |users: &[User]| users.iter().map(|u| u.id).collect(),
+                    |keys, q| super::super::posts::user_id().in_(keys).apply(q),
+                    |users: &mut [User], posts| {
+                        attach_to_many(
+                            users,
+                            posts,
+                            |u| u.id,
+                            |p| p.user_id,
+                            |u, ps| {
+                                u.rel.posts = ps;
+                            },
+                        );
                     },
-                );
-                Ok(())
+                )
             }
         }
     }
@@ -274,9 +263,9 @@ mod model {
         use chrono::{DateTime, Utc};
         use keelson_core::expr::Expr;
         use keelson_core::mod_fn;
-        use keelson_exec::{ExecError, Executor, FromRow, Row};
+        use keelson_exec::{ExecError, FromRow, Row};
         use keelson_models::{
-            Column, ModelSelect, ModelTable, Set, Table, View, attach_to_one, loader, mapper_mod,
+            Column, ModelSelect, ModelTable, Set, Table, ThenLoad, View, attach_to_one, mapper_mod,
         };
         use keelson_psql::{Chain as _, Mod, delete, insert, quote, select, update};
 
@@ -491,34 +480,24 @@ mod model {
         pub mod then_load {
             use super::*;
 
-            /// Load each post's user (to-one) with one keyed second query.
-            pub fn user() -> impl Mod<ModelSelect<Posts>> {
-                mod_fn(|q: &mut ModelSelect<Posts>| {
-                    q.add_loader(loader(|db, posts| Box::pin(load_user(db, posts))));
-                })
-            }
-
-            async fn load_user(db: &dyn Executor, posts: &mut [Post]) -> Result<(), ExecError> {
-                let mut ids: Vec<i32> = posts.iter().map(|p| p.user_id).collect();
-                ids.sort_unstable();
-                ids.dedup();
-                if ids.is_empty() {
-                    return Ok(());
-                }
-                let users = super::super::users::table()
-                    .query(super::super::users::id().in_(ids))
-                    .all(db)
-                    .await?;
-                attach_to_one(
-                    posts,
-                    users,
-                    |p| p.user_id,
-                    |u| u.id,
-                    |p, u| {
-                        p.rel.user = u;
+            /// Load each post's user (to-one), one keyed query per batch.
+            /// `.then(…)` loads a relation *of* that user.
+            pub fn user() -> ThenLoad<Posts, super::super::users::Users, i32> {
+                ThenLoad::new(
+                    |posts: &[Post]| posts.iter().map(|p| p.user_id).collect(),
+                    |keys, q| super::super::users::id().in_(keys).apply(q),
+                    |posts: &mut [Post], users| {
+                        attach_to_one(
+                            posts,
+                            users,
+                            |p| p.user_id,
+                            |u| u.id,
+                            |p, u| {
+                                p.rel.user = u;
+                            },
+                        );
                     },
-                );
-                Ok(())
+                )
             }
         }
     }
@@ -762,6 +741,23 @@ fn the_query_extensions_wiring_is_observable() {
     assert_eq!(q.query_type(), keelson_core::QueryType::Select);
 }
 
+#[test]
+fn a_nested_path_is_one_loader_and_leaves_the_statement_alone() {
+    // Nesting lives inside the level, not on the query: however deep the
+    // path, the caller's query carries exactly one loader, and the statement
+    // it builds is the same unadorned SELECT. That is what lets a level
+    // deduplicate and batch before the next one runs.
+    let q = posts::table().query(
+        posts::then_load::user().then(users::then_load::posts().then(posts::then_load::user())),
+    );
+    assert_eq!(q.loaders().len(), 1);
+    assert!(
+        q.mapper_mods().is_empty(),
+        "a then-load, nested or not, adds nothing to the statement"
+    );
+    assert_psql(&q, &format!(r#"SELECT {POST_COLS} FROM "posts""#));
+}
+
 // ─────────────────── end-to-end against PostgreSQL 17 ───────────────────
 
 #[cfg(feature = "live-docker")]
@@ -941,6 +937,162 @@ mod live {
             .await
             .unwrap();
         assert!(ghosts.is_empty());
+    }
+
+    /// An executor that records the statements it runs, so a load path's cost
+    /// can be asserted rather than assumed.
+    #[derive(Debug)]
+    struct Counting<E> {
+        inner: E,
+        sql: std::sync::Mutex<Vec<String>>,
+    }
+
+    impl<E> Counting<E> {
+        fn new(inner: E) -> Self {
+            Counting {
+                inner,
+                sql: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+
+        fn seen(&self) -> Vec<String> {
+            self.sql.lock().unwrap().clone()
+        }
+    }
+
+    impl<E: Executor> Executor for Counting<E> {
+        fn family(&self) -> keelson_exec::Family {
+            self.inner.family()
+        }
+
+        fn fetch(
+            &self,
+            stmt: keelson_exec::Statement,
+        ) -> keelson_exec::ExecFuture<'_, Result<Vec<keelson_exec::Row>, ExecError>> {
+            self.sql.lock().unwrap().push(stmt.sql.clone());
+            self.inner.fetch(stmt)
+        }
+
+        fn execute(
+            &self,
+            stmt: keelson_exec::Statement,
+        ) -> keelson_exec::ExecFuture<'_, Result<keelson_exec::ExecResult, ExecError>> {
+            self.sql.lock().unwrap().push(stmt.sql.clone());
+            self.inner.execute(stmt)
+        }
+    }
+
+    /// The nested path against the real server, inside one transaction:
+    /// posts → author → the author's posts, three queries, correctly
+    /// associated, the shared author fetched once — and a cyclic path that
+    /// terminates where it was written.
+    #[tokio::test]
+    async fn nested_loads_arrive_associated_and_cost_one_query_per_level() {
+        let db = pool().await;
+        let uid = key();
+        let uid2 = key();
+        let pid = key();
+        let pid2 = key();
+        let pid3 = key();
+
+        let out: Result<(), ExecError> = db
+            .within(async |tx| {
+                for (id, name) in [(uid, "Stephen"), (uid2, "Ada")] {
+                    users::table()
+                        .insert(users::Setter {
+                            id: set(id),
+                            name: set(name),
+                            ..Default::default()
+                        })
+                        .one(tx)
+                        .await?;
+                }
+                for (id, user_id, title) in [
+                    (pid, uid, "keel laid"),
+                    (pid2, uid, "second"),
+                    (pid3, uid2, "notes"),
+                ] {
+                    posts::table()
+                        .insert(posts::Setter {
+                            id: set(id),
+                            user_id: set(user_id),
+                            title: set(title),
+                            ..Default::default()
+                        })
+                        .one(tx)
+                        .await?;
+                }
+
+                let counting = Counting::new(tx);
+                let loaded = posts::table()
+                    .query((
+                        posts::then_load::user().then(users::then_load::posts()),
+                        posts::id().in_([pid, pid2, pid3]),
+                        select::order_by(posts::id()),
+                    ))
+                    .all(&counting)
+                    .await?;
+
+                let sql = counting.seen();
+                assert_eq!(
+                    sql.len(),
+                    3,
+                    "one query per level, not one per row: {sql:#?}"
+                );
+                assert_eq!(
+                    sql[1].matches('$').count(),
+                    2,
+                    "three posts, two distinct authors — the key is deduplicated"
+                );
+
+                let authors: Vec<&str> = loaded
+                    .iter()
+                    .map(|p| p.rel.user.as_ref().expect("author").name.as_str())
+                    .collect();
+                assert_eq!(authors, vec!["Stephen", "Stephen", "Ada"]);
+                let stephens: Vec<&str> = loaded[0]
+                    .rel
+                    .user
+                    .as_ref()
+                    .unwrap()
+                    .rel
+                    .posts
+                    .iter()
+                    .map(|p| p.title.as_str())
+                    .collect();
+                assert_eq!(stephens, vec!["keel laid", "second"]);
+                assert_eq!(
+                    loaded[0].rel.user, loaded[1].rel.user,
+                    "the shared author was loaded once, its own relation already filled"
+                );
+
+                // A cyclic path terminates at the depth it was written to.
+                let counting = Counting::new(tx);
+                let cyclic = posts::table()
+                    .query((
+                        posts::then_load::user()
+                            .then(users::then_load::posts().then(posts::then_load::user())),
+                        posts::id().eq(pid),
+                    ))
+                    .one(&counting)
+                    .await?;
+                assert_eq!(counting.seen().len(), 4, "four levels, four queries");
+                let author = cyclic.rel.user.as_ref().expect("author");
+                let again = author.rel.posts[0]
+                    .rel
+                    .user
+                    .as_ref()
+                    .expect("the author again");
+                assert_eq!(again.id, author.id);
+                assert!(
+                    again.rel.posts.is_empty(),
+                    "the cycle stopped where the path stopped"
+                );
+
+                Err(ExecError::other("deliberate rollback"))
+            })
+            .await;
+        assert_eq!(out.unwrap_err().to_string(), "deliberate rollback");
     }
 
     /// The commit half: on a plain pool the hook's write persists with the
