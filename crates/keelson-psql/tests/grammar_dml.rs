@@ -1533,6 +1533,179 @@ fn delete_written_entirely_from_raw_fragments() {
 }
 
 // ---------------------------------------------------------------------------
+// Data-modifying CTEs
+//
+// sql-select.html, WITH clause: "and with_query can be a SELECT, TABLE, VALUES,
+// INSERT, UPDATE, DELETE, or MERGE statement" — a data-modifying statement in
+// `WITH` must have RETURNING, and RETURNING is what the rest of the statement
+// reads. One of PostgreSQL's signature features, and the reason `Cte::query` is
+// an ordinary expression rather than something SELECT-shaped.
+//
+// PREPARE runs parse and analysis without executing, so the engine tier judges
+// these without deleting anything.
+// ---------------------------------------------------------------------------
+
+/// `WITH x AS (DELETE … RETURNING …) SELECT …` — the outer query reads the rows
+/// the CTE removed, through the CTE's RETURNING list.
+#[test]
+fn a_delete_cte_feeds_the_outer_select() {
+    let purge = psql::delete((
+        delete::from(quote("comments")),
+        delete::where_(quote("post_id").eq(arg(1i32))),
+        delete::returning((quote("id"), quote("body"))),
+    ));
+    let q = psql::select((
+        select::with("purged", purge),
+        select::columns((quote("id"), quote("body"))),
+        select::from(quote("purged")),
+    ));
+    let args = check(
+        &q,
+        r#"WITH "purged" AS (DELETE FROM "comments" WHERE ("post_id" = $1)
+           RETURNING "id", "body")
+           SELECT "id", "body" FROM "purged""#,
+    );
+    assert_eq!(args, vec![Value::I32(1)]);
+}
+
+/// The INSERT variant. The CTE's RETURNING may return more than the outer query
+/// reads.
+#[test]
+fn an_insert_cte_feeds_the_outer_select() {
+    let add = psql::insert((
+        insert::into(quote("tags")).columns(["id", "name"]),
+        insert::values((arg(1i32), arg("rust"))),
+        insert::returning((quote("id"), quote("name"))),
+    ));
+    let q = psql::select((
+        select::with("added", add),
+        select::columns(quote("id")),
+        select::from(quote("added")),
+    ));
+    let args = check(
+        &q,
+        r#"WITH "added" AS (INSERT INTO "tags" ("id", "name") VALUES ($1, $2)
+           RETURNING "id", "name")
+           SELECT "id" FROM "added""#,
+    );
+    assert_eq!(args, vec![Value::I32(1), Value::Text("rust".into())]);
+}
+
+/// The UPDATE variant, returning the post-update values — RETURNING in a CTE sees
+/// the new row, which is why reading it back is worth doing at all.
+#[test]
+fn an_update_cte_feeds_the_outer_select() {
+    let bump = psql::update((
+        update::table(quote("posts")),
+        update::set_col("views").to(quote("views").plus(1i32)),
+        update::where_(quote("user_id").eq(arg(1i32))),
+        update::returning((quote("id"), quote("views"))),
+    ));
+    let q = psql::select((
+        select::with("bumped", bump),
+        select::columns((quote("id"), quote("views"))),
+        select::from(quote("bumped")),
+        select::order_by(quote("views")).desc(),
+    ));
+    let args = check(
+        &q,
+        r#"WITH "bumped" AS (UPDATE "posts" SET "views" = ("views" + 1)
+           WHERE ("user_id" = $1) RETURNING "id", "views")
+           SELECT "id", "views" FROM "bumped" ORDER BY "views" DESC"#,
+    );
+    assert_eq!(args, vec![Value::I32(1)]);
+}
+
+/// The archive pattern: a DELETE in the CTE and an INSERT reading its RETURNING
+/// as the row source — move rows in one statement.
+#[test]
+fn an_insert_reads_its_rows_from_a_delete_cte() {
+    let removed = psql::delete((
+        delete::from(quote("post_tags")),
+        delete::where_(quote("post_id").eq(arg(1i32))),
+        delete::returning((quote("post_id"), quote("tag_id"))),
+    ));
+    let q = psql::insert((
+        insert::with("removed", removed),
+        insert::into(quote("post_tags")).columns(["post_id", "tag_id"]),
+        insert::query(psql::select((
+            select::columns((quote("post_id"), quote("tag_id"))),
+            select::from(quote("removed")),
+        ))),
+    ));
+    let args = check(
+        &q,
+        r#"WITH "removed" AS (DELETE FROM "post_tags" WHERE ("post_id" = $1)
+           RETURNING "post_id", "tag_id")
+           INSERT INTO "post_tags" ("post_id", "tag_id")
+           SELECT "post_id", "tag_id" FROM "removed""#,
+    );
+    assert_eq!(args, vec![Value::I32(1)]);
+}
+
+/// An UPDATE in the CTE of a DELETE, read back through `IN` — RETURNING is the
+/// only channel from a modifying CTE to the statement around it.
+#[test]
+fn a_delete_reads_an_update_ctes_returning_through_in() {
+    let demoted = psql::update((
+        update::table(quote("posts")),
+        update::set_col("status").to_arg("archived"),
+        update::where_(quote("views").lt(arg(10i32))),
+        update::returning(quote("id")),
+    ));
+    let q = psql::delete((
+        delete::with("demoted", demoted),
+        delete::from(quote("comments")),
+        delete::where_(quote("post_id").in_(psql::query(psql::select((
+            select::columns(quote("id")),
+            select::from(quote("demoted")),
+        ))))),
+    ));
+    let args = check(
+        &q,
+        r#"WITH "demoted" AS (UPDATE "posts" SET "status" = $1 WHERE ("views" < $2)
+           RETURNING "id")
+           DELETE FROM "comments" WHERE ("post_id" IN (SELECT "id" FROM "demoted"))"#,
+    );
+    assert_eq!(args, vec![Value::Text("archived".into()), Value::I32(10)]);
+}
+
+/// Two CTEs, the second an ordinary SELECT over the first's RETURNING, and the
+/// statement itself a third modification. Sub-statements cannot see each other's
+/// effects on the tables; the RETURNING list is the only data that flows.
+#[test]
+fn a_select_cte_reads_a_delete_ctes_returning_for_an_update() {
+    let removed = psql::delete((
+        delete::from(quote("comments")),
+        delete::where_(quote("post_id").eq(arg(1i32))),
+        delete::returning((quote("id"), quote("user_id"))),
+    ));
+    let authors = psql::select((
+        select::columns(quote("user_id")),
+        select::from(quote("removed")),
+        select::where_(quote("user_id").is_not_null()),
+    ));
+    let q = psql::update((
+        update::with("removed", removed),
+        update::with("authors", authors),
+        update::table(quote("users")),
+        update::set_col("is_active").to_arg(false),
+        update::from(quote("authors")).as_("a"),
+        update::where_(quote(("users", "id")).eq(quote(("a", "user_id")))),
+        update::returning(quote(("users", "id"))),
+    ));
+    let args = check(
+        &q,
+        r#"WITH "removed" AS (DELETE FROM "comments" WHERE ("post_id" = $1)
+           RETURNING "id", "user_id"),
+                "authors" AS (SELECT "user_id" FROM "removed" WHERE ("user_id" IS NOT NULL))
+           UPDATE "users" SET "is_active" = $2 FROM "authors" AS "a"
+           WHERE ("users"."id" = "a"."user_id") RETURNING "users"."id""#,
+    );
+    assert_eq!(args, vec![Value::I32(1), Value::Bool(false)]);
+}
+
+// ---------------------------------------------------------------------------
 // Where the builder and PostgreSQL part company
 //
 // Rendering is not validation. These pin the places a well-typed statement still
