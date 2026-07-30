@@ -12,7 +12,9 @@ authors = ["Kensuke Kubo"]
 
 [workspace.dependencies]
 keelson-core = { path = "crates/keelson-core" }
+keelson-exec = { path = "crates/keelson-exec" }
 keelson-sqlcheck = { path = "crates/keelson-sqlcheck" }
+keelson-sqlx = { path = "crates/keelson-sqlx" }
 keelson-mysql = { path = "crates/keelson-mysql" }
 keelson-psql = { path = "crates/keelson-psql" }
 keelson-sqlite = { path = "crates/keelson-sqlite" }
@@ -22,7 +24,11 @@ proptest = "1"
 regex = "1"
 mysql = "27"
 postgres = "0.19"
-rusqlite = { version = "0.40", features = ["bundled"] }
+# Held at 0.32 by the `links = "sqlite3"` rule: only one libsqlite3-sys can
+# exist in the graph, sqlx 0.8's sqlite driver requires ^0.30, and rusqlite
+# 0.32 is the release that shares it. The judge only uses
+# open_in_memory/execute_batch/prepare, which are identical across versions.
+rusqlite = { version = "0.32", features = ["bundled"] }
 testcontainers = { version = "0.27", features = ["blocking"] }
 testcontainers-modules = { version = "0.15", features = ["postgres", "mysql", "blocking"] }
 sqlite3-parser = "0.17"
@@ -37,6 +43,15 @@ serde_json = "1"
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 uuid = { version = "1", default-features = false, features = ["std"] }
 rust_decimal = { version = "1", default-features = false, features = ["std"] }
+
+# Execution layer. tokio is used by keelson-exec for its `sync` primitives only —
+# no runtime assumption leaks into the traits; backends that spawn (streaming)
+# add `rt` themselves. sqlx's default features are off so the first backend pulls
+# in exactly the drivers and type integrations its own features name.
+tokio = { version = "1", default-features = false }
+tracing = { version = "0.1", default-features = false, features = ["std"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio"] }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
 
 [workspace.lints.rust]
 missing_debug_implementations = "warn"
