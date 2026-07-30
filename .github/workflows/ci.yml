@@ -1,0 +1,134 @@
+# keelson CI — the same three gates the repo enforces locally, wired into Actions.
+#
+# Job layout (all parallel):
+#   fast          build + test + clippy(-D warnings) + fmt on stable. The grammar
+#                 judges and real SQLite run here already: rusqlite is bundled and
+#                 pg_query/sqlite3-parser/sqlparser compile in, so a plain
+#                 `cargo test` is the full non-engine verification. No services.
+#   coverage-gate records every judged SQL string during a full test run, then
+#                 replays it against the checked-in construct manifests
+#                 (docs/testing-tiers.md, Tier D). Runs the suite a second time
+#                 because recording is env-var-gated; parallel with `fast`, so it
+#                 adds no wall-clock.
+#   msrv          `cargo check --workspace --all-targets --locked` on the
+#                 `rust-version` declared in Cargo.toml (read from the manifest
+#                 at run time, so the job can never drift from what the
+#                 workspace claims). Check-only on purpose: it proves the code
+#                 and lockfile compile on the declared MSRV, while the
+#                 behavioral gates stay on stable (which is what users build
+#                 with, and where new clippy lints surface early). Duplicating
+#                 the full test run on the MSRV would double CI time for almost
+#                 no extra signal — test behavior does not vary by toolchain
+#                 here.
+#   engine        the live-docker tier: real postgres:17-alpine and mysql:8.4
+#                 PREPARE every statement via testcontainers (~14 containers,
+#                 several minutes). Runs on PRs and pushes to main — engine
+#                 acceptance is part of this repo's definition of correct, so it
+#                 must gate merges, not run after the fact. The weekly cron
+#                 re-runs it (and everything else) to catch drift in the
+#                 floating `postgres:17-alpine` / `mysql:8.4` image tags even
+#                 when the repo is quiet. Container images are NOT cached:
+#                 saving/restoring ~300 MB of docker layers through actions/cache
+#                 costs about as long as pulling them fresh on GitHub's network,
+#                 and a cache would defeat the point of tracking the floating
+#                 tags.
+#
+# Toolchain pinning: stable for behavior, the manifest's `rust-version` for the
+# MSRV job. Nothing pins below the MSRV.
+#
+# Dependency caching: Swatinem/rust-cache@v2 rather than raw actions/cache — it
+# keys on toolchain + Cargo.lock + job automatically, caches the registry and
+# target dir, and prunes stale artifacts so the cache stays under the size cap.
+# Hand-rolling that with actions/cache is strictly more code for a worse hit
+# rate.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Weekly full run (all jobs), Monday 03:17 UTC: catches floating docker-tag
+    # and stable-toolchain drift while the repo is quiet.
+    - cron: "17 3 * * 1"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fast:
+    name: build / test / clippy / fmt (stable)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --workspace
+      - run: cargo test --workspace
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo fmt --all --check
+
+  coverage-gate:
+    name: sqlcheck coverage gate (Tier D)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # The record path must be absolute: each test binary runs with its own
+      # crate directory as cwd (see docs/testing-tiers.md). $GITHUB_WORKSPACE
+      # is the checkout root, i.e. the same directory the docs' $PWD refers to.
+      - name: Record judged SQL from a full test run
+        run: KEELSON_SQLCHECK_RECORD="$GITHUB_WORKSPACE/target/sqlcheck-record" cargo test --workspace
+      - name: Replay recording against the construct manifests
+        run: cargo run -p keelson-sqlcheck --bin coverage-gate -- target/sqlcheck-record
+
+  msrv:
+    name: MSRV check (Cargo.toml rust-version)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read rust-version from Cargo.toml
+        id: msrv
+        run: |
+          version=$(sed -n 's/^rust-version *= *"\(.*\)"/\1/p' Cargo.toml)
+          test -n "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --workspace --all-targets --locked
+
+  engine:
+    name: engine tier (live-docker)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Pull the engine images up front so image download time is visible as
+      # its own step and the first test doesn't absorb it into its timeout.
+      - name: Pull engine images
+        run: |
+          docker pull postgres:17-alpine
+          docker pull mysql:8.4
+      - run: cargo test --workspace --features keelson-sqlcheck/live-docker
+      # testcontainers' reaper normally handles this; sweep anyway so a crashed
+      # run can't leak containers into a reused runner environment.
+      - name: Clean up testcontainers
+        if: always()
+        run: |
+          ids=$(docker ps -q --filter "label=org.testcontainers.managed-by=testcontainers")
+          [ -n "$ids" ] && docker rm -f $ids || true
