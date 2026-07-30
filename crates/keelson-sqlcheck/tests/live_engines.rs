@@ -119,7 +119,10 @@ fn psql_grammar_and_engine_agree_on_syntax() {
         "SELECT (1 + FROM users",
     ];
     for sql in syntactically_bad {
-        assert!(grammar(Dialect::Psql, sql).is_err(), "grammar accepted: {sql}");
+        assert!(
+            grammar(Dialect::Psql, sql).is_err(),
+            "grammar accepted: {sql}"
+        );
         assert!(
             live::check(Dialect::Psql, sql).is_err(),
             "engine accepted: {sql}"

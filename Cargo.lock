@@ -1270,8 +1270,25 @@ dependencies = [
 name = "keelson-core"
 version = "0.0.0"
 dependencies = [
+ "keelson-core",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "keelson-mysql"
+version = "0.0.0"
+dependencies = [
+ "keelson-core",
+ "keelson-sqlcheck",
+]
+
+[[package]]
+name = "keelson-psql"
+version = "0.0.0"
+dependencies = [
+ "keelson-core",
+ "keelson-sqlcheck",
 ]
 
 [[package]]
@@ -1286,6 +1303,14 @@ dependencies = [
  "sqlparser",
  "testcontainers",
  "testcontainers-modules",
+]
+
+[[package]]
+name = "keelson-sqlite"
+version = "0.0.0"
+dependencies = [
+ "keelson-core",
+ "keelson-sqlcheck",
 ]
 
 [[package]]

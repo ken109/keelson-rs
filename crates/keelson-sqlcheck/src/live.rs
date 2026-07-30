@@ -122,7 +122,9 @@ pub fn check_mysql(sql: &str) -> Result<(), String> {
             .with_tag(MYSQL_IMAGE_TAG)
             .start()
             .expect("starting the MySQL container (is Docker running?)");
-        let port = container.get_host_port_ipv4(3306).expect("mapped MySQL port");
+        let port = container
+            .get_host_port_ipv4(3306)
+            .expect("mapped MySQL port");
 
         let url = format!("mysql://root@127.0.0.1:{port}/test");
         let mut conn = mysql::Conn::new(mysql::Opts::from_url(&url).expect("MySQL url"))
@@ -195,8 +197,10 @@ mod tests {
         check_sqlite("SELECT id, name FROM users WHERE age >= ?1").unwrap();
         check_sqlite("SELECT u.name, count(p.id) FROM users u LEFT JOIN posts p ON p.user_id = u.id GROUP BY u.name")
             .unwrap();
-        check_sqlite("INSERT INTO users (id, name) VALUES (?1, ?2) ON CONFLICT (id) DO NOTHING RETURNING id")
-            .unwrap();
+        check_sqlite(
+            "INSERT INTO users (id, name) VALUES (?1, ?2) ON CONFLICT (id) DO NOTHING RETURNING id",
+        )
+        .unwrap();
     }
 
     /// The whole justification for this module: cases the grammar accepts and the

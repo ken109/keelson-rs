@@ -176,7 +176,10 @@ mod tests {
 
     #[test]
     fn normalize_collapses_whitespace_only() {
-        assert_eq!(normalize("  SELECT\n\tid  FROM users  "), "SELECT id FROM users");
+        assert_eq!(
+            normalize("  SELECT\n\tid  FROM users  "),
+            "SELECT id FROM users"
+        );
         // Parentheses are left exactly as emitted. A normaliser that padded them
         // would hide the very formatting choices docs/sql-rendering.md records.
         assert_eq!(normalize("NOW()"), "NOW()");
@@ -187,7 +190,10 @@ mod tests {
     // that choked on `$1` would make the oracle useless.
     #[test]
     fn accepts_placeholders() {
-        assert_valid(Dialect::Psql, r#"SELECT * FROM users WHERE "id" = $1 AND age > $2"#);
+        assert_valid(
+            Dialect::Psql,
+            r#"SELECT * FROM users WHERE "id" = $1 AND age > $2"#,
+        );
         assert_valid(Dialect::Sqlite, r#"SELECT * FROM users WHERE "id" = ?1"#);
         assert_valid(Dialect::Mysql, "SELECT * FROM users WHERE `id` = ?");
     }
@@ -225,13 +231,13 @@ mod tests {
     #[test]
     fn rejects_malformed_sql() {
         let bad_psql = [
-            "SELECT FROM",                          // missing select list
-            "SELECT * FORM users",                  // typo'd keyword
-            "SELECT * FROM users WHERE",            // dangling WHERE
-            "SELECT * FROM users GROUP BY",         // dangling GROUP BY
+            "SELECT FROM",                              // missing select list
+            "SELECT * FORM users",                      // typo'd keyword
+            "SELECT * FROM users WHERE",                // dangling WHERE
+            "SELECT * FROM users GROUP BY",             // dangling GROUP BY
             "SELECT * FROM users ORDER BY id ASC DESC", // contradictory direction
-            "SELECT (1 + FROM users",               // unbalanced paren
-            "INSERT INTO users VALUES",             // dangling VALUES
+            "SELECT (1 + FROM users",                   // unbalanced paren
+            "INSERT INTO users VALUES",                 // dangling VALUES
         ];
         for sql in bad_psql {
             assert!(
@@ -240,7 +246,11 @@ mod tests {
             );
         }
 
-        for sql in ["SELECT FROM", "SELECT * FORM users", "SELECT (1 + FROM users"] {
+        for sql in [
+            "SELECT FROM",
+            "SELECT * FORM users",
+            "SELECT (1 + FROM users",
+        ] {
             assert!(
                 check_sqlite(sql).is_err(),
                 "sqlite3-parser accepted malformed SQL: {sql:?}"
