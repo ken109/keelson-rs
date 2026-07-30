@@ -75,10 +75,7 @@ pub fn raw(sql: impl Into<Cow<'static, str>>) -> Expr {
 /// A `?` may be filled by a value or by a whole expression, so
 /// `IN (?)` can expand to `IN ($3, $4, $5)`. The counts must match; a mismatch is
 /// [`Error::RawArgCount`](crate::Error::RawArgCount).
-pub fn template(
-    sql: impl Into<Cow<'static, str>>,
-    args: impl IntoIterator<Item = RawArg>,
-) -> Expr {
+pub fn template(sql: impl Into<Cow<'static, str>>, args: impl IntoIterator<Item = RawArg>) -> Expr {
     Expr::template(sql, args)
 }
 
@@ -205,10 +202,7 @@ mod tests {
         assert_eq!(sql(not(quote("flag"))), r#"NOT "flag""#);
         // A chain result is already grouped, so `NOT` does not double-wrap it —
         // the property that makes bob's "already a chain value" arm unnecessary.
-        assert_eq!(
-            sql(not(quote("a").eq(arg(1i32)))),
-            r#"NOT ("a" = $1)"#
-        );
+        assert_eq!(sql(not(quote("a").eq(arg(1i32)))), r#"NOT ("a" = $1)"#);
     }
 
     #[test]

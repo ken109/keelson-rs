@@ -106,8 +106,11 @@ mod tests {
 
         #[test]
         fn plain() {
-            let (sql, args) =
-                build(&TestDialect, &Expr::template("SELECT a, b FROM alphabet", [])).unwrap();
+            let (sql, args) = build(
+                &TestDialect,
+                &Expr::template("SELECT a, b FROM alphabet", []),
+            )
+            .unwrap();
             assert_eq!(sql, "SELECT a, b FROM alphabet");
             assert!(args.is_empty());
         }
@@ -162,10 +165,7 @@ mod tests {
             // list that expands to three placeholders.
             let e = Expr::template(
                 "SELECT a, b FROM alphabet WHERE c IN (?) AND d <= ?",
-                [
-                    RawArg::expr(Expr::args([5i32, 6, 7])),
-                    RawArg::value(2i32),
-                ],
+                [RawArg::expr(Expr::args([5i32, 6, 7])), RawArg::value(2i32)],
             );
             let (sql, args) = build(&TestDialect, &e).unwrap();
             assert_eq!(
@@ -205,10 +205,7 @@ mod tests {
             // the first placeholder.
             let e = Expr::template(
                 "SELECT a, b FROM alphabet WHERE c = ? AND d <= ?",
-                [
-                    RawArg::expr(Expr::ident("AA")),
-                    RawArg::value(2i32),
-                ],
+                [RawArg::expr(Expr::ident("AA")), RawArg::value(2i32)],
             );
             let (sql, args) = build(&TestDialect, &e).unwrap();
             assert_eq!(
@@ -261,11 +258,7 @@ mod tests {
     fn a_named_replacement_consumes_a_placeholder_but_no_position() {
         let e = Expr::template(
             "a = ? AND b = ? AND c = ?",
-            [
-                RawArg::value(1i32),
-                RawArg::named("b"),
-                RawArg::value(3i32),
-            ],
+            [RawArg::value(1i32), RawArg::named("b"), RawArg::value(3i32)],
         );
         let (sql, args) = build(&TestDialect, &e).unwrap();
         assert_eq!(sql, "a = ?1 AND b = :b AND c = ?2");
@@ -275,18 +268,15 @@ mod tests {
     #[test]
     fn a_named_replacement_fails_on_a_dialect_without_named_arguments() {
         let e = Expr::template("a = ?", [RawArg::named("a")]);
-        assert!(matches!(
-            build(&Numbered, &e),
-            Err(Error::NoNamedArgs)
-        ));
+        assert!(matches!(build(&Numbered, &e), Err(Error::NoNamedArgs)));
     }
 
     #[test]
     fn multibyte_text_around_a_placeholder_is_not_sliced_mid_character() {
-        let e = Expr::template("名前 = ? AND 年齢 > ?", [
-            RawArg::value("さくら"),
-            RawArg::value(20i32),
-        ]);
+        let e = Expr::template(
+            "名前 = ? AND 年齢 > ?",
+            [RawArg::value("さくら"), RawArg::value(20i32)],
+        );
         let (sql, _) = build(&Numbered, &e).unwrap();
         assert_eq!(sql, "名前 = $1 AND 年齢 > $2");
     }

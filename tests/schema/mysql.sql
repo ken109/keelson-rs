@@ -14,6 +14,10 @@ CREATE TABLE posts (
     status       VARCHAR(64),
     views        INT NOT NULL DEFAULT 0,
     published_at DATETIME,
+    -- MySQL-only: MATCH (title) AGAINST (…) is refused outright without a FULLTEXT
+    -- index (ERROR 1191), so the engine tier could not judge full-text search at all
+    -- without this. It is inert for every other statement.
+    FULLTEXT KEY posts_title_ft (title),
     FOREIGN KEY (user_id) REFERENCES users (id)
 );
 

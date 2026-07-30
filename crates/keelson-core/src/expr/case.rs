@@ -99,10 +99,7 @@ mod tests {
             .when(quote("b"), arg(2i32))
             .else_(arg(3i32));
         let (s, args) = build(&Numbered, &e).unwrap();
-        assert_eq!(
-            s,
-            r#"(CASE WHEN "a" THEN $1 WHEN "b" THEN $2 ELSE $3 END)"#
-        );
+        assert_eq!(s, r#"(CASE WHEN "a" THEN $1 WHEN "b" THEN $2 ELSE $3 END)"#);
         assert_eq!(args.len(), 3);
     }
 

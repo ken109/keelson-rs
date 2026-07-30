@@ -515,11 +515,7 @@ mod tests {
     #[test]
     fn placeholders_are_never_parenthesised() {
         // They land in slots that bring their own parentheses, such as VALUES.
-        for e in [
-            Expr::arg(1i32),
-            Expr::args([1i32, 2]),
-            Expr::named_arg("n"),
-        ] {
+        for e in [Expr::arg(1i32), Expr::args([1i32, 2]), Expr::named_arg("n")] {
             assert!(e.is_atomic(), "{e:?}");
         }
         assert_eq!(sql(&Expr::args([1i32, 2]).grouped()), "?1, ?2");
@@ -549,10 +545,7 @@ mod tests {
                 r#"("a" DESC)"#,
             ),
             (Expr::func("NOW", ()), "(NOW())"),
-            (
-                Expr::cast(Expr::ident("a"), "int"),
-                r#"(CAST("a" AS int))"#,
-            ),
+            (Expr::cast(Expr::ident("a"), "int"), r#"(CAST("a" AS int))"#),
             (
                 Expr::Case {
                     whens: vec![(Expr::raw("a"), Expr::literal("x"))],
@@ -629,7 +622,10 @@ mod tests {
     fn a_function_call_renders_its_arguments_and_window() {
         assert_eq!(sql(&Expr::func("NOW", ())), "NOW()");
         assert_eq!(
-            sql(&Expr::func("LEAD", ("created_date", 1, Expr::func("NOW", ())))),
+            sql(&Expr::func(
+                "LEAD",
+                ("created_date", 1, Expr::func("NOW", ()))
+            )),
             "LEAD(created_date, 1, NOW())"
         );
         assert_eq!(

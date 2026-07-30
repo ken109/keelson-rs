@@ -369,10 +369,7 @@ mod tests {
 
     #[test]
     fn boolean_chains_take_one_operand_or_several() {
-        assert_eq!(
-            sql(quote("a").and(quote("b"))),
-            r#"("a" AND "b")"#
-        );
+        assert_eq!(sql(quote("a").and(quote("b"))), r#"("a" AND "b")"#);
         assert_eq!(
             sql(quote("a").or((quote("b"), quote("c")))),
             r#"("a" OR "b" OR "c")"#
@@ -440,10 +437,7 @@ mod tests {
         }
         impl<T: Chain> PsqlOps for T {}
 
-        assert_eq!(
-            sql(quote("tags").contains(arg("x"))),
-            r#"("tags" @> $1)"#
-        );
+        assert_eq!(sql(quote("tags").contains(arg("x"))), r#"("tags" @> $1)"#);
         assert_eq!(
             sql(quote("a").between_symmetric(arg(1i32), arg(2i32))),
             r#"("a" BETWEEN SYMMETRIC $1 AND $2)"#
