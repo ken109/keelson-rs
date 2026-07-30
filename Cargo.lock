@@ -1544,11 +1544,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "keelson"
+version = "0.0.0"
+dependencies = [
+ "keelson",
+ "keelson-core",
+ "keelson-exec",
+ "keelson-factory",
+ "keelson-models",
+ "keelson-mysql",
+ "keelson-psql",
+ "keelson-sqlite",
+ "keelson-sqlx",
+ "tokio",
+]
+
+[[package]]
 name = "keelson-core"
 version = "0.0.0"
 dependencies = [
  "chrono",
  "keelson-core",
+ "keelson-macros",
  "keelson-sqlcheck",
  "rust_decimal",
  "serde",
@@ -1609,6 +1626,22 @@ dependencies = [
  "tokio",
  "toml 0.8.23",
  "trybuild",
+]
+
+[[package]]
+name = "keelson-macros"
+version = "0.0.0"
+dependencies = [
+ "keelson-core",
+ "keelson-exec",
+ "keelson-sqlite",
+ "keelson-sqlx",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+ "tokio",
+ "trybuild",
+ "uuid",
 ]
 
 [[package]]

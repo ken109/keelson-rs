@@ -7,6 +7,9 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
+readme = "README.md"
+keywords = ["sql", "database", "async", "executor", "transaction"]
+categories = ["database"]
 
 [features]
 # Per-statement tracing spans and transaction lifecycle events, emitted from the
@@ -26,8 +29,11 @@ tracing = { workspace = true, optional = true }
 # Self-dependency so the integration-test crates see the feature-gated tracing
 # layer — the same pattern keelson-core uses for `testing`.
 keelson-exec = { path = ".", features = ["tracing"] }
-keelson-core = { workspace = true, features = ["testing"] }
+keelson-core = { path = "../keelson-core", features = ["testing"] }
 tokio = { workspace = true, features = ["sync", "macros", "rt"] }
+
+[package.metadata.docs.rs]
+features = ["tracing"]
 
 [lints]
 workspace = true

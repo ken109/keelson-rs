@@ -1,6 +1,6 @@
 //! The sqlx backend for keelson.
 //!
-//! One crate, three drivers behind features — [`psql`], [`mysql`], [`sqlite`]
+//! One crate, three drivers behind features — `psql`, `mysql`, `sqlite`
 //! — each exposing a `Pool` (and the transaction machinery via
 //! [`keelson_exec::Begin`]) that implements [`keelson_exec::Executor`]. An
 //! application constructs a pool here, in `main`, and everything above it —
@@ -16,7 +16,17 @@
 //! "binds as" column) and `decode_value` (native row → `Value`, per the
 //! column-type column). The round-trip suites in `tests/` are those two
 //! functions' tests.
-
+//!
+//! # Where this sits
+//!
+//! The backend half of Layer 2: it implements
+//! [keelson-exec](https://docs.rs/keelson-exec)'s traits and is the only crate in keelson
+//! that links a database driver. Application code names it once, in `main`,
+//! to build a pool; everything above talks `keelson_exec` traits. The
+//! statements it runs come from a Layer 1 dialect ([keelson-psql](https://docs.rs/keelson-psql),
+//! [keelson-mysql](https://docs.rs/keelson-mysql), [keelson-sqlite](https://docs.rs/keelson-sqlite)) or
+//! from a generated model. The whole map is the [keelson](https://docs.rs/keelson) facade
+//! crate.
 #![warn(missing_docs)]
 
 #[cfg(feature = "mysql")]

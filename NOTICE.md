@@ -1,5 +1,10 @@
 # Notices
 
+keelson itself is MIT licensed — the text is in [LICENSE](LICENSE), copyright
+(c) 2026 Kensuke Kubo. This file is attribution for work that influenced
+keelson; it carries no licence obligation, because keelson redistributes no
+third-party code.
+
 ## bob
 
 keelson's design is strongly inspired by [bob](https://github.com/stephenafamo/bob)

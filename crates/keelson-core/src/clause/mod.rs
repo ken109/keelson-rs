@@ -1,7 +1,7 @@
 //! The SQL clauses the three dialects share, as data.
 //!
 //! One struct per clause — [`With`], [`Where`], [`Frame`], … — each an
-//! [`Expression`](crate::Expression) that renders **only itself**. A dialect's
+//! [`Expression`] that renders **only itself**. A dialect's
 //! query type composes them as named fields and decides the order and the
 //! separation between them; nothing here knows what statement it is part of.
 //!

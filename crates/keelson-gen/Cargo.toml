@@ -7,6 +7,9 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
+readme = "README.md"
+keywords = ["sql", "codegen", "orm", "database", "generator"]
+categories = ["development-tools", "database"]
 
 [features]
 # The live-introspection parity tests: introspect the shared schema from the
@@ -58,15 +61,15 @@ serde_json.workspace = true
 # generated fixtures under tests/generated/ are compiled as test modules and
 # executed against real SQLite, exactly as an application's models crate
 # would depend on these.
-keelson-core = { workspace = true, features = ["chrono"] }
-keelson-exec.workspace = true
-keelson-factory.workspace = true
-keelson-models.workspace = true
-keelson-mysql.workspace = true
-keelson-psql.workspace = true
-keelson-sqlite.workspace = true
-keelson-sqlx = { workspace = true, features = ["sqlite", "chrono"] }
-keelson-sqlcheck.workspace = true
+keelson-core = { path = "../keelson-core", features = ["chrono"] }
+keelson-exec = { path = "../keelson-exec" }
+keelson-factory = { path = "../keelson-factory" }
+keelson-models = { path = "../keelson-models" }
+keelson-mysql = { path = "../keelson-mysql" }
+keelson-psql = { path = "../keelson-psql" }
+keelson-sqlite = { path = "../keelson-sqlite" }
+keelson-sqlx = { path = "../keelson-sqlx", features = ["sqlite", "chrono"] }
+keelson-sqlcheck = { path = "../keelson-sqlcheck" }
 chrono.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 # The compile_fail proof that a non-binding type override is a compile error

@@ -7,6 +7,9 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
+readme = "README.md"
+keywords = ["sql", "mysql", "mariadb", "query-builder", "database"]
+categories = ["database"]
 
 [features]
 # Adds the containerised MySQL 8.4 engine to the test judge. `cargo test` on its
@@ -23,7 +26,7 @@ exhaustive = []
 keelson-core.workspace = true
 
 [dev-dependencies]
-keelson-sqlcheck = { workspace = true, features = ["live"] }
+keelson-sqlcheck = { path = "../keelson-sqlcheck", features = ["live"] }
 
 [lints]
 workspace = true

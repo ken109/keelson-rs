@@ -11,17 +11,22 @@ repository = "https://github.com/ken109/keelson-rs"
 authors = ["Kensuke Kubo"]
 
 [workspace.dependencies]
-keelson-core = { path = "crates/keelson-core" }
-keelson-exec = { path = "crates/keelson-exec" }
-keelson-factory = { path = "crates/keelson-factory" }
-keelson-gen = { path = "crates/keelson-gen" }
-keelson-macros = { path = "crates/keelson-macros" }
-keelson-models = { path = "crates/keelson-models" }
+# Every published crate carries `version` beside `path`: `cargo package` refuses
+# a path-only dependency, because the packaged manifest keeps the version and
+# drops the path. The one exception is keelson-sqlcheck — `publish = false`, and
+# used only as a dev-dependency, which cargo strips from a packaged manifest
+# when (and only when) it has no version to keep.
+keelson-core = { path = "crates/keelson-core", version = "0.0.0" }
+keelson-exec = { path = "crates/keelson-exec", version = "0.0.0" }
+keelson-factory = { path = "crates/keelson-factory", version = "0.0.0" }
+keelson-gen = { path = "crates/keelson-gen", version = "0.0.0" }
+keelson-macros = { path = "crates/keelson-macros", version = "0.0.0" }
+keelson-models = { path = "crates/keelson-models", version = "0.0.0" }
 keelson-sqlcheck = { path = "crates/keelson-sqlcheck" }
-keelson-sqlx = { path = "crates/keelson-sqlx" }
-keelson-mysql = { path = "crates/keelson-mysql" }
-keelson-psql = { path = "crates/keelson-psql" }
-keelson-sqlite = { path = "crates/keelson-sqlite" }
+keelson-sqlx = { path = "crates/keelson-sqlx", version = "0.0.0" }
+keelson-mysql = { path = "crates/keelson-mysql", version = "0.0.0" }
+keelson-psql = { path = "crates/keelson-psql", version = "0.0.0" }
+keelson-sqlite = { path = "crates/keelson-sqlite", version = "0.0.0" }
 
 pg_query = "6"
 proptest = "1"

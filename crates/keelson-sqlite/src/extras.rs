@@ -23,7 +23,7 @@ use keelson_core::{Error, Expression, Query, SqlWriter};
 /// the five keywords the grammar lists rather than an absence, so it is
 /// representable — unlike PostgreSQL's `ALL` on a `SELECT`, which adds nothing at
 /// all. A `DELETE` has no such clause, which is why nothing in
-/// [`delete`](crate::delete) mentions one.
+/// [`delete`](mod@crate::delete) mentions one.
 ///
 /// SQLite's standalone `REPLACE INTO t …` is exactly `INSERT OR REPLACE INTO t …`;
 /// only the longer spelling is produced, because the two are the same statement
@@ -127,7 +127,7 @@ impl CompoundOp {
 /// against SQLite's own parser and against a real SQLite. PostgreSQL parenthesises
 /// every operand so that one may carry its own `ORDER BY`/`LIMIT`; SQLite cannot
 /// express that at all, and correspondingly has no need for the `_combined` mods
-/// [`keelson_psql`] carries.
+/// `keelson_psql` carries.
 #[derive(Debug, Clone, Default)]
 pub struct Compound {
     /// Which operator. `None` is how a default-constructed operand stays absent.

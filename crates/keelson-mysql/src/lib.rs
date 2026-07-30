@@ -20,6 +20,18 @@
 //! # Ok::<_, keelson_core::Error>(())
 //! ```
 //!
+//! # Where this sits
+//!
+//! Layer 1 of keelson, for MySQL. It is a complete way to use keelson on its
+//! own: it depends only on [keelson-core](https://docs.rs/keelson-core) and produces a SQL
+//! string and an argument list, which you may run with any driver you like. To
+//! run it through keelson, add Layer 2 ([keelson-exec](https://docs.rs/keelson-exec) plus a
+//! backend such as [keelson-sqlx](https://docs.rs/keelson-sqlx)); to have typed models built
+//! out of these mods, add Layers 3 and 4 ([keelson-models](https://docs.rs/keelson-models),
+//! [keelson-gen](https://docs.rs/keelson-gen)). MySQL's missing `RETURNING` is visible up
+//! there: a generated MySQL model reads a row back by key instead. The whole
+//! map is the [keelson](https://docs.rs/keelson) facade crate.
+//!
 //! # How it is put together
 //!
 //! **A starter is a function of one mod.** `mysql::select(mods)` takes a single

@@ -7,6 +7,9 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
+readme = "README.md"
+keywords = ["sql", "query-builder", "database", "postgres", "sqlite"]
+categories = ["database"]
 
 [features]
 # Exposes `keelson_core::testing`, the stand-in dialects. Dialect crates enable it
@@ -69,8 +72,14 @@ keelson-core = { path = ".", features = ["testing"] }
 # here at all; without it there would be nothing to hand to the grammar. This is a
 # cycle — keelson-sqlcheck depends on keelson-core — but only through a
 # dev-dependency, which is the kind Cargo resolves.
-keelson-sqlcheck = { workspace = true, features = ["live", "testing"] }
+keelson-sqlcheck = { path = "../keelson-sqlcheck", features = ["live", "testing"] }
 serde_json.workspace = true
+
+[package.metadata.docs.rs]
+# The mapped-type variants and the derives are part of the documented surface;
+# `testing` (stand-in dialects) and `live-docker` (a dev-dependency's engine
+# tier) are not, and are left off.
+features = ["chrono", "uuid", "decimal", "json", "macros"]
 
 [lints]
 workspace = true

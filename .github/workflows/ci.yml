@@ -5,6 +5,14 @@
 #                 judges and real SQLite run here already: rusqlite is bundled and
 #                 pg_query/sqlite3-parser/sqlparser compile in, so a plain
 #                 `cargo test` is the full non-engine verification. No services.
+#   release-surface
+#                 what a consumer of the published crates sees, gated the same
+#                 way the code is: rustdoc with warnings denied (a broken
+#                 intra-doc link only shows up on docs.rs otherwise), the
+#                 `keelson` facade's whole advertised feature matrix compiled,
+#                 and `cargo package` over the publishable set — which builds
+#                 each crate from its own tarball and so catches a file the
+#                 crate reads but does not ship. See docs/publishing.md.
 #   coverage-gate records every judged SQL string during a full test run, then
 #                 replays it against the checked-in construct manifests
 #                 (docs/testing-tiers.md, Tier D). Runs the suite a second time
@@ -76,6 +84,31 @@ jobs:
       - run: cargo test --workspace
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo fmt --all --check
+
+  release-surface:
+    name: docs / feature matrix / package
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # docs.rs renders what this produces, and a broken intra-doc link is
+      # invisible until then — so it is a gate, not a warning.
+      - name: rustdoc, warnings denied
+        run: cargo doc --workspace --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings
+      # The facade crate's features are its public API: a combination that does
+      # not compile is a broken dependency line for whoever wrote it.
+      - name: keelson feature matrix
+        run: ./scripts/feature-matrix.sh
+      # What crates.io would receive, built in isolation from its own tarball.
+      # `--exclude keelson-sqlcheck` is the publish=false test judge, which
+      # reads the repository's tests/schema/ and cannot survive packaging; see
+      # docs/publishing.md.
+      - name: package the publishable set
+        run: cargo package --workspace --exclude keelson-sqlcheck --allow-dirty
 
   coverage-gate:
     name: sqlcheck coverage gate (Tier D)

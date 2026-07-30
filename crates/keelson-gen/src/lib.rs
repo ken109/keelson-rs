@@ -24,6 +24,17 @@
 //! [`schema::Schema`]. Its docs carry the nullability decision table and the
 //! two-faces design; nothing in the model pipeline depends on it.
 //!
+//! # Where this sits
+//!
+//! Layer 4 of keelson, and the only crate here you run rather than link: it is
+//! a CLI (`cargo install keelson-gen`) that reads a live schema and writes `.rs`
+//! files against [keelson-models](https://docs.rs/keelson-models) and
+//! [keelson-factory](https://docs.rs/keelson-factory), in the dialect of
+//! [keelson-psql](https://docs.rs/keelson-psql), [keelson-mysql](https://docs.rs/keelson-mysql) or
+//! [keelson-sqlite](https://docs.rs/keelson-sqlite). It emits no DDL and tracks no migration
+//! history — point it at the database your migration tool produced. The whole
+//! map is the [keelson](https://docs.rs/keelson) facade crate.
+//!
 //! # The decisions, recorded
 //!
 //! **Introspection: direct catalog queries, not sea-schema.** sea-schema

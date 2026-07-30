@@ -20,6 +20,17 @@
 //! }).one(&db).await?;
 //! ```
 //!
+//! # Where this sits
+//!
+//! Layer 3 of keelson: the runtime a generated model is written against. It
+//! stands on Layer 1 (the dialect crates, through [keelson-core](https://docs.rs/keelson-core)'s
+//! clause traits) and Layer 2 ([keelson-exec](https://docs.rs/keelson-exec), through
+//! `&dyn Executor`), and names no dialect and no driver itself. The models that
+//! use it are written by Layer 4, [keelson-gen](https://docs.rs/keelson-gen) — you can write
+//! one by hand, and the `tests/` in this crate are exactly that. Test data for
+//! those models is [keelson-factory](https://docs.rs/keelson-factory). The whole map is the
+//! [keelson](https://docs.rs/keelson) facade crate.
+//!
 //! # The decisions, recorded
 //!
 //! **One column entry point.** bob splits a column across four generated

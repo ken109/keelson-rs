@@ -7,6 +7,9 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
+readme = "README.md"
+keywords = ["sql", "postgres", "postgresql", "query-builder", "database"]
+categories = ["database"]
 
 [features]
 # Adds the containerised PostgreSQL engine to the test judge. `cargo test` on its
@@ -23,7 +26,7 @@ exhaustive = ["live-docker"]
 keelson-core.workspace = true
 
 [dev-dependencies]
-keelson-sqlcheck = { workspace = true, features = ["live"] }
+keelson-sqlcheck = { path = "../keelson-sqlcheck", features = ["live"] }
 # tests/{combinatorial,property}.rs inspect the parse tree directly (clause
 # presence, and no others) — that is pg_query's protobuf, which
 # keelson-sqlcheck deliberately does not re-export.

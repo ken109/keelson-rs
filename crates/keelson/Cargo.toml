@@ -1,0 +1,85 @@
+[package]
+name = "keelson"
+description = "A SQL access toolkit for Rust: per-dialect query builders, a driver-free execution layer, generated models and factories. The facade crate."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+readme = "README.md"
+keywords = ["sql", "postgres", "mysql", "sqlite", "orm"]
+categories = ["database"]
+
+[features]
+# Nothing by default. There is no dialect that could be the right default and
+# no backend that could be, and every optional dependency below is one a build
+# would otherwise not pay for. `keelson` with no features is keelson-core's
+# vocabulary and the layer map in the docs — which is what a dependency line
+# that has not chosen an engine yet honestly is.
+default = []
+
+# --- Layer 1: the dialects -------------------------------------------------
+psql = ["dep:keelson-psql"]
+mysql = ["dep:keelson-mysql"]
+sqlite = ["dep:keelson-sqlite"]
+
+# --- Layer 2: execution ----------------------------------------------------
+# The traits alone, for code that is generic over `&dyn Executor` or that
+# implements a backend of its own.
+exec = ["dep:keelson-exec"]
+# Per-statement spans, from the one funnel every backend flows through.
+tracing = ["exec", "keelson-exec/tracing"]
+
+# The sqlx backend, one feature per driver — mirroring keelson-sqlx's own
+# feature model, which mirrors sqlx's. A driver feature also turns on the
+# matching dialect: a pool with no dialect to build statements for is not a
+# state anyone wants, and "one dependency line" is the whole point of this
+# crate. Take `exec` plus the dialect separately if you want the pool without
+# the builder.
+sqlx-psql = ["exec", "psql", "dep:keelson-sqlx", "keelson-sqlx/psql"]
+sqlx-mysql = ["exec", "mysql", "dep:keelson-sqlx", "keelson-sqlx/mysql"]
+sqlx-sqlite = ["exec", "sqlite", "dep:keelson-sqlx", "keelson-sqlx/sqlite"]
+
+# --- Layers 3 and 4 --------------------------------------------------------
+models = ["exec", "dep:keelson-models"]
+factory = ["models", "dep:keelson-factory"]
+# The derives. keelson-core re-exports them; this feature is that feature.
+macros = ["keelson-core/macros"]
+
+# --- Mapped types ----------------------------------------------------------
+# Each turns on the keelson-core `Value` variant and, *if a backend is already
+# enabled*, that backend's integration for it (`dep?/feature` — the weak form,
+# so naming a type never drags a driver in).
+chrono = ["keelson-core/chrono", "keelson-sqlx?/chrono"]
+uuid = ["keelson-core/uuid", "keelson-sqlx?/uuid"]
+decimal = ["keelson-core/decimal", "keelson-sqlx?/decimal"]
+json = ["keelson-core/json", "keelson-sqlx?/json"]
+
+[dependencies]
+# The only unconditional dependency: every layer is defined in its terms, and
+# `Value`/`Error` appear in every signature a user touches.
+keelson-core.workspace = true
+keelson-exec = { workspace = true, optional = true }
+keelson-factory = { workspace = true, optional = true }
+keelson-models = { workspace = true, optional = true }
+keelson-mysql = { workspace = true, optional = true }
+keelson-psql = { workspace = true, optional = true }
+keelson-sqlite = { workspace = true, optional = true }
+keelson-sqlx = { workspace = true, optional = true }
+
+[dev-dependencies]
+# The self-dependency pattern the rest of the workspace uses: it is what makes
+# the crate-level doctest (the README's worked example) compile and run under a
+# plain `cargo test`, against the features it actually needs. A consumer's own
+# feature list is unaffected — dev-dependencies do not propagate.
+keelson = { path = ".", features = ["sqlx-sqlite", "models", "factory", "macros", "chrono", "uuid"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[package.metadata.docs.rs]
+# docs.rs builds one configuration; build the one that has everything, so the
+# module map on the front page is complete.
+all-features = true
+
+[lints]
+workspace = true

@@ -10,7 +10,7 @@
 //! What makes it keelson's rather than sqlc's is that a generated query has
 //! **two faces**, both cut from one analysis:
 //!
-//! 1. **As a query** — a real [`keelson_core::Query`] over the file's own SQL,
+//! 1. **As a query** — a real `keelson_core::Query` over the file's own SQL,
 //!    executed as written. It picks up the whole execution layer (`fetch_all`,
 //!    tracing, transactions) and nests as a sub-select for free, because its
 //!    placeholders are re-bound through the writer rather than copied.

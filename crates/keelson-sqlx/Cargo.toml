@@ -7,6 +7,9 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
+readme = "README.md"
+keywords = ["sql", "sqlx", "database", "postgres", "mysql"]
+categories = ["database"]
 
 [features]
 # One crate, per-database features — mirroring sqlx's own feature model so a
@@ -52,11 +55,17 @@ serde_json = { workspace = true, optional = true }
 # — `cargo test` with no flags exercises the whole harness against real
 # SQLite; the server engines come in via `live-docker` above.
 keelson-sqlx = { path = ".", features = ["sqlite", "chrono", "uuid", "decimal", "json"] }
-keelson-sqlcheck = { workspace = true }
-keelson-psql.workspace = true
-keelson-mysql.workspace = true
-keelson-sqlite.workspace = true
+keelson-sqlcheck = { path = "../keelson-sqlcheck" }
+keelson-psql = { path = "../keelson-psql" }
+keelson-mysql = { path = "../keelson-mysql" }
+keelson-sqlite = { path = "../keelson-sqlite" }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[package.metadata.docs.rs]
+# Every driver and every mapped type: with no features this crate documents an
+# empty page, since each driver module is behind its own feature. `live-docker`
+# is a test tier, not surface, and is left off.
+features = ["psql", "mysql", "sqlite", "chrono", "uuid", "decimal", "json"]
 
 [lints]
 workspace = true

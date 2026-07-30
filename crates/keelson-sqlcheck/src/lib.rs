@@ -28,17 +28,17 @@
 //!
 //! No grammar can catch a *semantic* error. `PREPARE` on a real engine parses and
 //! analyses: it resolves tables and columns, checks set-operation arity, and
-//! enforces rules a grammar cannot express. [`live::check_sqlite`] rejects five
+//! enforces rules a grammar cannot express. `live::check_sqlite` rejects five
 //! statements that Tier 1 happily accepts — see its tests.
 //!
 //! The cost is that the analyser resolves names, so statements must refer to real
 //! tables. That is what the shared schema in `tests/schema/` is for, and why
 //! grammar tests name its tables rather than inventing their own.
 
-//! # A dialect for crates that have none ([`testing`], behind the `testing` feature)
+//! # A dialect for crates that have none (`testing`, behind the `testing` feature)
 //!
 //! Rendering needs a `keelson_core::Dialect`, and `keelson-core` cannot depend on
-//! a dialect crate because every dialect crate depends on it. [`testing::PgLike`]
+//! a dialect crate because every dialect crate depends on it. `testing::PgLike`
 //! is a stand-in that lives here instead, where the dependency is a
 //! dev-dependency cycle Cargo allows.
 
@@ -112,7 +112,7 @@ impl Dialect {
 
 /// Check `sql` against a dialect's grammar, returning the parse error if any.
 ///
-/// On success the string is also [`record`]ed when Tier D recording is on
+/// On success the string is also [`record()`]ed when Tier D recording is on
 /// (`KEELSON_SQLCHECK_RECORD`); a run without the variable pays one atomic
 /// read for this line.
 pub fn check(dialect: Dialect, sql: &str) -> Result<(), String> {

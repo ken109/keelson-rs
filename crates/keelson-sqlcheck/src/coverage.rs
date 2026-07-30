@@ -4,7 +4,7 @@
 //! them can: **across everything they judged, which grammar constructs did the
 //! library actually exercise?** Line coverage cannot answer it — a line can run
 //! without the construct appearing in the output — so the measurement replays
-//! the recorded SQL itself (see [`crate::record`]) against a checked-in
+//! the recorded SQL itself (see [`crate::record()`]) against a checked-in
 //! *manifest* of every construct each dialect claims to render, and the gate
 //! fails when a declared construct never appeared.
 //!

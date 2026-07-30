@@ -22,6 +22,17 @@
 //! let cs = fac::comments::factory(()).create_many(&db, 10).await?;
 //! ```
 //!
+//! # Where this sits
+//!
+//! Layer 3's test-data half: factories create rows through the same
+//! [keelson-models](https://docs.rs/keelson-models) insert path production writes take, so
+//! hooks fire and the rows are ones the application could really have written.
+//! The factories themselves are emitted by [keelson-gen](https://docs.rs/keelson-gen), which
+//! reads the foreign keys that make parent auto-creation possible. Nothing here
+//! is test-only by construction — it is a normal dependency — but a factory has
+//! no reason to exist outside a test. The whole map is the
+//! [keelson](https://docs.rs/keelson) facade crate.
+//!
 //! # The decisions, recorded
 //!
 //! **Factories fire model hooks.** `create`/`create_many` insert through

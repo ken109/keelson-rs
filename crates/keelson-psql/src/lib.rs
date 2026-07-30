@@ -21,6 +21,17 @@
 //! # Ok::<_, keelson_core::Error>(())
 //! ```
 //!
+//! # Where this sits
+//!
+//! Layer 1 of keelson, for PostgreSQL. It is a complete way to use keelson on
+//! its own: it depends only on [keelson-core](https://docs.rs/keelson-core) and produces a
+//! SQL string and an argument list, which you may run with any driver you like.
+//! To run it through keelson, add Layer 2 ([keelson-exec](https://docs.rs/keelson-exec) plus a
+//! backend such as [keelson-sqlx](https://docs.rs/keelson-sqlx)); to have typed models built
+//! out of these mods, add Layers 3 and 4 ([keelson-models](https://docs.rs/keelson-models),
+//! [keelson-gen](https://docs.rs/keelson-gen)). The whole map, and one dependency line for it,
+//! is the [keelson](https://docs.rs/keelson) facade crate.
+//!
 //! # How it is put together
 //!
 //! **A starter is a function of one mod.** `psql::select(mods)` takes a single
@@ -31,7 +42,8 @@
 //! **A mod module shares its name with its starter.** `psql::select` is a function
 //! *and* a module: Rust keeps values and modules in separate namespaces, so
 //! `psql::select((select::from("users"),))` needs no import gymnastics. The modules
-//! are named after the statement — [`select`], [`insert`], [`update`], [`delete`],
+//! are named after the statement — [`select`](mod@select), [`insert`](mod@insert),
+//! [`update`](mod@update), [`delete`](mod@delete),
 //! [`window`], [`frame`] — never bob's `sm`/`im`/`um`/`dm`/`wm`/`fm`.
 //!
 //! **A mod is written once.** The mods live in one place, generic over the

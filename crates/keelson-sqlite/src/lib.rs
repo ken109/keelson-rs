@@ -20,9 +20,21 @@
 //! # Ok::<_, keelson_core::Error>(())
 //! ```
 //!
+//! # Where this sits
+//!
+//! Layer 1 of keelson, for SQLite. It is a complete way to use keelson on its
+//! own: it depends only on [keelson-core](https://docs.rs/keelson-core) and produces a SQL
+//! string and an argument list, which you may run with any driver you like. To
+//! run it through keelson, add Layer 2 ([keelson-exec](https://docs.rs/keelson-exec) plus a
+//! backend such as [keelson-sqlx](https://docs.rs/keelson-sqlx)); to have typed models built
+//! out of these mods, add Layers 3 and 4 ([keelson-models](https://docs.rs/keelson-models),
+//! [keelson-gen](https://docs.rs/keelson-gen)). Because SQLite needs no server, it is also
+//! the engine keelson's own always-on end-to-end tests run against. The whole
+//! map is the [keelson](https://docs.rs/keelson) facade crate.
+//!
 //! # How it is put together
 //!
-//! The assembly rules are the ones [`keelson_psql`] documents, because they are
+//! The assembly rules are the ones `keelson_psql` documents, because they are
 //! keelson's rather than any dialect's: **a starter is a function of one mod**, and a
 //! tuple of mods is a mod; **a mod module shares its name with its starter**, so
 //! `sqlite::select` is both a function and a module; **a mod is written once**,
@@ -43,7 +55,7 @@
 //!    belongs to the whole compound. PostgreSQL's `order_by_combined` family has
 //!    nothing to correspond to here.
 //! 3. **`OFFSET` is part of the `LIMIT` production**, so an offset with no limit is
-//!    a build-time [`Error::Incomplete`](keelson_core::Error::Incomplete).
+//!    a build-time [`Error::Incomplete`].
 //! 4. **`UNION ALL` is the only `ALL`.** `INTERSECT ALL` and `EXCEPT ALL` do not
 //!    exist, which is why [`CompoundOp`] folds `ALL` into the operator instead of
 //!    carrying it as a flag.
@@ -189,7 +201,7 @@ pub fn arg_group<V: ToValue>(values: impl IntoIterator<Item = V>) -> Expr {
 /// A named parameter: `named("cutoff")` renders `:cutoff`.
 ///
 /// SQLite is the one dialect keelson targets that has these, so this starter has no
-/// counterpart in [`keelson_psql`]. A named parameter binds nothing and consumes no
+/// counterpart in `keelson_psql`. A named parameter binds nothing and consumes no
 /// positional slot — it exists so a statement can be prepared now and its values
 /// supplied by whatever rebinds it.
 pub fn named(name: impl Into<Cow<'static, str>>) -> Expr {

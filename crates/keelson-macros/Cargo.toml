@@ -7,6 +7,9 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
+readme = "README.md"
+keywords = ["sql", "derive", "macros", "database", "orm"]
+categories = ["database"]
 
 [lib]
 proc-macro = true

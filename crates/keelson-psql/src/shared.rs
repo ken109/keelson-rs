@@ -8,7 +8,7 @@
 //! Two shapes recur.
 //!
 //! **A plain mod** is a function returning `impl Mod<Q>`, built from
-//! [`mod_fn`](keelson_core::mod_fn).
+//! [`mod_fn`].
 //!
 //! **A chain** is a struct that is itself a mod and has builder methods — bob's
 //! `FromChain`, `JoinChain`, `CTEChain`, `LockChain`, `OrderBy`. It exists wherever
@@ -55,7 +55,7 @@ pub struct CteChain {
 ///
 /// `body` is any expression, so a hand-written fragment works; a query goes in
 /// directly, because the four query types implement
-/// [`IntoExpr`](keelson_core::expr::IntoExpr). It is *not* parenthesised here —
+/// [`IntoExpr`]. It is *not* parenthesised here —
 /// [`Cte`] supplies the parentheses.
 pub fn with(name: impl Into<Cow<'static, str>>, body: impl IntoExpr) -> CteChain {
     CteChain {
@@ -168,7 +168,7 @@ pub fn columns<Q: HasSelectList>(columns: impl IntoExprList) -> impl Mod<Q> {
 }
 
 /// Add to the *preload* select list, which renders after
-/// [`columns`](columns) but is counted separately.
+/// [`columns`] but is counted separately.
 ///
 /// This exists for a relation loader: the mapper needs to know how many of the
 /// returned columns belong to the root object, which is
@@ -280,7 +280,8 @@ pub fn target_table(table: impl IntoExpr) -> TableChain<TargetSlot> {
 ///
 /// *No* functions is not a from-item: an empty [`TableFunctions`] renders nothing,
 /// which would leave the `FROM ` in front of it dangling and make `build()` hand
-/// back unparseable SQL with no error at all. See [`Incomplete`].
+/// back unparseable SQL with no error at all. See
+/// [`Error::Incomplete`](keelson_core::Error::Incomplete).
 pub fn from_functions<F>(functions: impl IntoIterator<Item = F>) -> TableChain<FromSlot>
 where
     F: Into<TableFunction>,
@@ -851,7 +852,7 @@ impl<Q, S: OrderSlot<Q>> Mod<Q> for OrderChain<S> {
 /// `LIMIT count`.
 ///
 /// A number is a literal — `limit(20)` gives `LIMIT 20` — because
-/// [`IntoExpr`](keelson_core::expr::IntoExpr) makes it one. `limit(arg(20))` binds
+/// [`IntoExpr`] makes it one. `limit(arg(20))` binds
 /// it instead.
 pub fn limit<Q: HasLimit>(count: impl IntoExpr) -> impl Mod<Q> {
     let count = count.into_expr();
@@ -1230,7 +1231,7 @@ impl ConflictChain {
     /// `DO UPDATE SET …` — the upsert.
     ///
     /// The body is built from mods against
-    /// [`ConflictClause`](keelson_core::clause::ConflictClause), which implements
+    /// [`ConflictClause`], which implements
     /// [`HasSet`] and [`HasWhere`]: `set`, `set_col`, `set_excluded` and `where_`
     /// all apply, and that `where_` is the row filter.
     pub fn do_update(self, body: impl Mod<ConflictClause>) -> ConflictMod {

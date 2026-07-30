@@ -60,7 +60,18 @@
 //! assert_eq!(args, vec![Value::I32(21)]);
 //! # Ok::<_, keelson_core::Error>(())
 //! ```
-
+//!
+//! # Where this sits
+//!
+//! Layer 0 of keelson: the vocabulary, and the only crate every other one
+//! depends on. Above it sit the three Layer 1 dialects
+//! ([keelson-psql](https://docs.rs/keelson-psql), [keelson-mysql](https://docs.rs/keelson-mysql),
+//! [keelson-sqlite](https://docs.rs/keelson-sqlite)), which is where a user starts —
+//! a statement type comes from a dialect, never from here. Layer 2
+//! ([keelson-exec](https://docs.rs/keelson-exec)) runs what [`build`] returns, and Layer 3
+//! ([keelson-models](https://docs.rs/keelson-models)) is written against the
+//! [`clause`] traits defined here. The whole map, and one dependency line for
+//! it, is the [keelson](https://docs.rs/keelson) facade crate.
 #![warn(missing_docs)]
 
 pub mod clause;

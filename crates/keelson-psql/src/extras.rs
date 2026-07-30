@@ -141,7 +141,7 @@ pub fn query(q: impl Query + 'static) -> Expr {
 ///
 /// What a `FROM` item or a scalar sub-expression needs. PostgreSQL additionally
 /// requires an alias on a `FROM` sub-query, which is
-/// [`select::from(..).as_(..)`](crate::select).
+/// [`select::from(..).as_(..)`](mod@crate::select).
 pub fn subquery(q: impl Query + 'static) -> Expr {
     Expr::group(query(q))
 }

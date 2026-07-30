@@ -42,13 +42,13 @@ use crate::extras::Overriding;
 /// which admits no joins — the same split an `UPDATE` has.
 ///
 /// Which actions a `WHEN` clause may take depends on which `WHEN` it is, and that
-/// is enforced by the chain types in [`crate::merge`] rather than re-checked
+/// is enforced by the chain types in [`mod@crate::merge`] rather than re-checked
 /// here: a [`MergeWhen`] holds whatever it was built with.
 #[derive(Debug, Clone, Default)]
 pub struct MergeQuery {
     /// `WITH …`. `MERGE` takes a plain `WITH`; PostgreSQL rejects
     /// `WITH RECURSIVE` on it at analysis time, which is why
-    /// [`crate::merge`] does not re-export `recursive`.
+    /// [`mod@crate::merge`] does not re-export `recursive`.
     pub with: With,
     /// The target: `MERGE INTO [ ONLY ] table [ * ] [ AS alias ]`.
     pub target: TableRef,

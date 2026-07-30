@@ -8,7 +8,7 @@
 //! Three shapes recur.
 //!
 //! **A plain mod** is a function returning `impl Mod<Q>`, built from
-//! [`mod_fn`](keelson_core::mod_fn).
+//! [`mod_fn`].
 //!
 //! **A chain** is a struct that is itself a mod and has builder methods. It exists
 //! wherever a clause has decorations that must be set together rather than one mod
@@ -541,13 +541,13 @@ pub fn window<Q: HasWindows>(
 /// ```
 ///
 /// There is no `USING <operator>` — that is PostgreSQL's, and is why
-/// [`OrderDirection`](keelson_core::clause::OrderDirection) has a third variant
+/// [`OrderDirection`] has a third variant
 /// this dialect never builds. `NULLS FIRST`/`LAST` needs SQLite 3.30 or later.
 ///
 /// A single mod serves the statement's `ORDER BY` and a window's alike, because
 /// SQLite has only one `ORDER BY` per statement: in a compound select it belongs to
 /// the whole compound, so there is no second slot for
-/// [`keelson_psql`]'s `order_by_combined` to write into.
+/// `keelson_psql`'s `order_by_combined` to write into.
 #[derive(Debug, Clone)]
 pub struct OrderChain {
     def: OrderDef,
@@ -840,7 +840,7 @@ impl ConflictChain {
     /// `DO UPDATE SET …` — the upsert.
     ///
     /// The body is built from mods against
-    /// [`ConflictClause`](keelson_core::clause::ConflictClause), which implements
+    /// [`ConflictClause`], which implements
     /// [`HasSet`] and [`HasWhere`]: [`set`], [`set_col`], [`set_excluded`] and
     /// [`where_`] all apply, and that `where_` is the row filter.
     pub fn do_update(self, body: impl Mod<ConflictClause>) -> ConflictMod {

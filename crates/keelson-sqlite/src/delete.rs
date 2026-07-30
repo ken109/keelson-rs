@@ -25,6 +25,6 @@
 //! a delete driven by another table is written with a sub-query in the `WHERE`, as
 //! above. It has no `conflict-clause` either, so none of the `or_*` mods appear —
 //! only `INSERT` and `UPDATE` can violate a constraint. And no `limit`/`order_by`,
-//! for the reason [`crate::update`] gives.
+//! for the reason [`mod@crate::update`] gives.
 
 pub use crate::shared::{recursive, returning, target_table as from, where_, with};

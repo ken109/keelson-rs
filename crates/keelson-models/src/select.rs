@@ -35,7 +35,7 @@ pub type Loader<T> = Arc<
 /// Wrap a closure as an [`ExecHook`]. The named-function-plus-`Box::pin`
 /// shape generated code uses:
 ///
-/// ```ignore
+/// ```text
 /// q.add_hook(hook(|db| Box::pin(async move { … })));
 /// ```
 pub fn hook<F>(f: F) -> ExecHook

@@ -7,6 +7,9 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
+readme = "README.md"
+keywords = ["sql", "orm", "database", "models", "codegen"]
+categories = ["database"]
 
 [features]
 # The hand-written models' end-to-end tests against containerised
@@ -36,12 +39,12 @@ keelson-exec.workspace = true
 # is written three times: against keelson-psql (the demonstration dialect),
 # keelson-sqlite (the always-on end-to-end lane) and keelson-mysql (the
 # no-RETURNING dialect, whose divergences are a different `Table` body).
-keelson-core = { workspace = true, features = ["chrono"] }
-keelson-mysql.workspace = true
-keelson-psql.workspace = true
-keelson-sqlite.workspace = true
-keelson-sqlx = { workspace = true, features = ["sqlite", "chrono"] }
-keelson-sqlcheck = { workspace = true, features = ["live", "testing"] }
+keelson-core = { path = "../keelson-core", features = ["chrono"] }
+keelson-mysql = { path = "../keelson-mysql" }
+keelson-psql = { path = "../keelson-psql" }
+keelson-sqlite = { path = "../keelson-sqlite" }
+keelson-sqlx = { path = "../keelson-sqlx", features = ["sqlite", "chrono"] }
+keelson-sqlcheck = { path = "../keelson-sqlcheck", features = ["live", "testing"] }
 chrono.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 

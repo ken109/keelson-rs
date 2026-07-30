@@ -30,7 +30,16 @@
 //! lifetimes are the transient `'_` on futures borrowed from `&self` for one
 //! call. Nothing here names a driver: Layer 2's generated models depend on
 //! this crate and pick up a backend only in the application's own `Cargo.toml`.
-
+//!
+//! # Where this sits
+//!
+//! Layer 2 of keelson, and the half of it that names no driver. Below:
+//! [keelson-core](https://docs.rs/keelson-core) and the dialect crates, which build the
+//! `(String, Vec<Value>)` these traits carry. Beside: [keelson-sqlx](https://docs.rs/keelson-sqlx),
+//! the backend that implements them over sqlx's PostgreSQL, MySQL and SQLite
+//! drivers. Above: [keelson-models](https://docs.rs/keelson-models), whose generated models
+//! execute through `&dyn Executor` and therefore through whatever backend the
+//! application picked. The whole map is the [keelson](https://docs.rs/keelson) facade crate.
 #![warn(missing_docs)]
 
 mod bind;
