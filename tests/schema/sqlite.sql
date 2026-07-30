@@ -34,3 +34,13 @@ CREATE TABLE post_tags (
     tag_id  INTEGER NOT NULL REFERENCES tags (id),
     PRIMARY KEY (post_id, tag_id)
 );
+
+-- Two views — see the note in tests/schema/psql.sql. SQLite writes through
+-- neither: a view is read-only there unless it carries INSTEAD OF triggers,
+-- and these carry none.
+CREATE VIEW user_emails AS
+    SELECT id, email FROM users;
+
+CREATE VIEW post_authors AS
+    SELECT p.id AS post_id, p.title AS title, u.id AS user_id, u.name AS user_name
+    FROM posts p JOIN users u ON u.id = p.user_id;

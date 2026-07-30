@@ -10,7 +10,6 @@ use crate::config::{Config, Hook};
 use crate::error::{GenError, Result};
 use crate::names::ident;
 use crate::resolve::{Model, ModelColumn};
-use crate::schema::TableKind;
 
 use super::Dial;
 
@@ -91,7 +90,13 @@ pub(crate) fn model_file(
     let table = &m.table;
     let marker = ident(&m.marker);
     let row = ident(&m.row);
-    let is_table = m.kind == TableKind::Table;
+    // Two independent questions, because a view answers them differently: is
+    // the write surface generated (`writable`), and does the model carry
+    // relations (`holds_relations` — a `SELECT`-only view does, as soon as
+    // the configuration declares one, because loading needs a join column
+    // rather than an identity).
+    let is_table = m.writable;
+    let has_rel = m.holds_relations();
 
     let hooks_path: syn::Path = syn::parse_str(&config.hooks.module).map_err(|e| {
         GenError::Config(format!(
@@ -102,7 +107,7 @@ pub(crate) fn model_file(
     let table_mod = ident(table);
 
     // ── the marker ──
-    let entry = if is_table { "table" } else { "view" };
+    let entry = m.entry();
     let marker_doc = format!(" The model marker `{table}::{entry}()` hangs off.");
     let marker_item = quote! {
         #[doc = #marker_doc]
@@ -127,7 +132,7 @@ pub(crate) fn model_file(
         };
         row_fields.push(quote!(pub #f: #t));
     }
-    if is_table {
+    if has_rel {
         row_fields.push(quote! {
             #[doc = " Relations, filled by `preload`/`then_load` mods; empty otherwise."]
             pub rel: Rel
@@ -143,7 +148,7 @@ pub(crate) fn model_file(
     };
 
     // ── Rel ──
-    let rel_item = if is_table {
+    let rel_item = if has_rel {
         let mut rel_fields = Vec::new();
         for b in &m.belongs_to {
             let f = ident(&b.name);
@@ -158,13 +163,26 @@ pub(crate) fn model_file(
         for h in &m.has_many {
             let f = ident(&h.name);
             let (cmod, crow) = target_names(all, &h.child)?;
+            // `cardinality = "one_to_one"` makes the back-reference an
+            // `Option` rather than a `Vec`; a foreign key always means many.
+            //
+            // The `Box` is not decoration. The child's own belongs-to holds
+            // `Option<ThisRow>`, so a to-one back-reference closes a cycle of
+            // two `Option`s — a recursive type with no indirection, which is
+            // a hard compile error. A `Vec` back-reference carries its own
+            // indirection and needs none.
+            let (kind, ty) = if h.to_one {
+                ("Has-one", quote!(Option<Box<super::#cmod::#crow>>))
+            } else {
+                ("Has-many", quote!(Vec<super::#cmod::#crow>))
+            };
             let doc = format!(
-                " Has-many `{}`, via `{}.{}`.",
+                " {kind} `{}`, via `{}.{}`.",
                 h.child, h.child, h.child_fk_column
             );
             rel_fields.push(quote! {
                 #[doc = #doc]
-                pub #f: Vec<super::#cmod::#crow>
+                pub #f: #ty
             });
         }
         let rel_doc = if table.ends_with('s') {
@@ -189,7 +207,7 @@ pub(crate) fn model_file(
         let n = &c.db_name;
         quote!(#f: row.take(#n)?)
     });
-    let rel_init = if is_table {
+    let rel_init = if has_rel {
         quote!(rel: Rel::default(),)
     } else {
         quote!()
@@ -369,12 +387,12 @@ pub(crate) fn model_file(
     };
 
     // ── preload / then_load ──
-    let preload_item = if is_table && !m.belongs_to.is_empty() {
+    let preload_item = if !m.belongs_to.is_empty() {
         preload_mod(m, all, dial, &marker, &row)?
     } else {
         quote!()
     };
-    let then_load_item = if is_table && (!m.belongs_to.is_empty() || !m.has_many.is_empty()) {
+    let then_load_item = if !m.belongs_to.is_empty() || !m.has_many.is_empty() {
         then_load_mod(m, all, &marker, &row)?
     } else {
         quote!()
@@ -862,7 +880,7 @@ fn preload_mod(
             let prefixed = format!("{}.{}", b.name, c.db_name);
             quote!(#f: row.take(#prefixed)?)
         });
-        let target_rel_init = if target.kind == TableKind::Table {
+        let target_rel_init = if target.holds_relations() {
             quote!(rel: super::super::#tmod::Rel::default(),)
         } else {
             quote!()
@@ -912,7 +930,11 @@ fn preload_mod(
     }
 
     Ok(quote! {
-        #[doc = " Preload mods: the relation joins into the *same* query."]
+        #[doc = " Preload mods: the relation joins into the *same* query — no \
+                  second statement, and deliberately no `.then(…)`. A level \
+                  below a join has no distinct child set to key on, so a \
+                  nested path is spelled with `then_load` \
+                  (see `keelson_models::ThenLoad`)."]
         pub mod preload {
             #(#items)*
         }
@@ -940,8 +962,8 @@ fn then_load_mod(
             ))
         })?;
         let name = ident(&b.name);
-        let load_fn = ident(&format!("load_{}", b.name));
         let tmod = ident(&target.table);
+        let tmarker = ident(&target.marker);
         let ref_fn = ident(&ref_c.field);
         let kty = parse_type(&fk.rust_type, "relation key")?;
         let fk_f = ident(&fk.field);
@@ -961,44 +983,36 @@ fn then_load_mod(
         };
 
         let doc = format!(
-            " Load each row's `{}` (to-one) with one keyed second query.",
+            " Load each row's `{}` (to-one), one keyed query per batch of keys \
+             — `.then(…)` hangs the next level of the path off this one.",
             b.name
         );
         items.push(quote! {
             #[doc = #doc]
-            pub fn #name() -> impl keelson_core::Mod<keelson_models::ModelSelect<super::#marker>> {
-                keelson_core::mod_fn(|q: &mut keelson_models::ModelSelect<super::#marker>| {
-                    q.add_loader(keelson_models::loader(|db, rows| {
-                        Box::pin(#load_fn(db, rows))
-                    }));
-                })
-            }
-
             #allow
-            async fn #load_fn(
-                db: &dyn keelson_exec::Executor,
-                rows: &mut [super::#row],
-            ) -> Result<(), keelson_exec::ExecError> {
-                let mut keys: Vec<#kty> = #collect;
-                keys.sort_unstable();
-                keys.dedup();
-                if keys.is_empty() {
-                    return Ok(());
-                }
-                let related = super::super::#tmod::table()
-                    .query(super::super::#tmod::#ref_fn().in_(keys))
-                    .all(db)
-                    .await?;
-                keelson_models::attach_to_one(
-                    rows,
-                    related,
-                    |r| #parent_key,
-                    |c| #child_key,
-                    |r, c| {
-                        r.rel.#name = c;
+            pub fn #name() -> keelson_models::ThenLoad<
+                super::#marker,
+                super::super::#tmod::#tmarker,
+                #kty,
+            > {
+                keelson_models::ThenLoad::new(
+                    |rows: &[super::#row]| #collect,
+                    |keys, q| keelson_core::Mod::apply(
+                        super::super::#tmod::#ref_fn().in_(keys),
+                        q,
+                    ),
+                    |rows: &mut [super::#row], related| {
+                        keelson_models::attach_to_one(
+                            rows,
+                            related,
+                            |r| #parent_key,
+                            |c| #child_key,
+                            |r, c| {
+                                r.rel.#name = c;
+                            },
+                        );
                     },
-                );
-                Ok(())
+                )
             }
         });
     }
@@ -1021,8 +1035,8 @@ fn then_load_mod(
             ))
         })?;
         let name = ident(&h.name);
-        let load_fn = ident(&format!("load_{}", h.name));
         let cmod = ident(&child.table);
+        let cmarker = ident(&child.marker);
         let fk_fn = ident(&child_fk.field);
         let kty = parse_type(&parent_c.rust_type, "relation key")?;
         let key_f = ident(&parent_c.field);
@@ -1042,51 +1056,70 @@ fn then_load_mod(
                 quote!()
             };
 
+        // `cardinality = "one_to_one"` attaches at most one child row.
+        let (arity, attach) = if h.to_one {
+            (
+                "to-one",
+                quote! {
+                    keelson_models::attach_to_one(
+                        rows,
+                        related,
+                        |r| #parent_key,
+                        |c| #child_key,
+                        |r, c| {
+                            r.rel.#name = c.map(Box::new);
+                        },
+                    );
+                },
+            )
+        } else {
+            (
+                "to-many",
+                quote! {
+                    keelson_models::attach_to_many(
+                        rows,
+                        related,
+                        |r| #parent_key,
+                        |c| #child_key,
+                        |r, cs| {
+                            r.rel.#name = cs;
+                        },
+                    );
+                },
+            )
+        };
+
         let doc = format!(
-            " Load each row's `{}` (to-many) with one keyed second query.",
+            " Load each row's `{}` ({arity}), one keyed query per batch of keys \
+             — `.then(…)` hangs the next level of the path off this one.",
             h.name
         );
         items.push(quote! {
             #[doc = #doc]
-            pub fn #name() -> impl keelson_core::Mod<keelson_models::ModelSelect<super::#marker>> {
-                keelson_core::mod_fn(|q: &mut keelson_models::ModelSelect<super::#marker>| {
-                    q.add_loader(keelson_models::loader(|db, rows| {
-                        Box::pin(#load_fn(db, rows))
-                    }));
-                })
-            }
-
             #allow
-            async fn #load_fn(
-                db: &dyn keelson_exec::Executor,
-                rows: &mut [super::#row],
-            ) -> Result<(), keelson_exec::ExecError> {
-                let mut keys: Vec<#kty> = #collect;
-                keys.sort_unstable();
-                keys.dedup();
-                if keys.is_empty() {
-                    return Ok(());
-                }
-                let related = super::super::#cmod::table()
-                    .query(super::super::#cmod::#fk_fn().in_(keys))
-                    .all(db)
-                    .await?;
-                keelson_models::attach_to_many(
-                    rows,
-                    related,
-                    |r| #parent_key,
-                    |c| #child_key,
-                    |r, cs| {
-                        r.rel.#name = cs;
+            pub fn #name() -> keelson_models::ThenLoad<
+                super::#marker,
+                super::super::#cmod::#cmarker,
+                #kty,
+            > {
+                keelson_models::ThenLoad::new(
+                    |rows: &[super::#row]| #collect,
+                    |keys, q| keelson_core::Mod::apply(
+                        super::super::#cmod::#fk_fn().in_(keys),
+                        q,
+                    ),
+                    |rows: &mut [super::#row], related| {
+                        #attach
                     },
-                );
-                Ok(())
+                )
             }
         });
     }
 
     Ok(quote! {
-        #[doc = " Then-load mods: a second query keyed by the first's rows."]
+        #[doc = " Then-load mods: one keyed, batched query per level of a \
+                  load path — `then_load::a().then(b::then_load::c())` is two \
+                  levels, two queries, checked by the compiler."]
         pub mod then_load {
             #(#items)*
         }

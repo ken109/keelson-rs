@@ -8,3 +8,35 @@ module = "crate::hooks"
 
 [tables.users]
 hooks = ["before_insert", "after_insert"]
+
+# Relations a view is party to have to be declared: a view has no foreign keys
+# and no key, so nothing in the catalog says how it joins or how many rows sit
+# on each end. The same three declarations the SQLite fixture carries, so all
+# three dialects generate the same shapes.
+
+# The view is the *referencing* side: one row per post, each naming its
+# author, so a user has many of them.
+[[relationships]]
+table = "post_authors"
+column = "user_id"
+ref_table = "users"
+ref_column = "id"
+cardinality = "many_to_one"
+
+# The view is the *referenced* side, one row per post: to-one from `posts`,
+# and an `Option` back-reference on the view rather than a `Vec`.
+[[relationships]]
+table = "posts"
+column = "id"
+ref_table = "post_authors"
+ref_column = "post_id"
+name = "authorship"
+cardinality = "one_to_one"
+
+# View to table, one row each way.
+[[relationships]]
+table = "user_emails"
+column = "id"
+ref_table = "users"
+ref_column = "id"
+cardinality = "one_to_one"

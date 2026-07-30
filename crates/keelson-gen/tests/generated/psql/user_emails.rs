@@ -8,7 +8,7 @@ pub struct UserEmails;
 /// One row of `user_emails`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct UserEmail {
-    pub id: Option<i64>,
+    pub id: Option<i32>,
     pub email: Option<String>,
     /// Relations, filled by `preload`/`then_load` mods; empty otherwise.
     pub rel: Rel,
@@ -32,23 +32,23 @@ impl keelson_exec::FromRow for UserEmail {
 pub fn view() -> keelson_models::ModelTable<UserEmails> {
     keelson_models::ModelTable::new()
 }
-pub fn id() -> keelson_models::Column<i64> {
+pub fn id() -> keelson_models::Column<i32> {
     keelson_models::Column::new("user_emails", "id")
 }
 pub fn email() -> keelson_models::Column<String> {
     keelson_models::Column::new("user_emails", "email")
 }
 #[allow(clippy::type_complexity)]
-fn all_columns() -> (keelson_models::Column<i64>, keelson_models::Column<String>) {
+fn all_columns() -> (keelson_models::Column<i32>, keelson_models::Column<String>) {
     (id(), email())
 }
 impl keelson_models::View for UserEmails {
     type Row = UserEmail;
-    type Select = keelson_sqlite::SelectQuery;
+    type Select = keelson_psql::SelectQuery;
     fn base_select() -> Self::Select {
-        keelson_sqlite::select((
-            keelson_sqlite::select::columns(all_columns()),
-            keelson_sqlite::select::from(keelson_sqlite::quote("user_emails")),
+        keelson_psql::select((
+            keelson_psql::select::columns(all_columns()),
+            keelson_psql::select::from(keelson_psql::quote("user_emails")),
         ))
     }
 }
@@ -59,21 +59,21 @@ pub mod preload {
         keelson_models::ModelSelect<super::UserEmails>,
     > {
         keelson_core::mod_fn(|q: &mut keelson_models::ModelSelect<super::UserEmails>| {
-            use keelson_sqlite::Chain as _;
-            use keelson_sqlite::Mod as _;
+            use keelson_psql::Chain as _;
+            use keelson_psql::Mod as _;
             (
-                keelson_sqlite::select::left_join(keelson_sqlite::quote("users"))
+                keelson_psql::select::left_join(keelson_psql::quote("users"))
                     .on(
-                        keelson_sqlite::quote(("users", "id"))
-                            .eq(keelson_sqlite::quote(("user_emails", "id"))),
+                        keelson_psql::quote(("users", "id"))
+                            .eq(keelson_psql::quote(("user_emails", "id"))),
                     ),
-                keelson_sqlite::select::preload_columns((
-                    keelson_sqlite::quote(("users", "id")).as_("user.id"),
-                    keelson_sqlite::quote(("users", "name")).as_("user.name"),
-                    keelson_sqlite::quote(("users", "email")).as_("user.email"),
-                    keelson_sqlite::quote(("users", "age")).as_("user.age"),
-                    keelson_sqlite::quote(("users", "is_active")).as_("user.is_active"),
-                    keelson_sqlite::quote(("users", "created_at")).as_("user.created_at"),
+                keelson_psql::select::preload_columns((
+                    keelson_psql::quote(("users", "id")).as_("user.id"),
+                    keelson_psql::quote(("users", "name")).as_("user.name"),
+                    keelson_psql::quote(("users", "email")).as_("user.email"),
+                    keelson_psql::quote(("users", "age")).as_("user.age"),
+                    keelson_psql::quote(("users", "is_active")).as_("user.is_active"),
+                    keelson_psql::quote(("users", "created_at")).as_("user.created_at"),
                 )),
             )
                 .apply(q);
@@ -89,7 +89,7 @@ pub mod preload {
     pub fn user_from_preload(
         row: &mut keelson_exec::Row,
     ) -> Result<Option<super::super::users::User>, keelson_exec::ExecError> {
-        if matches!(row.value("user.id"), None | Some(keelson_sqlite::Value::Null)) {
+        if matches!(row.value("user.id"), None | Some(keelson_psql::Value::Null)) {
             return Ok(None);
         }
         Ok(
@@ -111,7 +111,7 @@ pub mod then_load {
     pub fn user() -> keelson_models::ThenLoad<
         super::UserEmails,
         super::super::users::Users,
-        i64,
+        i32,
     > {
         keelson_models::ThenLoad::new(
             |rows: &[super::UserEmail]| rows.iter().filter_map(|r| r.id).collect(),

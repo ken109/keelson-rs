@@ -159,74 +159,56 @@ impl keelson_models::Table for Users {
         crate::hooks::users::after_insert(db, rows)
     }
 }
-/// Then-load mods: a second query keyed by the first's rows.
+/// Then-load mods: one keyed, batched query per level of a load path — `then_load::a().then(b::then_load::c())` is two levels, two queries, checked by the compiler.
 pub mod then_load {
-    /// Load each row's `comments` (to-many) with one keyed second query.
-    pub fn comments() -> impl keelson_core::Mod<
-        keelson_models::ModelSelect<super::Users>,
+    /// Load each row's `comments` (to-many), one keyed query per batch of keys — `.then(…)` hangs the next level of the path off this one.
+    pub fn comments() -> keelson_models::ThenLoad<
+        super::Users,
+        super::super::comments::Comments,
+        i32,
     > {
-        keelson_core::mod_fn(|q: &mut keelson_models::ModelSelect<super::Users>| {
-            q.add_loader(
-                keelson_models::loader(|db, rows| { Box::pin(load_comments(db, rows)) }),
-            );
-        })
-    }
-    async fn load_comments(
-        db: &dyn keelson_exec::Executor,
-        rows: &mut [super::User],
-    ) -> Result<(), keelson_exec::ExecError> {
-        let mut keys: Vec<i32> = rows.iter().map(|r| r.id).collect();
-        keys.sort_unstable();
-        keys.dedup();
-        if keys.is_empty() {
-            return Ok(());
-        }
-        let related = super::super::comments::table()
-            .query(super::super::comments::user_id().in_(keys))
-            .all(db)
-            .await?;
-        keelson_models::attach_to_many(
-            rows,
-            related,
-            |r| Some(r.id),
-            |c| c.user_id,
-            |r, cs| {
-                r.rel.comments = cs;
+        keelson_models::ThenLoad::new(
+            |rows: &[super::User]| rows.iter().map(|r| r.id).collect(),
+            |keys, q| keelson_core::Mod::apply(
+                super::super::comments::user_id().in_(keys),
+                q,
+            ),
+            |rows: &mut [super::User], related| {
+                keelson_models::attach_to_many(
+                    rows,
+                    related,
+                    |r| Some(r.id),
+                    |c| c.user_id,
+                    |r, cs| {
+                        r.rel.comments = cs;
+                    },
+                );
             },
-        );
-        Ok(())
+        )
     }
-    /// Load each row's `posts` (to-many) with one keyed second query.
-    pub fn posts() -> impl keelson_core::Mod<keelson_models::ModelSelect<super::Users>> {
-        keelson_core::mod_fn(|q: &mut keelson_models::ModelSelect<super::Users>| {
-            q.add_loader(
-                keelson_models::loader(|db, rows| { Box::pin(load_posts(db, rows)) }),
-            );
-        })
-    }
-    async fn load_posts(
-        db: &dyn keelson_exec::Executor,
-        rows: &mut [super::User],
-    ) -> Result<(), keelson_exec::ExecError> {
-        let mut keys: Vec<i32> = rows.iter().map(|r| r.id).collect();
-        keys.sort_unstable();
-        keys.dedup();
-        if keys.is_empty() {
-            return Ok(());
-        }
-        let related = super::super::posts::table()
-            .query(super::super::posts::user_id().in_(keys))
-            .all(db)
-            .await?;
-        keelson_models::attach_to_many(
-            rows,
-            related,
-            |r| r.id,
-            |c| c.user_id,
-            |r, cs| {
-                r.rel.posts = cs;
+    /// Load each row's `posts` (to-many), one keyed query per batch of keys — `.then(…)` hangs the next level of the path off this one.
+    pub fn posts() -> keelson_models::ThenLoad<
+        super::Users,
+        super::super::posts::Posts,
+        i32,
+    > {
+        keelson_models::ThenLoad::new(
+            |rows: &[super::User]| rows.iter().map(|r| r.id).collect(),
+            |keys, q| keelson_core::Mod::apply(
+                super::super::posts::user_id().in_(keys),
+                q,
+            ),
+            |rows: &mut [super::User], related| {
+                keelson_models::attach_to_many(
+                    rows,
+                    related,
+                    |r| r.id,
+                    |c| c.user_id,
+                    |r, cs| {
+                        r.rel.posts = cs;
+                    },
+                );
             },
-        );
-        Ok(())
+        )
     }
 }

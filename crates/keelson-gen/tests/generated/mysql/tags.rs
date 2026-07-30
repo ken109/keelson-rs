@@ -237,41 +237,31 @@ impl Delete {
         self.0.exec(db).await
     }
 }
-/// Then-load mods: a second query keyed by the first's rows.
+/// Then-load mods: one keyed, batched query per level of a load path — `then_load::a().then(b::then_load::c())` is two levels, two queries, checked by the compiler.
 pub mod then_load {
-    /// Load each row's `post_tags` (to-many) with one keyed second query.
-    pub fn post_tags() -> impl keelson_core::Mod<
-        keelson_models::ModelSelect<super::Tags>,
+    /// Load each row's `post_tags` (to-many), one keyed query per batch of keys — `.then(…)` hangs the next level of the path off this one.
+    pub fn post_tags() -> keelson_models::ThenLoad<
+        super::Tags,
+        super::super::post_tags::PostTags,
+        i32,
     > {
-        keelson_core::mod_fn(|q: &mut keelson_models::ModelSelect<super::Tags>| {
-            q.add_loader(
-                keelson_models::loader(|db, rows| { Box::pin(load_post_tags(db, rows)) }),
-            );
-        })
-    }
-    async fn load_post_tags(
-        db: &dyn keelson_exec::Executor,
-        rows: &mut [super::Tag],
-    ) -> Result<(), keelson_exec::ExecError> {
-        let mut keys: Vec<i32> = rows.iter().map(|r| r.id).collect();
-        keys.sort_unstable();
-        keys.dedup();
-        if keys.is_empty() {
-            return Ok(());
-        }
-        let related = super::super::post_tags::table()
-            .query(super::super::post_tags::tag_id().in_(keys))
-            .all(db)
-            .await?;
-        keelson_models::attach_to_many(
-            rows,
-            related,
-            |r| r.id,
-            |c| c.tag_id,
-            |r, cs| {
-                r.rel.post_tags = cs;
+        keelson_models::ThenLoad::new(
+            |rows: &[super::Tag]| rows.iter().map(|r| r.id).collect(),
+            |keys, q| keelson_core::Mod::apply(
+                super::super::post_tags::tag_id().in_(keys),
+                q,
+            ),
+            |rows: &mut [super::Tag], related| {
+                keelson_models::attach_to_many(
+                    rows,
+                    related,
+                    |r| r.id,
+                    |c| c.tag_id,
+                    |r, cs| {
+                        r.rel.post_tags = cs;
+                    },
+                );
             },
-        );
-        Ok(())
+        )
     }
 }

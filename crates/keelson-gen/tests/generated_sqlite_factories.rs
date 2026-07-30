@@ -183,14 +183,47 @@ async fn db() -> Pool {
     let pool = Pool::connect(&format!("sqlite://{}", path.display()))
         .await
         .expect("opening the SQLite database");
-    for ddl in include_str!("fixtures/sqlite_schema.sql")
-        .split(';')
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
-        pool.execute(Statement::new(ddl, vec![])).await.unwrap();
+    for ddl in ddl_statements(include_str!("fixtures/sqlite_schema.sql")) {
+        pool.execute(Statement::new(&ddl, vec![])).await.unwrap();
     }
     pool
+}
+
+/// Split the fixture DDL into statements.
+///
+/// A plain `split(';')` cannot do it: a `CREATE TRIGGER` body is itself a
+/// sequence of `;`-terminated statements between `BEGIN` and `END`, and the
+/// fixture has three of them (the `INSTEAD OF` triggers that make
+/// `editable_users` writable). The other SQLite tests hand the whole file to
+/// rusqlite's `execute_batch`, which does this for itself; this one goes
+/// through the pool, one statement at a time. `BEGIN`/`END` inside a comment
+/// would fool it, so the fixture keeps those words out of its comments.
+fn ddl_statements(sql: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut current = String::new();
+    let mut depth = 0usize;
+    for part in sql.split_inclusive(';') {
+        current.push_str(part);
+        for word in part.split(|c: char| !c.is_alphanumeric() && c != '_') {
+            match word.to_ascii_uppercase().as_str() {
+                "BEGIN" => depth += 1,
+                "END" => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+        }
+        if depth == 0 {
+            let stmt = current.trim().trim_end_matches(';').trim().to_owned();
+            if !stmt.is_empty() {
+                out.push(stmt);
+            }
+            current.clear();
+        }
+    }
+    let tail = current.trim().trim_end_matches(';').trim().to_owned();
+    if !tail.is_empty() {
+        out.push(tail);
+    }
+    out
 }
 
 async fn count(db: &dyn Executor, table: &'static str) -> i64 {

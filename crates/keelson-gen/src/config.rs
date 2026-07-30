@@ -13,9 +13,15 @@
 //! - **inflections** — `[inflections]` maps irregular plurals to their
 //!   singular (`people = "person"`).
 //! - **relationships** — `[[relationships]]` declares a foreign key the
-//!   schema does not (FK-less schemas, views).
+//!   schema does not (FK-less schemas, views). `cardinality` is optional
+//!   between two base tables and **required** when either end is a view; see
+//!   [`Cardinality`] and `docs/views.md`.
 //! - **no_back_referencing** — global flag, plus `no_back_reference` on a
 //!   manual relationship.
+//! - **key** — not in bob. `[tables.<name>] key = [...]` declares the
+//!   identity of a relation the catalog gives none (a view, a keyless
+//!   table), which is what turns a `SELECT`-only model into a writable one.
+//!   Only accepted when the engine says writes reach the relation.
 //! - **replacements / types** — `[types.map]` re-maps a database type
 //!   everywhere; `[[types.override]]` re-maps columns matched by
 //!   name/db_type/nullable/default/autoincrement/comment, optionally scoped
@@ -201,6 +207,15 @@ pub struct TableConfig {
     /// The hook methods this table delegates to the hooks module.
     #[serde(default)]
     pub hooks: Vec<Hook>,
+    /// The identity of a relation the catalog gives none: a view, or a base
+    /// table declared without a primary key. Declaring it is what turns the
+    /// `SELECT`-only model into a writable one — and it is accepted **only**
+    /// when the engine says writes reach the relation (see
+    /// [`TableKind::UpdatableView`](crate::schema::TableKind::UpdatableView)).
+    /// Declaring it on a relation that already has a primary key is an
+    /// error: the catalog's answer is not the configuration's to overrule.
+    #[serde(default)]
+    pub key: Vec<String>,
 }
 
 /// Renames for one table.
@@ -221,16 +236,48 @@ pub struct TableAliases {
     pub relationships: BTreeMap<String, String>,
 }
 
+/// How many rows sit on each end of a declared relation.
+///
+/// A foreign key answers this for itself: the referenced side is a key, so
+/// it is the "one", and the referencing side is the "many". A view answers
+/// nothing — it has no key and no constraint — so a relation that touches
+/// one must say which it is. The declaration is an assertion the generator
+/// takes on trust and cannot check; what it buys is the shape of the
+/// back-reference.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Cardinality {
+    /// Many referencing rows per referenced row: the referencing side gets a
+    /// to-one relation, the referenced side a `Vec` back-reference. This is
+    /// what a foreign key means, and the default.
+    #[default]
+    ManyToOne,
+    /// One row on each side: the referencing side gets a to-one relation and
+    /// the referenced side an `Option` back-reference rather than a `Vec`.
+    OneToOne,
+}
+
+impl fmt::Display for Cardinality {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Cardinality::ManyToOne => "many_to_one",
+            Cardinality::OneToOne => "one_to_one",
+        })
+    }
+}
+
 /// A foreign key the schema does not declare (bob's manual relationships,
-/// which double as its manual constraints for FK-less joins).
+/// which double as its manual constraints for FK-less joins) — and the only
+/// way to relate a view to anything, since a view has no foreign keys and
+/// usually no key at all.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ManualRelationship {
-    /// The referencing (child) table.
+    /// The referencing (child) table or view.
     pub table: String,
     /// The referencing column.
     pub column: String,
-    /// The referenced (parent) table.
+    /// The referenced (parent) table or view.
     pub ref_table: String,
     /// The referenced column.
     pub ref_column: String,
@@ -240,6 +287,11 @@ pub struct ManualRelationship {
     /// Emit no has-many back-reference on the parent for this key.
     #[serde(default)]
     pub no_back_reference: bool,
+    /// How many rows sit on each end. Optional between two base tables,
+    /// where the referenced column's key constraint answers it; **required**
+    /// when either end is a view, because nothing in the catalog does.
+    #[serde(default)]
+    pub cardinality: Option<Cardinality>,
 }
 
 /// The user-overridable type map.

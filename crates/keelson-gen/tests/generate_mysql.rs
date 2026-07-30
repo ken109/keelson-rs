@@ -59,6 +59,23 @@ fn mysql_ir() -> Schema {
                 foreign_keys: vec![fk("post_id", "posts", "id"), fk("user_id", "users", "id")],
                 unique_keys: vec![],
             },
+            // A view: no key, no foreign keys, and every column reported as
+            // MySQL reports it. `IS_UPDATABLE` is the one flag MySQL computes
+            // for a whole view, and the `live-docker` lane is what pins these
+            // two `kind`s to what the server actually says.
+            TableDef {
+                name: "post_authors".to_owned(),
+                kind: TableKind::UpdatableView,
+                columns: vec![
+                    col("post_id", "int", false, None),
+                    col("title", "varchar(255)", false, None),
+                    col("user_id", "int", false, None),
+                    col("user_name", "varchar(255)", false, None),
+                ],
+                primary_key: vec![],
+                foreign_keys: vec![],
+                unique_keys: vec![],
+            },
             TableDef {
                 name: "post_tags".to_owned(),
                 kind: TableKind::Table,
@@ -95,6 +112,17 @@ fn mysql_ir() -> Schema {
                 primary_key: vec!["id".to_owned()],
                 foreign_keys: vec![],
                 unique_keys: vec![vec!["name".to_owned()]],
+            },
+            TableDef {
+                name: "user_emails".to_owned(),
+                kind: TableKind::UpdatableView,
+                columns: vec![
+                    col("id", "int", false, None),
+                    col("email", "varchar(255)", true, None),
+                ],
+                primary_key: vec![],
+                foreign_keys: vec![],
+                unique_keys: vec![],
             },
             TableDef {
                 name: "users".to_owned(),

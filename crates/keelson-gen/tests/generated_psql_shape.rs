@@ -256,7 +256,7 @@ mod live {
     use keelson_models::{null, set};
     use keelson_psql::{Chain as _, arg, quote, select};
 
-    use super::models::{posts, users};
+    use super::models::{post_authors, posts, user_emails, users};
 
     /// Process-unique positive i32 keys, so runs against a shared or
     /// persistent server never collide.
@@ -443,5 +443,96 @@ mod live {
             .exec(&db)
             .await
             .unwrap();
+    }
+
+    /// Relations involving views, against the real server: `post_authors` and
+    /// `user_emails` are `SELECT`-only models, every relation below came from
+    /// a `[[relationships]]` block with its `cardinality` declared, and both
+    /// loading strategies have to bring back the same rows. Rolled back, so a
+    /// shared server keeps nothing.
+    #[tokio::test]
+    async fn view_relations_load_against_the_server() {
+        let db = pool().await;
+        let uid = key();
+        let pid = key();
+
+        let out: Result<(), ExecError> = db
+            .within(async |tx| {
+                users::table()
+                    .insert(users::Setter {
+                        id: set(uid),
+                        name: set("Grace"),
+                        email: set("grace@example.com"),
+                        ..Default::default()
+                    })
+                    .one(tx)
+                    .await?;
+                posts::table()
+                    .insert(posts::Setter {
+                        id: set(pid),
+                        user_id: set(uid),
+                        title: set("compiler"),
+                        ..Default::default()
+                    })
+                    .one(tx)
+                    .await?;
+
+                // The view as the target of a to-one relation, both ways.
+                let preloaded = posts::table()
+                    .query((posts::preload::authorship(), posts::id().eq(pid)))
+                    .one(tx)
+                    .await?;
+                let a = preloaded.rel.authorship.as_ref().expect("view row");
+                assert_eq!(a.user_name.as_deref(), Some("Grace"));
+
+                let then_loaded = posts::table()
+                    .query((posts::then_load::authorship(), posts::id().eq(pid)))
+                    .one(tx)
+                    .await?;
+                assert_eq!(then_loaded.rel.authorship, preloaded.rel.authorship);
+
+                // The view as the holder of a relation.
+                let from_view = post_authors::view()
+                    .query((
+                        post_authors::then_load::user(),
+                        post_authors::post_id().eq(pid),
+                    ))
+                    .one(tx)
+                    .await?;
+                assert_eq!(from_view.rel.user.as_ref().unwrap().id, uid);
+
+                // The declared cardinality decides the back-reference shape:
+                // a `Vec` for many_to_one, a boxed `Option` for one_to_one.
+                let back = users::table()
+                    .query((
+                        users::id().eq(uid),
+                        users::then_load::post_authors(),
+                        users::then_load::user_emails(),
+                    ))
+                    .one(tx)
+                    .await?;
+                assert_eq!(back.rel.post_authors.len(), 1);
+                assert_eq!(
+                    back.rel
+                        .user_emails
+                        .as_deref()
+                        .and_then(|e| e.email.clone()),
+                    Some("grace@example.com".to_owned())
+                );
+
+                // PostgreSQL calls `user_emails` auto-updatable, but the
+                // config declares no key for it, so it is still SELECT-only:
+                // updatability is permission to write, not an identity to
+                // write by.
+                let rows = user_emails::view()
+                    .query(user_emails::id().eq(uid))
+                    .all(tx)
+                    .await?;
+                assert_eq!(rows.len(), 1);
+
+                Err(ExecError::other("deliberate rollback"))
+            })
+            .await;
+        assert_eq!(out.unwrap_err().to_string(), "deliberate rollback");
     }
 }

@@ -13,13 +13,49 @@ pub struct Schema {
     pub tables: Vec<TableDef>,
 }
 
-/// Table or view — keelson-models' `View`-only / `Table` split downstream.
+/// What the catalog says a relation *is*. Three answers, because writability
+/// and viewness are separate facts: a base table is always writable, a view
+/// is writable only when the engine says so, and the engines disagree about
+/// when that is (see [`TableKind::UpdatableView`]).
+///
+/// This is the catalog's answer, not the generator's decision. Whether a
+/// model ends up with the `Table` surface is resolved from this *plus* the
+/// configuration, in `resolve`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TableKind {
     /// A base table: gets the full `Table` surface when it has a primary key.
     Table,
-    /// A view (or materialised view): `SELECT`-only, no primary key required.
+    /// A view (or materialised view) the engine will not write through:
+    /// `SELECT`-only, unconditionally.
     View,
+    /// A view the engine reports as writable — PostgreSQL's auto-updatable
+    /// views and any view with the right `INSTEAD OF` triggers, MySQL's
+    /// `IS_UPDATABLE = 'YES'`, SQLite's views carrying all three `INSTEAD OF`
+    /// triggers. Still keyless: a view has no primary key, so the write
+    /// surface needs a `[tables.<name>] key` before it can be generated.
+    UpdatableView,
+}
+
+impl TableKind {
+    /// Whether the catalog calls this a view (updatable or not).
+    pub fn is_view(self) -> bool {
+        !matches!(self, TableKind::Table)
+    }
+
+    /// Whether the engine will accept `INSERT`/`UPDATE`/`DELETE` against it.
+    /// A base table always will; a view only when the catalog says so.
+    pub fn is_updatable(self) -> bool {
+        matches!(self, TableKind::Table | TableKind::UpdatableView)
+    }
+
+    /// The word to use for this relation in an error message.
+    pub(crate) fn noun(self) -> &'static str {
+        match self {
+            TableKind::Table => "table",
+            TableKind::View => "view",
+            TableKind::UpdatableView => "updatable view",
+        }
+    }
 }
 
 /// One table or view.
@@ -33,7 +69,8 @@ pub struct TableDef {
     /// lists them, matching the hand-written spec.
     pub columns: Vec<ColumnDef>,
     /// Primary-key column names in key order; empty when there is none (all
-    /// views, and keyless tables — both emit `View`-only models).
+    /// views, and keyless tables — both emit `View`-only models unless the
+    /// configuration declares a key, see `[tables.<name>] key`).
     pub primary_key: Vec<String>,
     /// Foreign keys in a stable catalog order.
     pub foreign_keys: Vec<ForeignKey>,

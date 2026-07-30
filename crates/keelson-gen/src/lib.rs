@@ -105,11 +105,26 @@
 //! take sequences, defaulted columns are omitted, the rest are faked) is
 //! recorded in `emit/factory.rs`.
 //!
+//! **Views are configured, not inferred** (`docs/views.md`). A view has no
+//! foreign keys and usually no primary key, so the catalog cannot say how it
+//! relates to anything or what identifies a row of it. Neither is guessed:
+//! a relation touching a view is a `[[relationships]]` declaration carrying
+//! an explicit `cardinality`, validated against the introspected schema so a
+//! typo is a generation-time error naming the TOML key; and identity is
+//! simply not required for reads, because the loaders group by the declared
+//! join column rather than by a row identity. A keyless view therefore
+//! *holds* and *is the target of* relations while getting less than a table
+//! — no `Pk`, no `Setter`, no `INSERT`/`UPDATE`/`DELETE`, no keyed read-back
+//! on MySQL, no factory. It earns the write surface only by declaring
+//! `[tables.<name>] key`, and only when the engine says writes reach it,
+//! which the three engines decide differently (PostgreSQL's
+//! `pg_relation_is_updatable`, MySQL's `IS_UPDATABLE`, SQLite's `INSTEAD OF`
+//! triggers).
+//!
 //! **Recorded limitations.** Multi-column foreign keys are introspected but
-//! emit no relation (composite keys still work as `Pk` tuples); relations
-//! on `SELECT`-only models (views, keyless tables) are rejected when asked
-//! for manually; a base table whose primary key falls to the column filters
-//! demotes to a view model.
+//! emit no relation (composite keys still work as `Pk` tuples); a base table
+//! whose primary key falls to the column filters demotes to a view model;
+//! `[output] factories = true` cannot cover a writable view and says so.
 
 #![warn(missing_docs)]
 

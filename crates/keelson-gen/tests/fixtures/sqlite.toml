@@ -20,3 +20,42 @@ rust_type = "chrono::NaiveDateTime"
 [types.override.match]
 name = "published_at"
 db_type = "TEXT"
+
+# `editable_users` is the one view SQLite will write through — it carries
+# INSTEAD OF triggers for all three statements — so declaring its identity is
+# accepted and the full `Table` surface is generated for it. The same
+# declaration on `user_emails` or `post_authors` is refused, because SQLite
+# will not write through those (see `config_effects.rs`).
+[tables.editable_users]
+key = ["id"]
+
+# Relations a view is party to have to be declared: a view has no foreign keys
+# and no key, so nothing in the catalog says how it joins or how many rows sit
+# on each end.
+
+# The view is the *referencing* side: one row per post, each naming its
+# author, so a user has many of them.
+[[relationships]]
+table = "post_authors"
+column = "user_id"
+ref_table = "users"
+ref_column = "id"
+cardinality = "many_to_one"
+
+# The view is the *referenced* side, one row per post: to-one from `posts`,
+# and an `Option` back-reference on the view rather than a `Vec`.
+[[relationships]]
+table = "posts"
+column = "id"
+ref_table = "post_authors"
+ref_column = "post_id"
+name = "authorship"
+cardinality = "one_to_one"
+
+# View to table, one row each way.
+[[relationships]]
+table = "user_emails"
+column = "id"
+ref_table = "users"
+ref_column = "id"
+cardinality = "one_to_one"

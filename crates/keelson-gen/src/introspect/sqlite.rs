@@ -39,11 +39,14 @@ pub(crate) fn introspect(url: &str) -> Result<Schema> {
         .map_err(err)?;
     drop(stmt);
 
+    let instead_of = instead_of_triggers(&conn)?;
     for (name, kind) in names {
-        let kind = if kind == "view" {
-            TableKind::View
-        } else {
+        let kind = if kind != "view" {
             TableKind::Table
+        } else if instead_of.get(&name).copied().unwrap_or_default().all() {
+            TableKind::UpdatableView
+        } else {
+            TableKind::View
         };
         tables.push(table_def(&conn, &name, kind)?);
     }
@@ -52,6 +55,65 @@ pub(crate) fn introspect(url: &str) -> Result<Schema> {
     resolve_fk_targets(&mut schema)?;
     super::canonicalise(&mut schema);
     Ok(schema)
+}
+
+/// Which of the three write statements a view carries an `INSTEAD OF`
+/// trigger for.
+#[derive(Debug, Clone, Copy, Default)]
+struct InsteadOf {
+    insert: bool,
+    update: bool,
+    delete: bool,
+}
+
+impl InsteadOf {
+    fn all(self) -> bool {
+        self.insert && self.update && self.delete
+    }
+}
+
+/// Updatability, SQLite's rule: a view is read-only, full stop, unless it
+/// carries `INSTEAD OF` triggers — and each statement needs its own, so
+/// "writable" here means all three are present. There is no catalog column
+/// for this (SQLite only allows `INSTEAD OF` triggers on views, so any
+/// trigger whose `tbl_name` is a view is one, but `sqlite_master` records
+/// only the `CREATE TRIGGER` text), so the event is read out of the
+/// statement's header — the text up to the body's `BEGIN`.
+///
+/// The scan is deliberately biased: anything it cannot read leaves the view
+/// read-only, so a misread can only ever generate *less* than the engine
+/// allows, never a write the engine would reject.
+fn instead_of_triggers(conn: &Connection) -> Result<std::collections::BTreeMap<String, InsteadOf>> {
+    let mut stmt = conn
+        .prepare("SELECT tbl_name, sql FROM sqlite_master WHERE type = 'trigger'")
+        .map_err(err)?;
+    let rows: Vec<(String, Option<String>)> = stmt
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+        .map_err(err)?
+        .collect::<rusqlite::Result<_>>()
+        .map_err(err)?;
+
+    let mut out: std::collections::BTreeMap<String, InsteadOf> = std::collections::BTreeMap::new();
+    for (on, sql) in rows {
+        let Some(sql) = sql else { continue };
+        let header: String = sql
+            .to_uppercase()
+            .split_whitespace()
+            .take_while(|w| *w != "BEGIN")
+            .collect::<Vec<_>>()
+            .join(" ");
+        let Some(rest) = header.split_once("INSTEAD OF").map(|(_, r)| r.trim_start()) else {
+            continue;
+        };
+        let e = out.entry(on).or_default();
+        match rest.split_whitespace().next() {
+            Some("INSERT") => e.insert = true,
+            Some("UPDATE") => e.update = true,
+            Some("DELETE") => e.delete = true,
+            _ => {}
+        }
+    }
+    Ok(out)
 }
 
 fn table_def(conn: &Connection, name: &str, kind: TableKind) -> Result<TableDef> {

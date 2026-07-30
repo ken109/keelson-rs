@@ -50,6 +50,16 @@
 //! by value. (A *non-null* self-referencing key still cannot be
 //! auto-created: `Parent::Auto` would recurse forever, which is the schema
 //! saying no row can exist without another. Pass an existing key.)
+//!
+//! **Views are not in the factory's world at all.** A factory creates rows,
+//! and a view has none of its own: its rows appear when the rows underneath
+//! them do. So a view gets no template (even a writable one — `resolve`
+//! refuses that combination outright rather than emit a template with no
+//! unique constraints or auto-increment columns to draw distinct values
+//! from), a foreign key *pointing at* a view stays a plain value column
+//! rather than a `Parent` field, and a back-reference *from* a view gets no
+//! `with_new_…` mod. Relations to views are a read-side feature; see
+//! `docs/views.md`.
 
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
@@ -112,7 +122,14 @@ fn key_access(recv: TokenStream, c: &ModelColumn) -> TokenStream {
 /// three dialects.
 pub(crate) fn factories_file(models: &[Model], config: &Config) -> Result<TokenStream> {
     let mut mods = Vec::new();
-    for m in models.iter().filter(|m| m.kind == TableKind::Table) {
+    // Writable base tables only. A writable *view* is refused earlier, in
+    // `resolve`, rather than skipped here: a view reports neither
+    // auto-increment columns nor unique constraints, so its factory would
+    // look right and collide on the second row.
+    for m in models
+        .iter()
+        .filter(|m| m.writable && m.kind == TableKind::Table)
+    {
         mods.push(factory_mod(m, models, config)?);
     }
     if mods.is_empty() {
@@ -216,11 +233,16 @@ enum Role<'a> {
     Parent(&'a BelongsTo),
 }
 
-fn roles<'a>(m: &'a Model) -> Vec<Role<'a>> {
+/// A relation only becomes a `Parent` field when the factory could actually
+/// create the row it points at. A relation whose target is `SELECT`-only —
+/// any relation to a view — has no template to create, so the foreign-key
+/// column stays a plain value `Source`: the view's row appears when the row
+/// underneath it does, which is not this template's business.
+fn roles<'a>(m: &'a Model, all: &[Model]) -> Vec<Role<'a>> {
     (0..m.columns.len())
         .map(|i| match m.belongs_to.iter().find(|b| b.fk_column == i) {
-            Some(b) => Role::Parent(b),
-            None => Role::Source,
+            Some(b) if all.iter().any(|t| t.table == b.target && t.writable) => Role::Parent(b),
+            _ => Role::Source,
         })
         .collect()
 }
@@ -242,7 +264,7 @@ fn factory_mod(m: &Model, all: &[Model], config: &Config) -> Result<TokenStream>
     let model_mod = ident(&m.table);
     let row = ident(&m.row);
     let singular = crate::names::singular(&m.table, &config.inflections);
-    let roles = roles(m);
+    let roles = roles(m, all);
 
     // Every generated fn name, checked for collisions once at the end.
     let mut fn_names: Vec<String> = vec!["factory".to_owned()];
@@ -480,6 +502,11 @@ fn factory_mod(m: &Model, all: &[Model], config: &Config) -> Result<TokenStream>
     // ── has-many children ──
     for h in &m.has_many {
         let child = model_of(all, &h.child)?;
+        // Same rule as `roles`: a `SELECT`-only child — any view — has no
+        // template to create, so no `with_new_…` mod is offered for it.
+        if !child.writable {
+            continue;
+        }
         let child_mod = ident(&child.table);
         let child_tpl = template_name(child);
         let rel = ident(&h.name);

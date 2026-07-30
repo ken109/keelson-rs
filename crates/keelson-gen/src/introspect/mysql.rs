@@ -34,21 +34,33 @@ pub(crate) fn introspect(url: &str) -> Result<Schema> {
     let opts = Opts::from_url(url).map_err(err)?;
     let mut conn = Conn::new(opts).map_err(err)?;
 
-    let rels: Vec<(String, String)> = conn
+    // Updatability, MySQL's rule: `information_schema.VIEWS.IS_UPDATABLE`.
+    // MySQL decides it once, per view, from the view's own algorithm and
+    // body (no aggregate, no DISTINCT, no UNION, a one-to-one row mapping),
+    // and reports the one flag for all of INSERT/UPDATE/DELETE — unlike
+    // PostgreSQL, which reports the three separately. There is no
+    // `INSTEAD OF` trigger in MySQL, so the flag is the whole answer.
+    let rels: Vec<(String, String, Option<String>)> = conn
         .query_map(
-            "SELECT TABLE_NAME, TABLE_TYPE FROM information_schema.TABLES \
-             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_TYPE IN ('BASE TABLE', 'VIEW') \
-             ORDER BY TABLE_NAME",
-            |(name, kind): (String, String)| (name, kind),
+            "SELECT t.TABLE_NAME, t.TABLE_TYPE, v.IS_UPDATABLE \
+             FROM information_schema.TABLES t \
+             LEFT JOIN information_schema.VIEWS v \
+               ON v.TABLE_SCHEMA = t.TABLE_SCHEMA AND v.TABLE_NAME = t.TABLE_NAME \
+             WHERE t.TABLE_SCHEMA = DATABASE() \
+               AND t.TABLE_TYPE IN ('BASE TABLE', 'VIEW') \
+             ORDER BY t.TABLE_NAME",
+            |row: (String, String, Option<String>)| row,
         )
         .map_err(err)?;
 
     let mut tables = Vec::with_capacity(rels.len());
-    for (name, table_type) in rels {
-        let kind = if table_type == "VIEW" {
-            TableKind::View
-        } else {
+    for (name, table_type, is_updatable) in rels {
+        let kind = if table_type != "VIEW" {
             TableKind::Table
+        } else if is_updatable.is_some_and(|u| u.eq_ignore_ascii_case("YES")) {
+            TableKind::UpdatableView
+        } else {
+            TableKind::View
         };
         tables.push(table_def(&mut conn, &name, kind)?);
     }

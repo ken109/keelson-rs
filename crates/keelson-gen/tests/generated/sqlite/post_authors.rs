@@ -2,53 +2,70 @@
 // Regenerate from the schema instead; hand-written code (hooks included)
 // belongs outside this directory.
 
-/// The model marker `user_emails::view()` hangs off.
+/// The model marker `post_authors::view()` hangs off.
 #[derive(Debug, Clone, Copy)]
-pub struct UserEmails;
-/// One row of `user_emails`.
+pub struct PostAuthors;
+/// One row of `post_authors`.
 #[derive(Debug, Clone, PartialEq)]
-pub struct UserEmail {
-    pub id: Option<i64>,
-    pub email: Option<String>,
+pub struct PostAuthor {
+    pub post_id: Option<i64>,
+    pub title: Option<String>,
+    pub user_id: Option<i64>,
+    pub user_name: Option<String>,
     /// Relations, filled by `preload`/`then_load` mods; empty otherwise.
     pub rel: Rel,
 }
-/// `user_emails`' relations.
+/// `post_authors`' relations.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Rel {
-    /// Belongs-to `users`, via `user_emails.id`.
+    /// Belongs-to `users`, via `post_authors.user_id`.
     pub user: Option<super::users::User>,
+    /// Has-one `posts`, via `posts.id`.
+    pub posts: Option<Box<super::posts::Post>>,
 }
-impl keelson_exec::FromRow for UserEmail {
+impl keelson_exec::FromRow for PostAuthor {
     fn from_row(row: &mut keelson_exec::Row) -> Result<Self, keelson_exec::ExecError> {
-        Ok(UserEmail {
-            id: row.take("id")?,
-            email: row.take("email")?,
+        Ok(PostAuthor {
+            post_id: row.take("post_id")?,
+            title: row.take("title")?,
+            user_id: row.take("user_id")?,
+            user_name: row.take("user_name")?,
             rel: Rel::default(),
         })
     }
 }
-/// The entry point: `user_emails::view().query(…)` — a SELECT-only model.
-pub fn view() -> keelson_models::ModelTable<UserEmails> {
+/// The entry point: `post_authors::view().query(…)` — a SELECT-only model.
+pub fn view() -> keelson_models::ModelTable<PostAuthors> {
     keelson_models::ModelTable::new()
 }
-pub fn id() -> keelson_models::Column<i64> {
-    keelson_models::Column::new("user_emails", "id")
+pub fn post_id() -> keelson_models::Column<i64> {
+    keelson_models::Column::new("post_authors", "post_id")
 }
-pub fn email() -> keelson_models::Column<String> {
-    keelson_models::Column::new("user_emails", "email")
+pub fn title() -> keelson_models::Column<String> {
+    keelson_models::Column::new("post_authors", "title")
+}
+pub fn user_id() -> keelson_models::Column<i64> {
+    keelson_models::Column::new("post_authors", "user_id")
+}
+pub fn user_name() -> keelson_models::Column<String> {
+    keelson_models::Column::new("post_authors", "user_name")
 }
 #[allow(clippy::type_complexity)]
-fn all_columns() -> (keelson_models::Column<i64>, keelson_models::Column<String>) {
-    (id(), email())
+fn all_columns() -> (
+    keelson_models::Column<i64>,
+    keelson_models::Column<String>,
+    keelson_models::Column<i64>,
+    keelson_models::Column<String>,
+) {
+    (post_id(), title(), user_id(), user_name())
 }
-impl keelson_models::View for UserEmails {
-    type Row = UserEmail;
+impl keelson_models::View for PostAuthors {
+    type Row = PostAuthor;
     type Select = keelson_sqlite::SelectQuery;
     fn base_select() -> Self::Select {
         keelson_sqlite::select((
             keelson_sqlite::select::columns(all_columns()),
-            keelson_sqlite::select::from(keelson_sqlite::quote("user_emails")),
+            keelson_sqlite::select::from(keelson_sqlite::quote("post_authors")),
         ))
     }
 }
@@ -56,16 +73,16 @@ impl keelson_models::View for UserEmails {
 pub mod preload {
     /// Same-query `LEFT JOIN` preload of the to-one `user`.
     pub fn user() -> impl keelson_core::Mod<
-        keelson_models::ModelSelect<super::UserEmails>,
+        keelson_models::ModelSelect<super::PostAuthors>,
     > {
-        keelson_core::mod_fn(|q: &mut keelson_models::ModelSelect<super::UserEmails>| {
+        keelson_core::mod_fn(|q: &mut keelson_models::ModelSelect<super::PostAuthors>| {
             use keelson_sqlite::Chain as _;
             use keelson_sqlite::Mod as _;
             (
                 keelson_sqlite::select::left_join(keelson_sqlite::quote("users"))
                     .on(
                         keelson_sqlite::quote(("users", "id"))
-                            .eq(keelson_sqlite::quote(("user_emails", "id"))),
+                            .eq(keelson_sqlite::quote(("post_authors", "user_id"))),
                     ),
                 keelson_sqlite::select::preload_columns((
                     keelson_sqlite::quote(("users", "id")).as_("user.id"),
@@ -78,7 +95,7 @@ pub mod preload {
             )
                 .apply(q);
             q.add_mapper_mod(
-                keelson_models::mapper_mod(|row, parent: &mut super::UserEmail| {
+                keelson_models::mapper_mod(|row, parent: &mut super::PostAuthor| {
                     parent.rel.user = user_from_preload(row)?;
                     Ok(())
                 }),
@@ -109,21 +126,43 @@ pub mod preload {
 pub mod then_load {
     /// Load each row's `user` (to-one), one keyed query per batch of keys — `.then(…)` hangs the next level of the path off this one.
     pub fn user() -> keelson_models::ThenLoad<
-        super::UserEmails,
+        super::PostAuthors,
         super::super::users::Users,
         i64,
     > {
         keelson_models::ThenLoad::new(
-            |rows: &[super::UserEmail]| rows.iter().filter_map(|r| r.id).collect(),
+            |rows: &[super::PostAuthor]| rows.iter().filter_map(|r| r.user_id).collect(),
             |keys, q| keelson_core::Mod::apply(super::super::users::id().in_(keys), q),
-            |rows: &mut [super::UserEmail], related| {
+            |rows: &mut [super::PostAuthor], related| {
                 keelson_models::attach_to_one(
                     rows,
                     related,
-                    |r| r.id,
+                    |r| r.user_id,
                     |c| Some(c.id),
                     |r, c| {
                         r.rel.user = c;
+                    },
+                );
+            },
+        )
+    }
+    /// Load each row's `posts` (to-one), one keyed query per batch of keys — `.then(…)` hangs the next level of the path off this one.
+    pub fn posts() -> keelson_models::ThenLoad<
+        super::PostAuthors,
+        super::super::posts::Posts,
+        i64,
+    > {
+        keelson_models::ThenLoad::new(
+            |rows: &[super::PostAuthor]| rows.iter().filter_map(|r| r.post_id).collect(),
+            |keys, q| keelson_core::Mod::apply(super::super::posts::id().in_(keys), q),
+            |rows: &mut [super::PostAuthor], related| {
+                keelson_models::attach_to_one(
+                    rows,
+                    related,
+                    |r| r.post_id,
+                    |c| Some(c.id),
+                    |r, c| {
+                        r.rel.posts = c.map(Box::new);
                     },
                 );
             },

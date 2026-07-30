@@ -19,9 +19,18 @@ fn err(e: postgres::Error) -> GenError {
 pub(crate) fn introspect(url: &str, schema_name: &str) -> Result<Schema> {
     let mut client = Client::connect(url, NoTls).map_err(err)?;
 
+    // Updatability, PostgreSQL's rule: `pg_relation_is_updatable` returns a
+    // bit mask over `CmdType`, so `UPDATE` is 1 << 2, `INSERT` 1 << 3 and
+    // `DELETE` 1 << 4 — 28 with all three set. `information_schema.views`
+    // computes `is_updatable` / `is_insertable_into` from exactly this
+    // function; asking it directly keeps one catalog query per relation and
+    // covers materialised views (never updatable) in the same expression.
+    // The `true` asks it to count `INSTEAD OF` triggers, which are the other
+    // way a PostgreSQL view becomes writable.
     let rels = client
         .query(
-            "SELECT c.oid, c.relname, c.relkind::text \
+            "SELECT c.oid, c.relname, c.relkind::text, \
+                    (pg_catalog.pg_relation_is_updatable(c.oid, true) & 28) = 28 \
              FROM pg_catalog.pg_class c \
              JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
              WHERE n.nspname = $1 AND c.relkind IN ('r', 'p', 'v', 'm') \
@@ -35,10 +44,11 @@ pub(crate) fn introspect(url: &str, schema_name: &str) -> Result<Schema> {
         let oid: Oid = rel.get(0);
         let name: String = rel.get(1);
         let relkind: String = rel.get(2);
-        let kind = if relkind == "r" || relkind == "p" {
-            TableKind::Table
-        } else {
-            TableKind::View
+        let updatable: bool = rel.get(3);
+        let kind = match (relkind.as_str(), updatable) {
+            ("r" | "p", _) => TableKind::Table,
+            (_, true) => TableKind::UpdatableView,
+            (_, false) => TableKind::View,
         };
         tables.push(table_def(&mut client, oid, &name, kind)?);
     }

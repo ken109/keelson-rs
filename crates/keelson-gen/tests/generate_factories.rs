@@ -66,6 +66,22 @@ fn psql_ir() -> Schema {
                 foreign_keys: vec![fk("post_id", "posts", "id"), fk("user_id", "users", "id")],
                 unique_keys: vec![],
             },
+            // The shared schema's two views. They matter here for what they
+            // do *not* produce: no template of their own, and no `Parent` /
+            // `with_new_…` field on the tables that relate to them.
+            TableDef {
+                name: "post_authors".to_owned(),
+                kind: TableKind::View,
+                columns: vec![
+                    col("post_id", "integer", true, None),
+                    col("title", "text", true, None),
+                    col("user_id", "integer", true, None),
+                    col("user_name", "text", true, None),
+                ],
+                primary_key: vec![],
+                foreign_keys: vec![],
+                unique_keys: vec![],
+            },
             TableDef {
                 name: "post_tags".to_owned(),
                 kind: TableKind::Table,
@@ -102,6 +118,17 @@ fn psql_ir() -> Schema {
                 primary_key: vec!["id".to_owned()],
                 foreign_keys: vec![],
                 unique_keys: vec![vec!["name".to_owned()]],
+            },
+            TableDef {
+                name: "user_emails".to_owned(),
+                kind: TableKind::UpdatableView,
+                columns: vec![
+                    col("id", "integer", true, None),
+                    col("email", "text", true, None),
+                ],
+                primary_key: vec![],
+                foreign_keys: vec![],
+                unique_keys: vec![],
             },
             TableDef {
                 name: "users".to_owned(),

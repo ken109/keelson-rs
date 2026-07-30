@@ -2,28 +2,27 @@
 // Regenerate from the schema instead; hand-written code (hooks included)
 // belongs outside this directory.
 
-/// The model marker `tags::table()` hangs off.
+/// The model marker `editable_users::table()` hangs off.
 #[derive(Debug, Clone, Copy)]
-pub struct Tags;
-/// One row of `tags`.
+pub struct EditableUsers;
+/// One row of `editable_users`.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Tag {
+pub struct EditableUser {
     pub id: i64,
-    pub name: String,
+    pub name: Option<String>,
+    pub email: Option<String>,
     /// Relations, filled by `preload`/`then_load` mods; empty otherwise.
     pub rel: Rel,
 }
-/// `tags`' relations.
+/// `editable_users`' relations.
 #[derive(Debug, Clone, PartialEq, Default)]
-pub struct Rel {
-    /// Has-many `post_tags`, via `post_tags.tag_id`.
-    pub post_tags: Vec<super::post_tags::PostTag>,
-}
-impl keelson_exec::FromRow for Tag {
+pub struct Rel {}
+impl keelson_exec::FromRow for EditableUser {
     fn from_row(row: &mut keelson_exec::Row) -> Result<Self, keelson_exec::ExecError> {
-        Ok(Tag {
+        Ok(EditableUser {
             id: row.take("id")?,
             name: row.take("name")?,
+            email: row.take("email")?,
             rel: Rel::default(),
         })
     }
@@ -33,32 +32,40 @@ impl keelson_exec::FromRow for Tag {
 pub struct Setter {
     pub id: keelson_models::Set<i64>,
     pub name: keelson_models::Set<String>,
+    pub email: keelson_models::Set<String>,
 }
-/// The entry point: `tags::table().query(…)` / `.insert(…)` / ….
-pub fn table() -> keelson_models::ModelTable<Tags> {
+/// The entry point: `editable_users::table().query(…)` / `.insert(…)` / ….
+pub fn table() -> keelson_models::ModelTable<EditableUsers> {
     keelson_models::ModelTable::new()
 }
 pub fn id() -> keelson_models::Column<i64> {
-    keelson_models::Column::new("tags", "id")
+    keelson_models::Column::new("editable_users", "id")
 }
 pub fn name() -> keelson_models::Column<String> {
-    keelson_models::Column::new("tags", "name")
+    keelson_models::Column::new("editable_users", "name")
+}
+pub fn email() -> keelson_models::Column<String> {
+    keelson_models::Column::new("editable_users", "email")
 }
 #[allow(clippy::type_complexity)]
-fn all_columns() -> (keelson_models::Column<i64>, keelson_models::Column<String>) {
-    (id(), name())
+fn all_columns() -> (
+    keelson_models::Column<i64>,
+    keelson_models::Column<String>,
+    keelson_models::Column<String>,
+) {
+    (id(), name(), email())
 }
-impl keelson_models::View for Tags {
-    type Row = Tag;
+impl keelson_models::View for EditableUsers {
+    type Row = EditableUser;
     type Select = keelson_sqlite::SelectQuery;
     fn base_select() -> Self::Select {
         keelson_sqlite::select((
             keelson_sqlite::select::columns(all_columns()),
-            keelson_sqlite::select::from(keelson_sqlite::quote("tags")),
+            keelson_sqlite::select::from(keelson_sqlite::quote("editable_users")),
         ))
     }
 }
-impl keelson_models::Table for Tags {
+impl keelson_models::Table for EditableUsers {
     type Pk = i64;
     type Setter = Setter;
     type Insert = keelson_sqlite::InsertQuery;
@@ -69,8 +76,10 @@ impl keelson_models::Table for Tags {
         let mut vals: Vec<keelson_core::expr::Expr> = Vec::new();
         s.id.push_into("id", &mut cols, &mut vals);
         s.name.push_into("name", &mut cols, &mut vals);
+        s.email.push_into("email", &mut cols, &mut vals);
         let mut q = keelson_sqlite::insert((
-            keelson_sqlite::insert::into(keelson_sqlite::quote("tags")).columns(cols),
+            keelson_sqlite::insert::into(keelson_sqlite::quote("editable_users"))
+                .columns(cols),
             keelson_sqlite::insert::returning(all_columns()),
         ));
         if !vals.is_empty() {
@@ -80,7 +89,7 @@ impl keelson_models::Table for Tags {
     }
     fn update_query() -> Self::Update {
         keelson_sqlite::update(
-            keelson_sqlite::update::table(keelson_sqlite::quote("tags")),
+            keelson_sqlite::update::table(keelson_sqlite::quote("editable_users")),
         )
     }
     fn apply_setter(s: Setter, q: &mut Self::Update) {
@@ -90,41 +99,16 @@ impl keelson_models::Table for Tags {
         if let Some(v) = s.name.into_expr() {
             q.apply(keelson_sqlite::update::set_col("name").to(v));
         }
+        if let Some(v) = s.email.into_expr() {
+            q.apply(keelson_sqlite::update::set_col("email").to(v));
+        }
     }
     fn delete_query() -> Self::Delete {
         keelson_sqlite::delete(
-            keelson_sqlite::delete::from(keelson_sqlite::quote("tags")),
+            keelson_sqlite::delete::from(keelson_sqlite::quote("editable_users")),
         )
     }
-    fn pk(row: &Tag) -> Self::Pk {
+    fn pk(row: &EditableUser) -> Self::Pk {
         row.id
-    }
-}
-/// Then-load mods: one keyed, batched query per level of a load path — `then_load::a().then(b::then_load::c())` is two levels, two queries, checked by the compiler.
-pub mod then_load {
-    /// Load each row's `post_tags` (to-many), one keyed query per batch of keys — `.then(…)` hangs the next level of the path off this one.
-    pub fn post_tags() -> keelson_models::ThenLoad<
-        super::Tags,
-        super::super::post_tags::PostTags,
-        i64,
-    > {
-        keelson_models::ThenLoad::new(
-            |rows: &[super::Tag]| rows.iter().map(|r| r.id).collect(),
-            |keys, q| keelson_core::Mod::apply(
-                super::super::post_tags::tag_id().in_(keys),
-                q,
-            ),
-            |rows: &mut [super::Tag], related| {
-                keelson_models::attach_to_many(
-                    rows,
-                    related,
-                    |r| r.id,
-                    |c| c.tag_id,
-                    |r, cs| {
-                        r.rel.post_tags = cs;
-                    },
-                );
-            },
-        )
     }
 }

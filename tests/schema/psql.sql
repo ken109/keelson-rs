@@ -34,3 +34,15 @@ CREATE TABLE post_tags (
     tag_id  integer NOT NULL REFERENCES tags (id),
     PRIMARY KEY (post_id, tag_id)
 );
+
+-- Two views, so the SELECT-only surface has something to be generated from,
+-- and so a relation that touches a view has somewhere to land. They differ in
+-- what the engines will write through, which is the point: `user_emails`
+-- projects one table (PostgreSQL and MySQL write through it, SQLite does not),
+-- `post_authors` joins two (PostgreSQL will not).
+CREATE VIEW user_emails AS
+    SELECT id, email FROM users;
+
+CREATE VIEW post_authors AS
+    SELECT p.id AS post_id, p.title AS title, u.id AS user_id, u.name AS user_name
+    FROM posts p JOIN users u ON u.id = p.user_id;

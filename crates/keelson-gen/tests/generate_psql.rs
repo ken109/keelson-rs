@@ -63,6 +63,23 @@ fn psql_ir() -> Schema {
                 foreign_keys: vec![fk("post_id", "posts", "id"), fk("user_id", "users", "id")],
                 unique_keys: vec![],
             },
+            // A view PostgreSQL will *not* write through: two base tables, so
+            // it is not auto-updatable, and it carries no INSTEAD OF trigger.
+            // Every column is nullable — a view carries no constraints, which
+            // is the whole reason a relation touching one has to be declared.
+            TableDef {
+                name: "post_authors".to_owned(),
+                kind: TableKind::View,
+                columns: vec![
+                    col("post_id", "integer", true, None),
+                    col("title", "text", true, None),
+                    col("user_id", "integer", true, None),
+                    col("user_name", "text", true, None),
+                ],
+                primary_key: vec![],
+                foreign_keys: vec![],
+                unique_keys: vec![],
+            },
             TableDef {
                 name: "post_tags".to_owned(),
                 kind: TableKind::Table,
@@ -99,6 +116,23 @@ fn psql_ir() -> Schema {
                 primary_key: vec!["id".to_owned()],
                 foreign_keys: vec![],
                 unique_keys: vec![vec!["name".to_owned()]],
+            },
+            // A view PostgreSQL *will* write through: one base table, no
+            // aggregate, no set operation — auto-updatable, which is what
+            // `pg_relation_is_updatable` reports. The generator still emits a
+            // `SELECT`-only model for it, because `tests/fixtures/psql.toml`
+            // declares no `[tables.user_emails] key`; updatability is
+            // permission to write, not an identity to write by.
+            TableDef {
+                name: "user_emails".to_owned(),
+                kind: TableKind::UpdatableView,
+                columns: vec![
+                    col("id", "integer", true, None),
+                    col("email", "text", true, None),
+                ],
+                primary_key: vec![],
+                foreign_keys: vec![],
+                unique_keys: vec![],
             },
             TableDef {
                 name: "users".to_owned(),

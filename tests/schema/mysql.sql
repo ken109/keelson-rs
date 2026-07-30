@@ -43,3 +43,13 @@ CREATE TABLE post_tags (
     FOREIGN KEY (post_id) REFERENCES posts (id),
     FOREIGN KEY (tag_id) REFERENCES tags (id)
 );
+
+-- Two views — see the note in tests/schema/psql.sql. MySQL answers the
+-- updatability question with a single `IS_UPDATABLE` flag it computes from the
+-- view body, and it answers it for both of these.
+CREATE VIEW user_emails AS
+    SELECT id, email FROM users;
+
+CREATE VIEW post_authors AS
+    SELECT p.id AS post_id, p.title AS title, u.id AS user_id, u.name AS user_name
+    FROM posts p JOIN users u ON u.id = p.user_id;
