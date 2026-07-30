@@ -31,7 +31,10 @@ pg_query.workspace = true
 mysql = { workspace = true, optional = true }
 postgres = { workspace = true, optional = true }
 rusqlite = { workspace = true, optional = true }
-testcontainers = { workspace = true, optional = true }
+# `watchdog` removes our containers on SIGINT/SIGTERM/SIGQUIT — the one exit
+# path the `atexit` hook in live.rs cannot cover (a signal's default handler
+# kills the process without running exit handlers).
+testcontainers = { workspace = true, optional = true, features = ["watchdog"] }
 testcontainers-modules = { workspace = true, optional = true }
 # Tier D (`coverage`) walks pg_query's parse tree generically by serialising it:
 # every protobuf node derives `serde::Serialize`, so one JSON walk sees every

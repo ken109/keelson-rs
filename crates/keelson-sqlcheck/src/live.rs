@@ -28,6 +28,75 @@ pub const PSQL_IMAGE_TAG: &str = "17-alpine";
 #[cfg(feature = "live-docker")]
 pub const MYSQL_IMAGE_TAG: &str = "8.4";
 
+/// Set this to a libpq-style URL (`postgresql://user:pass@host:port/db`) to
+/// judge against an already-running PostgreSQL instead of starting a container
+/// per test binary. See `docs/testing-tiers.md` for how to run one.
+#[cfg(feature = "live-docker")]
+pub const PSQL_URL_ENV: &str = "KEELSON_LIVE_PSQL_URL";
+
+/// Set this to a `mysql://user@host:port/db` URL to judge against an
+/// already-running MySQL instead of starting a container per test binary. The
+/// URL must name a database the tests may fill with the shared schema.
+#[cfg(feature = "live-docker")]
+pub const MYSQL_URL_ENV: &str = "KEELSON_LIVE_MYSQL_URL";
+
+/// Removal of this process's containers when it exits.
+///
+/// testcontainers 0.27 ships no reaper — the "ryuk" sidecar of the Java and Go
+/// implementations does not exist in the Rust port, so a container is removed
+/// only by its `Drop` impl (or, with the `watchdog` feature, on a signal).
+/// Ours must outlive every test in the binary, so it sits in a `static`, and
+/// statics are never dropped — which is exactly how leaked containers used to
+/// accumulate, one per engine per test binary. C `atexit` still runs on the
+/// harness's normal `process::exit`, so removal happens there instead: by
+/// container id, through the `docker` CLI, because no async runtime is alive
+/// that late.
+#[cfg(feature = "live-docker")]
+mod exit_cleanup {
+    use std::sync::{Mutex, Once};
+
+    unsafe extern "C" {
+        // C89, so present in every libc/CRT Rust links against.
+        fn atexit(callback: extern "C" fn()) -> std::ffi::c_int;
+    }
+
+    static CONTAINER_IDS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+    extern "C" fn remove_registered_containers() {
+        let ids = match CONTAINER_IDS.lock() {
+            Ok(guard) => guard.clone(),
+            // A panic elsewhere cannot have left a Vec<String> invalid; better
+            // to take it anyway than to leak the containers.
+            Err(poisoned) => poisoned.into_inner().clone(),
+        };
+        for id in ids {
+            let removed = std::process::Command::new("docker")
+                .args(["rm", "-f", "-v", &id])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .is_ok_and(|status| status.success());
+            if !removed {
+                eprintln!("keelson-sqlcheck: could not remove container {id}; remove it manually");
+            }
+        }
+    }
+
+    /// Remove the container with this id when the process exits normally.
+    pub(super) fn remove_at_exit(id: &str) {
+        static HOOK: Once = Once::new();
+        HOOK.call_once(|| {
+            // SAFETY: the callback is a non-unwinding `extern "C" fn`, which is
+            // all `atexit` requires; registration is idempotent via `Once`.
+            let _ = unsafe { atexit(remove_registered_containers) };
+        });
+        CONTAINER_IDS
+            .lock()
+            .expect("container-id registry mutex poisoned")
+            .push(id.to_owned());
+    }
+}
+
 /// The shared schema for a dialect, as SQL statements.
 pub fn schema_sql(dialect: super::Dialect) -> &'static str {
     // Baked in at compile time so a test binary needs no working directory.
@@ -63,44 +132,95 @@ pub fn check_sqlite(sql: &str) -> Result<(), String> {
 /// `Client::prepare` sends a Parse message, so the server runs its full
 /// parse-and-analyse pass — the same work `PREPARE` does.
 ///
-/// The container is started once per test binary and deliberately leaked, since it
-/// must outlive every test and the process is about to exit anyway.
+/// The container is started once per test binary, held in a `static` so it
+/// outlives every test, and removed at process exit by `exit_cleanup`. Set
+/// [`PSQL_URL_ENV`] to skip the container and share one server across binaries.
 #[cfg(feature = "live-docker")]
 pub fn check_psql(sql: &str) -> Result<(), String> {
     use std::sync::Mutex;
 
     use testcontainers::{ImageExt as _, runners::SyncRunner};
 
-    static PG: OnceLock<Mutex<postgres::Client>> = OnceLock::new();
+    struct Live {
+        client: Mutex<postgres::Client>,
+        // Never dropped (statics are not), which is what keeps the container
+        // running until process exit; dropping it would remove it mid-run.
+        _container: Option<testcontainers::Container<testcontainers_modules::postgres::Postgres>>,
+    }
 
-    let client = PG.get_or_init(|| {
-        // Pinned deliberately: testcontainers-modules still defaults to
-        // postgres:11-alpine, which is long EOL and rejects syntax we support. A
-        // judge running an ancient server would report false failures.
-        let container = testcontainers_modules::postgres::Postgres::default()
-            .with_tag(PSQL_IMAGE_TAG)
-            .start()
-            .expect("starting the PostgreSQL container (is Docker running?)");
-        let port = container
-            .get_host_port_ipv4(5432)
-            .expect("mapped PostgreSQL port");
+    static PG: OnceLock<Live> = OnceLock::new();
 
-        let mut client = postgres::Client::connect(
-            &format!("host=127.0.0.1 port={port} user=postgres password=postgres dbname=postgres"),
-            postgres::NoTls,
+    let live = PG.get_or_init(|| {
+        let (url, container) = match std::env::var(PSQL_URL_ENV) {
+            Ok(url) => (url, None),
+            Err(_) => {
+                // Pinned deliberately: testcontainers-modules still defaults to
+                // postgres:11-alpine, which is long EOL and rejects syntax we
+                // support. A judge running an ancient server would report false
+                // failures.
+                let container = testcontainers_modules::postgres::Postgres::default()
+                    .with_tag(PSQL_IMAGE_TAG)
+                    .start()
+                    .expect("starting the PostgreSQL container (is Docker running?)");
+                let port = container
+                    .get_host_port_ipv4(5432)
+                    .expect("mapped PostgreSQL port");
+                exit_cleanup::remove_at_exit(container.id());
+                (
+                    format!(
+                        "host=127.0.0.1 port={port} user=postgres password=postgres dbname=postgres"
+                    ),
+                    Some(container),
+                )
+            }
+        };
+
+        let mut client = postgres::Client::connect(&url, postgres::NoTls)
+            .expect("connecting to PostgreSQL (container, or the KEELSON_LIVE_PSQL_URL server)");
+        ensure_psql_schema(&mut client);
+        Live {
+            client: Mutex::new(client),
+            _container: container,
+        }
+    });
+
+    let mut client = live
+        .client
+        .lock()
+        .expect("PostgreSQL client mutex poisoned");
+    client.prepare(sql).map(|_| ()).map_err(|e| e.to_string())
+}
+
+/// Apply the shared psql schema unless it is already there.
+///
+/// A per-binary container is always fresh, but a server named by
+/// [`PSQL_URL_ENV`] outlives many test binaries, so application must be
+/// idempotent — and locked, because binaries launched concurrently (e.g. by
+/// nextest) would otherwise race to apply it.
+#[cfg(feature = "live-docker")]
+fn ensure_psql_schema(client: &mut postgres::Client) {
+    // Arbitrary fixed key ("keelson" as ASCII); it only needs to be the same in
+    // every keelson test process sharing the server.
+    const LOCK_KEY: i64 = 0x006b_6565_6c73_6f6e;
+    client
+        .execute("SELECT pg_advisory_lock($1)", &[&LOCK_KEY])
+        .expect("taking the schema advisory lock");
+    let present: bool = client
+        .query_one(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.tables \
+             WHERE table_schema = current_schema() AND table_name = 'users')",
+            &[],
         )
-        .expect("connecting to the PostgreSQL container");
+        .expect("probing for the shared schema")
+        .get(0);
+    if !present {
         client
             .batch_execute(schema_sql(super::Dialect::Psql))
             .expect("the shared psql schema must apply cleanly");
-
-        // Keep the container alive for the process; dropping it would stop it.
-        Box::leak(Box::new(container));
-        Mutex::new(client)
-    });
-
-    let mut client = client.lock().expect("PostgreSQL client mutex poisoned");
-    client.prepare(sql).map(|_| ()).map_err(|e| e.to_string())
+    }
+    client
+        .execute("SELECT pg_advisory_unlock($1)", &[&LOCK_KEY])
+        .expect("releasing the schema advisory lock");
 }
 
 /// Check `sql` against a real MySQL, with the shared schema applied.
@@ -115,20 +235,67 @@ pub fn check_mysql(sql: &str) -> Result<(), String> {
     use mysql::prelude::Queryable as _;
     use testcontainers::{ImageExt as _, runners::SyncRunner};
 
-    static MY: OnceLock<Mutex<mysql::Conn>> = OnceLock::new();
+    struct Live {
+        conn: Mutex<mysql::Conn>,
+        // Never dropped (statics are not), which is what keeps the container
+        // running until process exit; dropping it would remove it mid-run.
+        _container: Option<testcontainers::Container<testcontainers_modules::mysql::Mysql>>,
+    }
 
-    let conn = MY.get_or_init(|| {
-        let container = testcontainers_modules::mysql::Mysql::default()
-            .with_tag(MYSQL_IMAGE_TAG)
-            .start()
-            .expect("starting the MySQL container (is Docker running?)");
-        let port = container
-            .get_host_port_ipv4(3306)
-            .expect("mapped MySQL port");
+    static MY: OnceLock<Live> = OnceLock::new();
 
-        let url = format!("mysql://root@127.0.0.1:{port}/test");
+    let live = MY.get_or_init(|| {
+        let (url, container) = match std::env::var(MYSQL_URL_ENV) {
+            Ok(url) => (url, None),
+            Err(_) => {
+                let container = testcontainers_modules::mysql::Mysql::default()
+                    .with_tag(MYSQL_IMAGE_TAG)
+                    .start()
+                    .expect("starting the MySQL container (is Docker running?)");
+                let port = container
+                    .get_host_port_ipv4(3306)
+                    .expect("mapped MySQL port");
+                exit_cleanup::remove_at_exit(container.id());
+                (
+                    format!("mysql://root@127.0.0.1:{port}/test"),
+                    Some(container),
+                )
+            }
+        };
+
         let mut conn = mysql::Conn::new(mysql::Opts::from_url(&url).expect("MySQL url"))
-            .expect("connecting to the MySQL container");
+            .expect("connecting to MySQL (container, or the KEELSON_LIVE_MYSQL_URL server)");
+        ensure_mysql_schema(&mut conn);
+        Live {
+            conn: Mutex::new(conn),
+            _container: container,
+        }
+    });
+
+    let mut conn = live.conn.lock().expect("MySQL connection mutex poisoned");
+    conn.prep(sql).map(|_| ()).map_err(|e| e.to_string())
+}
+
+/// Apply the shared mysql schema unless it is already there.
+///
+/// Same story as [`ensure_psql_schema`]: a server named by [`MYSQL_URL_ENV`]
+/// outlives many test binaries, so application is checked first and serialized
+/// through `GET_LOCK`.
+#[cfg(feature = "live-docker")]
+fn ensure_mysql_schema(conn: &mut mysql::Conn) {
+    use mysql::prelude::Queryable as _;
+
+    let acquired: Option<i64> = conn
+        .query_first("SELECT GET_LOCK('keelson_live_schema', 120)")
+        .expect("taking the schema lock");
+    assert_eq!(acquired, Some(1), "timed out waiting for the schema lock");
+    let present: Option<i64> = conn
+        .query_first(
+            "SELECT 1 FROM information_schema.tables \
+             WHERE table_schema = DATABASE() AND table_name = 'users'",
+        )
+        .expect("probing for the shared schema");
+    if present.is_none() {
         for stmt in schema_sql(super::Dialect::Mysql).split(';') {
             if stmt.trim().is_empty() {
                 continue;
@@ -136,13 +303,9 @@ pub fn check_mysql(sql: &str) -> Result<(), String> {
             conn.query_drop(stmt)
                 .expect("the shared mysql schema must apply cleanly");
         }
-
-        Box::leak(Box::new(container));
-        Mutex::new(conn)
-    });
-
-    let mut conn = conn.lock().expect("MySQL connection mutex poisoned");
-    conn.prep(sql).map(|_| ()).map_err(|e| e.to_string())
+    }
+    conn.query_drop("SELECT RELEASE_LOCK('keelson_live_schema')")
+        .expect("releasing the schema lock");
 }
 
 /// Check `sql` against the real engine for `dialect`.

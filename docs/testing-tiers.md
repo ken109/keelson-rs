@@ -96,6 +96,44 @@ Exit status 0 means every declared construct was exercised. The `live-docker`
 feature is not needed: recording hooks the grammar judges, which run on a plain
 `cargo test`.
 
+### Running the engine tier locally
+
+```sh
+cargo test --workspace --features keelson-sqlcheck/live-docker
+```
+
+Each test binary starts one PostgreSQL and one MySQL container on first use
+and removes them when it exits — via an `atexit` hook for normal exit and the
+testcontainers `watchdog` for Ctrl-C, because testcontainers 0.27 has no
+reaper of its own. A run should leave `docker ps -a` as it found it. A process
+killed outright (SIGKILL, power loss) can still leave containers behind;
+remove them with
+
+```sh
+docker rm -f $(docker ps -aq --filter "label=org.testcontainers.managed-by=testcontainers")
+```
+
+To skip the per-binary startups entirely — one server for the whole run, which
+is faster and has nothing to leak — point the judges at servers you manage:
+
+```sh
+docker run -d --name keelson-live-psql -e POSTGRES_PASSWORD=postgres \
+  -p 5433:5432 postgres:17-alpine
+docker run -d --name keelson-live-mysql -e MYSQL_ALLOW_EMPTY_PASSWORD=1 \
+  -e MYSQL_DATABASE=test -p 3307:3306 mysql:8.4
+
+KEELSON_LIVE_PSQL_URL="postgresql://postgres:postgres@127.0.0.1:5433/postgres" \
+KEELSON_LIVE_MYSQL_URL="mysql://root@127.0.0.1:3307/test" \
+cargo test --workspace --features keelson-sqlcheck/live-docker
+```
+
+Each URL must name a database the tests may fill with the shared schema. The
+first binary to reach the server applies it under a server-side lock —
+concurrently launched binaries (e.g. nextest) are safe — and later binaries
+find it present and skip it. Keep the image versions in step with
+`PSQL_IMAGE_TAG` / `MYSQL_IMAGE_TAG` in `keelson-sqlcheck/src/live.rs`, or the
+judge runs against a server other than the one CI answers to.
+
 ### When the gate fails
 
 The report names each unexercised construct and its API. There are exactly two
