@@ -1,0 +1,23 @@
+# Tier D exclusions — mysql constructs deliberately NOT in the manifest.
+# See psql.exclusions for the two kinds of entry and the rules.
+
+[select.all]
+reason = SELECT ALL is the grammar default; deliberately unrepresentable — the absence of the Distinct modifier is what it means (keelson-mysql extras::Modifier)
+
+[combine.union_distinct]
+reason = UNION DISTINCT is the grammar default; deliberately unrepresentable, shared::union renders the bare UNION that means the same thing
+
+[op.is_distinct_from]
+reason = Chain::is_distinct_from is on the shared chain but IS DISTINCT FROM is not valid MySQL (keelson-mysql lib.rs "What MySQL does not have"); the MySQL spelling is MysqlOps::null_safe_eq, which is in the manifest
+
+[op.is_not_distinct_from]
+reason = as op.is_distinct_from — not valid MySQL; use MysqlOps::null_safe_eq
+
+[op.concat]
+reason = Chain::concat renders ` || `, which MySQL parses as logical OR unless PIPES_AS_CONCAT is set; not part of what keelson-mysql claims, use CONCAT() via f() instead
+
+[upsert.row_value]
+reason = mysql::row_value renders `alias`.`col`, which the token tier cannot distinguish from any qualified column reference; it is exercised by the row-alias upsert intent tests (keelson-mysql/tests/grammar_insert.rs) but cannot be gated at token level
+
+[expr.group]
+reason = plain parenthesisation (mysql::group) is not detectable at token level — every rendered statement contains parentheses — and it is exercised by every chained operator in the corpus

@@ -42,9 +42,13 @@
 //! is a stand-in that lives here instead, where the dependency is a
 //! dev-dependency cycle Cargo allows.
 
+pub mod coverage;
 pub mod live;
+pub mod record;
 #[cfg(feature = "testing")]
 pub mod testing;
+
+pub use record::record;
 
 /// Collapse insignificant whitespace so an expected string can be written
 /// readably without pinning the builder's exact line breaks.
@@ -95,10 +99,25 @@ impl Dialect {
     pub fn is_authoritative(self) -> bool {
         matches!(self, Self::Psql | Self::Sqlite)
     }
+
+    /// The name [`from_name`](Self::from_name) parses — the recording tag.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Psql => "psql",
+            Self::Mysql => "mysql",
+            Self::Sqlite => "sqlite",
+        }
+    }
 }
 
 /// Check `sql` against a dialect's grammar, returning the parse error if any.
+///
+/// On success the string is also [`record`]ed when Tier D recording is on
+/// (`KEELSON_SQLCHECK_RECORD`); a run without the variable pays one atomic
+/// read for this line.
 pub fn check(dialect: Dialect, sql: &str) -> Result<(), String> {
+    // Each leaf checker records for itself, so `check` adds nothing here and a
+    // string is recorded once however it arrives.
     match dialect {
         Dialect::Psql => check_psql(sql),
         Dialect::Mysql => check_mysql(sql),
@@ -108,7 +127,11 @@ pub fn check(dialect: Dialect, sql: &str) -> Result<(), String> {
 
 /// Validate against libpg_query, the parser PostgreSQL itself uses.
 pub fn check_psql(sql: &str) -> Result<(), String> {
-    pg_query::parse(sql).map(|_| ()).map_err(|e| e.to_string())
+    let result = pg_query::parse(sql).map(|_| ()).map_err(|e| e.to_string());
+    if result.is_ok() {
+        record(Dialect::Psql, sql);
+    }
+    result
 }
 
 /// Validate against SQLite's grammar.
@@ -122,7 +145,10 @@ pub fn check_sqlite(sql: &str) -> Result<(), String> {
 
     loop {
         match parser.next() {
-            Ok(None) => return Ok(()),
+            Ok(None) => {
+                record(Dialect::Sqlite, sql);
+                return Ok(());
+            }
             Ok(Some(_)) => {}
             Err(e) => return Err(e.to_string()),
         }
@@ -131,9 +157,13 @@ pub fn check_sqlite(sql: &str) -> Result<(), String> {
 
 /// Validate against a generic SQL parser configured for MySQL.
 pub fn check_mysql(sql: &str) -> Result<(), String> {
-    sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::MySqlDialect {}, sql)
+    let result = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::MySqlDialect {}, sql)
         .map(|_| ())
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string());
+    if result.is_ok() {
+        record(Dialect::Mysql, sql);
+    }
+    result
 }
 
 /// Assert that `sql` parses.

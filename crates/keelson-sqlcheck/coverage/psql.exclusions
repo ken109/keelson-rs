@@ -1,0 +1,41 @@
+# Tier D exclusions — psql constructs deliberately NOT in the manifest.
+#
+# Two kinds of entry live here, and each must say which it is in its reason:
+#   1. Constructs the library does not render yet: the reason says what the
+#      construct is and that it is planned, so the exclusion is auditable debt.
+#   2. Grammar defaults that are deliberately unrepresentable: writing them
+#      adds nothing to the SQL, and the library's design says the absence of
+#      the clause is how the default is spelled.
+#
+# Moving an entry from here into psql.manifest is how new rendering work
+# becomes gated.
+
+[stmt.merge]
+reason = not rendered yet — MERGE (PostgreSQL 15+) is planned work, not an oversight
+
+[stmt.table]
+reason = not rendered yet — the `TABLE name` shorthand for SELECT * FROM name is planned work
+
+[values.standalone]
+reason = not rendered yet — a standalone VALUES statement (VALUES (…), (…) as a query of its own); planned work
+
+[combine.operand_parens]
+reason = not rendered yet — parenthesising a set-operation operand that carries its own ORDER BY/LIMIT; planned work
+
+[select.all]
+reason = SELECT ALL is the grammar default; deliberately unrepresentable, the absence of DISTINCT is what it means (see keelson-psql extras::Distinct)
+
+[group_by.all]
+reason = GROUP BY ALL is the grammar default; deliberately unrepresentable (see shared::group_by_distinct)
+
+[combine.union_distinct]
+reason = UNION DISTINCT is the grammar default; deliberately unrepresentable, shared::union renders the bare UNION that means the same thing
+
+[frame.from_unbounded_following]
+reason = representable (the grammar's frame_start production lists UNBOUNDED FOLLOWING) but unjudgeable: PostgreSQL's gram.y raises "frame start cannot be UNBOUNDED FOLLOWING" while building the parse tree, so no judged corpus can contain it; pinned by the_frame_bounds_the_grammar_itself_refuses in keelson-psql/tests/grammar_select.rs
+
+[frame.to_unbounded_preceding]
+reason = representable (frame_end lists UNBOUNDED PRECEDING) but unjudgeable: gram.y raises "frame end cannot be UNBOUNDED PRECEDING" at parse time; pinned by the_frame_bounds_the_grammar_itself_refuses in keelson-psql/tests/grammar_select.rs
+
+[expr.group]
+reason = plain parenthesisation (psql::group with one element) is not a parse-tree construct — PostgreSQL discards the parentheses — and it is exercised by every chained operator in the corpus

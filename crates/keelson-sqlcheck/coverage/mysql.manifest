@@ -1,0 +1,667 @@
+# Tier D manifest — every construct keelson-mysql claims to render.
+#
+# THIS DIALECT'S TIER IS TOKEN-LEVEL. There is no pg_query equivalent for
+# MySQL (the sqlparser judge is generic and advisory — see keelson-sqlcheck's
+# crate docs), so every entry here is detected by token signature against the
+# recorded SQL: a signature is a literal substring of the canonical rendering
+# (keywords uppercase, identifiers backticked), `{*}` matching one
+# operand-shaped token (whitespace-free, not a bare uppercase keyword); a
+# plain `*` is the literal character. Token matching cannot see structure — a
+# LIMIT inside
+# a derived table counts the same as one outside, and constructs whose
+# rendering is indistinguishable at token level share one entry, with the
+# collapse named in `api`.
+#
+# When the gate fails naming an id here: add a test that renders the construct
+# through a judged assertion, or move the entry to mysql.exclusions with a
+# reason.
+
+# --- statements ------------------------------------------------------------
+
+[stmt.select]
+api = mysql::select
+sig = SELECT
+
+[stmt.insert]
+api = mysql::insert
+sig = INSERT
+
+[stmt.replace]
+api = mysql::replace
+sig = REPLACE
+
+[stmt.update]
+api = mysql::update
+sig = UPDATE
+
+[stmt.delete]
+api = mysql::delete
+sig = DELETE
+
+# --- statement modifiers ---------------------------------------------------
+
+[modifier.distinct]
+api = shared::distinct
+sig = SELECT DISTINCT
+sig = */ DISTINCT
+
+[modifier.distinct_row]
+api = shared::distinct_row
+sig = DISTINCTROW
+
+[modifier.low_priority]
+api = shared::low_priority
+sig = LOW_PRIORITY
+
+[modifier.high_priority]
+api = shared::high_priority
+sig = HIGH_PRIORITY
+
+[modifier.delayed]
+api = shared::delayed
+sig = DELAYED
+
+[modifier.quick]
+api = shared::quick
+sig = QUICK
+
+[modifier.ignore]
+api = shared::ignore
+sig =  IGNORE
+
+[modifier.straight_join]
+api = shared::straight (the statement modifier)
+sig = SELECT STRAIGHT_JOIN
+sig = */ STRAIGHT_JOIN
+
+[modifier.sql_small_result]
+api = shared::sql_small_result
+sig = SQL_SMALL_RESULT
+
+[modifier.sql_big_result]
+api = shared::sql_big_result
+sig = SQL_BIG_RESULT
+
+[modifier.sql_buffer_result]
+api = shared::sql_buffer_result
+sig = SQL_BUFFER_RESULT
+
+[modifier.sql_no_cache]
+api = shared::sql_no_cache
+sig = SQL_NO_CACHE
+
+[modifier.sql_calc_found_rows]
+api = shared::sql_calc_found_rows
+sig = SQL_CALC_FOUND_ROWS
+
+# --- optimizer hints -------------------------------------------------------
+
+[hint.comment]
+api = shared::optimizer_hint
+sig = /*+
+
+[hint.max_execution_time]
+api = shared::max_execution_time
+sig = MAX_EXECUTION_TIME(
+
+[hint.set_var]
+api = shared::set_var
+sig = SET_VAR(
+
+[hint.qb_name]
+api = shared::qb_name
+sig = QB_NAME(
+
+[hint.resource_group]
+api = shared::resource_group
+sig = RESOURCE_GROUP(
+
+# --- FROM items and index hints --------------------------------------------
+
+[clause.from]
+api = select::from / delete::using (FROM/USING table_references)
+sig = FROM
+sig = USING
+
+[from.alias]
+api = TableChain::as_ / JoinChain::as_ (token tier cannot tell it from other AS `…` aliases)
+sig =  AS `
+
+[from.comma_list]
+api = select::from_also / delete::using_also (a comma in table_references)
+sig = FROM {*},
+sig = USING {*},
+
+[update.table_also]
+api = update::table_also (multi-table UPDATE, with or without aliases)
+sig = UPDATE {*},
+sig = UPDATE {*} AS {*},
+
+[from.lateral]
+api = TableChain::lateral / JoinChain::lateral
+sig = LATERAL
+
+[table.partition]
+api = TableChain::partition / JoinChain::partition
+sig =  PARTITION (
+
+[index_hint.use]
+api = TableChain::use_index / JoinChain::use_index
+sig = USE INDEX
+
+[index_hint.ignore]
+api = TableChain::ignore_index / JoinChain::ignore_index
+sig = IGNORE INDEX
+
+[index_hint.force]
+api = TableChain::force_index / JoinChain::force_index
+sig = FORCE INDEX
+
+[index_hint.for_join]
+api = TableChain::for_join
+sig = FOR JOIN
+
+[index_hint.for_order_by]
+api = TableChain::for_order_by
+sig = FOR ORDER BY
+
+[index_hint.for_group_by]
+api = TableChain::for_group_by
+sig = FOR GROUP BY
+
+# --- joins -----------------------------------------------------------------
+
+[join.inner]
+api = shared::inner_join
+sig = INNER JOIN
+
+[join.left]
+api = shared::left_join
+sig = LEFT JOIN
+
+[join.right]
+api = shared::right_join
+sig = RIGHT JOIN
+
+[join.cross]
+api = shared::cross_join
+sig = CROSS JOIN
+
+[join.straight]
+api = shared::straight_join (the join operator, not the modifier)
+sig = ` STRAIGHT_JOIN
+sig = ) STRAIGHT_JOIN
+
+[join.natural]
+api = JoinChain::natural
+sig = NATURAL
+
+[join.on]
+api = JoinChain::on / on_eq
+sig =  ON
+
+[join.using]
+api = JoinChain::using
+sig =  USING (
+
+# --- WHERE / GROUP BY / HAVING / WINDOW ------------------------------------
+
+[clause.where]
+api = shared::where_
+sig =  WHERE
+
+[clause.group_by]
+api = shared::group_by
+sig = GROUP BY
+
+[group.with_rollup]
+api = shared::with_rollup
+sig = WITH ROLLUP
+
+[clause.having]
+api = shared::having
+sig =  HAVING
+
+[clause.window]
+api = shared::window
+sig =  WINDOW `
+
+# --- ORDER BY / LIMIT ------------------------------------------------------
+
+[clause.order_by]
+api = shared::order_by / order_by_combined / window::order_by / Function::order_by (token tier cannot tell them apart)
+sig = ORDER BY
+
+[order.asc]
+api = OrderChain::asc
+sig =  ASC
+
+[order.desc]
+api = OrderChain::desc
+sig =  DESC
+
+[expr.collate]
+api = OrderChain::collate / MysqlOps::collate
+sig =  COLLATE
+
+[clause.limit]
+api = shared::limit / limit_combined (token tier cannot tell them apart)
+sig = LIMIT
+
+[clause.offset]
+api = shared::offset / offset_combined
+sig = OFFSET
+
+# --- locking ---------------------------------------------------------------
+
+[lock.for_update]
+api = shared::for_update
+sig = FOR UPDATE
+
+[lock.for_share]
+api = shared::for_share
+sig = FOR SHARE
+
+[lock.of]
+api = LockChain::of
+sig = UPDATE OF `
+sig = SHARE OF `
+
+[lock.nowait]
+api = LockChain::no_wait
+sig = NOWAIT
+
+[lock.skip_locked]
+api = LockChain::skip_locked
+sig = SKIP LOCKED
+
+[lock.in_share_mode]
+api = select::lock_in_share_mode
+sig = LOCK IN SHARE MODE
+
+# --- set operations --------------------------------------------------------
+
+[combine.union]
+api = shared::union
+sig = UNION (
+
+[combine.union_all]
+api = shared::union_all
+sig = UNION ALL (
+
+[combine.intersect]
+api = shared::intersect
+sig = INTERSECT (
+
+[combine.intersect_all]
+api = shared::intersect_all
+sig = INTERSECT ALL (
+
+[combine.except]
+api = shared::except
+sig = EXCEPT (
+
+[combine.except_all]
+api = shared::except_all
+sig = EXCEPT ALL (
+
+# --- WITH ------------------------------------------------------------------
+
+[cte.with]
+api = shared::with
+sig = WITH
+
+[cte.recursive]
+api = shared::recursive
+sig = WITH RECURSIVE
+
+[cte.columns]
+api = CteChain::columns
+sig = `) AS (
+
+# --- INSERT / REPLACE ------------------------------------------------------
+
+[insert.columns]
+api = TableChain::columns on insert::into / replace::into
+sig = ` (`
+
+[insert.values]
+api = shared::values
+sig =  VALUES (
+
+[insert.multi_row]
+api = shared::rows / repeated shared::values
+sig = ), (
+
+[insert.query]
+api = insert::query / replace::query (INSERT … SELECT)
+sig = ` SELECT
+sig = ) SELECT
+
+[clause.set]
+api = update::set / set_col / insert::set (INSERT … SET row source; token tier cannot tell the two SET lists apart)
+sig =  SET `
+sig =  SET (
+
+[insert.row_alias]
+api = insert::as_ (VALUES … AS `alias`; token tier cannot tell it from a derived-table alias)
+sig = ) AS `
+
+[upsert.on_duplicate_key]
+api = insert::on_duplicate_key_update
+sig = ON DUPLICATE KEY UPDATE
+
+[upsert.values_of]
+api = mysql::values_of (VALUES(col) inside the upsert body)
+sig = VALUES(`
+
+# --- full-text search ------------------------------------------------------
+
+[expr.match_against]
+api = mysql::match_against / match_against_mode
+sig = MATCH (
+sig = AGAINST (
+
+# --- windows and frames ----------------------------------------------------
+
+[window.over_def]
+api = Function::over
+sig = OVER (
+
+[window.over_name]
+api = Function::over_name
+sig = OVER `
+
+[window.based_on]
+api = window::based_on
+sig = OVER (`
+sig =  AS (`
+
+[window.partition_by]
+api = window::partition_by
+sig = PARTITION BY
+
+[frame.rows]
+api = frame::rows
+sig =  ROWS
+
+[frame.range]
+api = frame::range
+sig =  RANGE
+
+[frame.between]
+api = any frame::to_* (an end bound makes the frame a BETWEEN)
+sig = ROWS BETWEEN
+sig = RANGE BETWEEN
+
+[frame.unbounded_preceding]
+api = frame::from_unbounded_preceding
+sig = UNBOUNDED PRECEDING
+
+[frame.preceding]
+api = frame::from_preceding / to_preceding
+sig =  {*} PRECEDING
+
+[frame.current_row]
+api = frame::from_current_row / to_current_row
+sig = CURRENT ROW
+
+[frame.following]
+api = frame::from_following / to_following
+sig =  {*} FOLLOWING
+
+[frame.unbounded_following]
+api = frame::from_unbounded_following / to_unbounded_following
+sig = UNBOUNDED FOLLOWING
+
+# --- function decorations --------------------------------------------------
+
+[func.distinct]
+api = Function::distinct
+sig = (DISTINCT
+
+[func.separator]
+api = Function::separator
+sig =  SEPARATOR
+
+# --- expressions -----------------------------------------------------------
+
+[expr.arg]
+api = mysql::arg / args / arg_group / placeholders / template
+sig = ?
+
+[expr.string_literal]
+api = mysql::s
+sig = '
+
+[expr.ident]
+api = mysql::quote
+sig = `
+
+[expr.subquery]
+api = mysql::subquery / query
+sig = (SELECT
+
+[expr.case]
+api = mysql::case_
+sig = CASE
+
+[case.else]
+api = CaseBuilder::else_
+sig =  ELSE
+
+[expr.cast]
+api = mysql::cast
+sig = CAST(
+
+[expr.not]
+api = mysql::not
+sig = NOT
+
+[expr.alias]
+api = Chain::as_ / Function::as_
+sig =  AS `
+
+# --- operators (keelson-core Chain) ----------------------------------------
+
+[op.eq]
+api = Chain::eq
+sig =  =
+
+[op.ne]
+api = Chain::ne
+sig =  <>
+
+[op.lt]
+api = Chain::lt
+sig =  <
+
+[op.lte]
+api = Chain::lte
+sig =  <=
+
+[op.gt]
+api = Chain::gt
+sig =  >
+
+[op.gte]
+api = Chain::gte
+sig =  >=
+
+[op.plus]
+api = Chain::plus
+sig =  +
+
+[op.minus]
+api = Chain::minus
+sig =  -
+
+[op.in]
+api = Chain::in_
+sig =  IN (
+
+[op.not_in]
+api = Chain::not_in
+sig = NOT IN (
+
+[op.is_null]
+api = Chain::is_null
+sig = IS NULL
+
+[op.is_not_null]
+api = Chain::is_not_null
+sig = IS NOT NULL
+
+[op.between]
+api = Chain::between
+sig =  BETWEEN
+
+[op.not_between]
+api = Chain::not_between
+sig = NOT BETWEEN
+
+[op.like]
+api = Chain::like
+sig =  LIKE
+
+[op.and]
+api = Chain::and / mysql::and
+sig =  AND
+
+[op.or]
+api = Chain::or / mysql::or
+sig =  OR
+
+# --- operators (MysqlOps) --------------------------------------------------
+
+[op.not_like]
+api = MysqlOps::not_like
+sig = NOT LIKE
+
+[op.like_escape]
+api = MysqlOps::like_escape
+sig =  ESCAPE
+
+[op.regexp]
+api = MysqlOps::regexp
+sig =  REGEXP
+
+[op.not_regexp]
+api = MysqlOps::not_regexp
+sig = NOT REGEXP
+
+[op.rlike]
+api = MysqlOps::rlike
+sig =  RLIKE
+
+[op.sounds_like]
+api = MysqlOps::sounds_like
+sig = SOUNDS LIKE
+
+[op.null_safe_eq]
+api = MysqlOps::null_safe_eq
+sig = <=>
+
+[op.bang_eq]
+api = MysqlOps::bang_eq
+sig =  !=
+
+[op.xor]
+api = MysqlOps::xor
+sig =  XOR
+
+[op.is_true]
+api = MysqlOps::is_true
+sig = IS TRUE
+
+[op.is_not_true]
+api = MysqlOps::is_not_true
+sig = IS NOT TRUE
+
+[op.is_false]
+api = MysqlOps::is_false
+sig = IS FALSE
+
+[op.is_not_false]
+api = MysqlOps::is_not_false
+sig = IS NOT FALSE
+
+[op.is_unknown]
+api = MysqlOps::is_unknown
+sig = IS UNKNOWN
+
+[op.is_not_unknown]
+api = MysqlOps::is_not_unknown
+sig = IS NOT UNKNOWN
+
+[op.times]
+api = MysqlOps::times
+sig = ` *
+sig = ) *
+sig = ? *
+
+[op.divide]
+api = MysqlOps::divide
+sig =  /
+
+[op.div]
+api = MysqlOps::div
+sig =  DIV
+
+[op.modulo]
+api = MysqlOps::modulo
+sig =  MOD
+
+[op.bit_and]
+api = MysqlOps::bit_and
+sig =  &
+
+[op.bit_or]
+api = MysqlOps::bit_or
+sig = ` |
+sig = ) |
+sig = ? |
+
+[op.bit_xor]
+api = MysqlOps::bit_xor
+sig =  ^
+
+[op.shift_left]
+api = MysqlOps::shift_left
+sig =  <<
+
+[op.shift_right]
+api = MysqlOps::shift_right
+sig =  >>
+
+[op.json_get]
+api = MysqlOps::json_get
+sig =  ->
+
+[op.json_get_text]
+api = MysqlOps::json_get_text
+sig =  ->>
+
+[op.member_of]
+api = MysqlOps::member_of
+sig = MEMBER OF
+
+[op.eq_any]
+api = MysqlOps::eq_any
+sig = = ANY (
+
+[op.ne_all]
+api = MysqlOps::ne_all
+sig = <> ALL (
+
+[op.any]
+api = MysqlOps::any
+sig =  ANY (
+
+[op.all]
+api = MysqlOps::all
+sig =  ALL (
+
+[op.binary]
+api = MysqlOps::binary
+sig = (BINARY

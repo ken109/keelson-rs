@@ -1,0 +1,626 @@
+# Tier D manifest — every construct keelson-psql claims to render.
+#
+# Format: `[construct-id]` then `api = <the keelson API that produces it>`.
+# An entry with no `sig =` is detected structurally in pg_query's parse tree
+# (see keelson-sqlcheck/src/coverage.rs, PSQL_DETECTABLE — the two lists are
+# cross-checked at load time). `sig =` entries exist only for spellings the
+# parse tree normalises away (FETCH vs LIMIT, `::` vs CAST, EXCLUDE NO OTHERS);
+# a signature is a literal substring, `{*}` matching one operand-shaped token
+# (whitespace-free, not a bare uppercase keyword).
+#
+# When the gate fails naming an id here: either add a test that renders the
+# construct through a judged assertion, or move the entry to psql.exclusions
+# with a reason. Do not delete it silently.
+
+# --- statements ------------------------------------------------------------
+
+[stmt.select]
+api = psql::select
+
+[stmt.insert]
+api = psql::insert
+
+[stmt.update]
+api = psql::update
+
+[stmt.delete]
+api = psql::delete
+
+# --- the projection --------------------------------------------------------
+
+[select.distinct]
+api = select::distinct
+
+[select.distinct_on]
+api = select::distinct_on
+
+[expr.star]
+api = the empty select list (SELECT *), returning("*")
+
+[expr.alias]
+api = Chain::as_ / Function::as_
+
+# --- WITH ------------------------------------------------------------------
+
+[cte.with]
+api = shared::with (select::with, insert::with, update::with, delete::with)
+
+[cte.recursive]
+api = shared::recursive
+
+[cte.columns]
+api = CteChain::columns
+
+[cte.materialized]
+api = CteChain::materialized
+
+[cte.not_materialized]
+api = CteChain::not_materialized
+
+[cte.search_breadth]
+api = CteChain::search_breadth
+
+[cte.search_depth]
+api = CteChain::search_depth
+
+[cte.cycle]
+api = CteChain::cycle
+
+[cte.cycle_value]
+api = CteChain::cycle_value
+
+# --- FROM items ------------------------------------------------------------
+
+[from.table]
+api = select::from / update::from / delete::using / insert::into (bare name)
+
+[from.alias]
+api = TableChain::as_ / JoinChain::as_
+
+[from.column_aliases]
+api = TableChain::columns / JoinChain::columns
+
+[from.only]
+api = TableChain::only / JoinChain::only
+
+[from.lateral]
+api = TableChain::lateral / JoinChain::lateral
+
+[from.subquery]
+api = subquery(query) as a from-item
+
+[from.function]
+api = select::from_function / from_functions
+
+[from.rows_from]
+api = from_functions with two or more functions (ROWS FROM)
+
+[from.with_ordinality]
+api = TableChain::with_ordinality / JoinChain::with_ordinality
+
+[from.tablesample]
+api = TableChain::tablesample / JoinChain::tablesample
+
+[from.tablesample_repeatable]
+api = TableChain::repeatable / JoinChain::repeatable
+
+[from.comma_list]
+api = select::from_also / update::from_also / delete::using_also (extra_from_item)
+
+[function.column_defs]
+api = Function::columns (column-definition list of a set-returning call)
+
+# --- joins -----------------------------------------------------------------
+
+[join.inner]
+api = shared::inner_join
+
+[join.left]
+api = shared::left_join
+
+[join.right]
+api = shared::right_join
+
+[join.full]
+api = shared::full_join
+
+[join.cross]
+api = shared::cross_join
+
+[join.natural]
+api = JoinChain::natural
+
+[join.on]
+api = JoinChain::on / JoinChain::on_eq
+
+[join.using]
+api = JoinChain::using
+
+# --- WHERE / GROUP BY / HAVING --------------------------------------------
+
+[clause.where]
+api = shared::where_
+
+[where.current_of]
+api = shared::where_current_of
+
+[clause.group_by]
+api = shared::group_by
+
+[group.distinct]
+api = shared::group_by_distinct
+
+[group.rollup]
+api = psql::rollup
+
+[group.cube]
+api = psql::cube
+
+[group.sets]
+api = psql::grouping_sets
+
+[clause.having]
+api = shared::having
+
+# --- WINDOW clause and window definitions ----------------------------------
+
+[clause.window]
+api = shared::window
+
+[window.named]
+api = shared::window (the named definition it declares)
+
+[window.based_on]
+api = window::based_on
+
+[window.partition_by]
+api = window::partition_by
+
+[window.order_by]
+api = window::order_by (shared::order_by inside a window definition)
+
+[func.over_def]
+api = Function::over
+
+[func.over_name]
+api = Function::over_name
+
+# --- frames ----------------------------------------------------------------
+
+[frame.rows]
+api = frame::rows
+
+[frame.range]
+api = frame::range
+
+[frame.groups]
+api = frame::groups
+
+[frame.between]
+api = any frame::to_* (an end bound makes the frame a BETWEEN)
+
+[frame.from_unbounded_preceding]
+api = frame::from_unbounded_preceding
+
+[frame.from_preceding]
+api = frame::from_preceding
+
+[frame.from_current_row]
+api = frame::from_current_row
+
+[frame.from_following]
+api = frame::from_following
+
+[frame.to_preceding]
+api = frame::to_preceding
+
+[frame.to_current_row]
+api = frame::to_current_row
+
+[frame.to_following]
+api = frame::to_following
+
+[frame.to_unbounded_following]
+api = frame::to_unbounded_following
+
+[frame.exclude_current_row]
+api = frame::exclude_current_row
+
+[frame.exclude_group]
+api = frame::exclude_group
+
+[frame.exclude_ties]
+api = frame::exclude_ties
+
+[frame.exclude_no_others]
+api = frame::exclude_no_others
+sig = EXCLUDE NO OTHERS
+
+# --- ORDER BY --------------------------------------------------------------
+
+[clause.order_by]
+api = shared::order_by
+
+[order.asc]
+api = OrderChain::asc
+
+[order.desc]
+api = OrderChain::desc
+
+[order.using]
+api = OrderChain::using
+
+[order.nulls_first]
+api = OrderChain::nulls_first
+
+[order.nulls_last]
+api = OrderChain::nulls_last
+
+# --- LIMIT / OFFSET / FETCH ------------------------------------------------
+
+[clause.limit]
+api = shared::limit
+
+[clause.limit_all]
+api = shared::limit_all
+
+[clause.offset]
+api = shared::offset
+
+[clause.fetch]
+api = shared::fetch
+
+[fetch.with_ties]
+api = FetchChain::with_ties
+
+[fetch.first]
+api = Fetch::first_or_next = FirstOrNext::First (keelson-core clause)
+sig = FETCH FIRST
+
+[fetch.next]
+api = shared::fetch (the default spelling)
+sig = FETCH NEXT
+
+[fetch.row_keyword]
+api = Fetch::rows = RowsKeyword::Row (keelson-core clause)
+sig =  ROW ONLY
+sig =  ROW WITH TIES
+
+[offset.rows_keyword]
+api = Offset::rows (keelson-core clause; OFFSET n { ROW | ROWS })
+sig = OFFSET {*} ROW
+
+# --- locking ---------------------------------------------------------------
+
+[lock.for_update]
+api = shared::for_update
+
+[lock.for_no_key_update]
+api = shared::for_no_key_update
+
+[lock.for_share]
+api = shared::for_share
+
+[lock.for_key_share]
+api = shared::for_key_share
+
+[lock.of]
+api = LockChain::of
+
+[lock.nowait]
+api = LockChain::no_wait
+
+[lock.skip_locked]
+api = LockChain::skip_locked
+
+# --- set operations --------------------------------------------------------
+
+[combine.union]
+api = shared::union
+
+[combine.union_all]
+api = shared::union_all
+
+[combine.intersect]
+api = shared::intersect
+
+[combine.intersect_all]
+api = shared::intersect_all
+
+[combine.except]
+api = shared::except
+
+[combine.except_all]
+api = shared::except_all
+
+[combine.order_by]
+api = shared::order_by_combined
+
+[combine.limit]
+api = shared::limit_combined
+
+[combine.offset]
+api = shared::offset_combined
+
+[combine.fetch]
+api = shared::fetch_combined
+
+# --- INSERT ----------------------------------------------------------------
+
+[insert.columns]
+api = TableChain::columns on insert::into (the insert column list)
+
+[insert.values]
+api = shared::values
+
+[insert.multi_row]
+api = shared::rows / repeated shared::values
+
+[insert.query]
+api = insert::query (values_from_query)
+
+[insert.overriding_system]
+api = insert::overriding_system
+
+[insert.overriding_user]
+api = insert::overriding_user
+
+[clause.returning]
+api = shared::returning
+
+# --- ON CONFLICT -----------------------------------------------------------
+
+[conflict.do_nothing]
+api = ConflictChain::do_nothing
+
+[conflict.do_update]
+api = ConflictChain::do_update
+
+[conflict.target_columns]
+api = shared::on_conflict (the inferred-index column list)
+
+[conflict.on_constraint]
+api = shared::on_conflict_on_constraint
+
+[conflict.target_where]
+api = ConflictChain::where_ (the index predicate)
+
+[conflict.update_where]
+api = shared::where_ inside do_update (the row filter)
+
+[conflict.excluded]
+api = psql::excluded / shared::set_excluded
+
+# --- UPDATE / DELETE -------------------------------------------------------
+
+[update.set]
+api = shared::set / set_col / SetChain::to / to_arg
+
+[update.set_row]
+api = shared::set with a row on each side ((a, b) = (…))
+
+[update.from]
+api = update::from
+
+[delete.using]
+api = delete::using
+
+# --- expressions -----------------------------------------------------------
+
+[expr.arg]
+api = psql::arg / args / arg_group / placeholders / template
+
+[expr.string_literal]
+api = psql::s
+
+[expr.number_literal]
+api = IntoExpr for numbers (limit(10), arg-free literals)
+
+[expr.ident]
+api = psql::quote
+
+[expr.func]
+api = psql::f (Function)
+
+[func.distinct]
+api = Function::distinct
+
+[func.order_by]
+api = Function::order_by (the aggregate's own ORDER BY)
+
+[func.within_group]
+api = Function::within_group
+
+[func.filter]
+api = Function::filter
+
+[func.star_arg]
+api = f(name, "*") — count(*)
+
+[expr.case]
+api = psql::case_
+
+[case.else]
+api = CaseBuilder::else_
+
+[expr.cast]
+api = psql::cast / PsqlOps::cast_to
+
+[cast.shorthand]
+api = PsqlOps::cast_to (the :: spelling)
+sig = ::
+
+[expr.and]
+api = psql::and / Chain::and
+
+[expr.or]
+api = psql::or / Chain::or
+
+[expr.not]
+api = psql::not
+
+[expr.row]
+api = psql::group / arg_group with two or more elements (row constructor)
+
+[expr.scalar_subquery]
+api = psql::subquery in a scalar position
+
+[expr.collate]
+api = PsqlOps::collate / OrderChain::collate
+
+[op.at_time_zone]
+api = PsqlOps::at_time_zone
+
+# --- operators (keelson-core Chain) ----------------------------------------
+
+[op.eq]
+api = Chain::eq
+
+[op.ne]
+api = Chain::ne
+
+[op.lt]
+api = Chain::lt
+
+[op.lte]
+api = Chain::lte
+
+[op.gt]
+api = Chain::gt
+
+[op.gte]
+api = Chain::gte
+
+[op.plus]
+api = Chain::plus
+
+[op.minus]
+api = Chain::minus
+
+[op.concat]
+api = Chain::concat
+
+[op.like]
+api = Chain::like
+
+[op.between]
+api = Chain::between
+
+[op.not_between]
+api = Chain::not_between
+
+[op.in]
+api = Chain::in_
+
+[op.not_in]
+api = Chain::not_in
+
+[op.is_null]
+api = Chain::is_null
+
+[op.is_not_null]
+api = Chain::is_not_null
+
+[op.is_distinct_from]
+api = Chain::is_distinct_from
+
+[op.is_not_distinct_from]
+api = Chain::is_not_distinct_from
+
+# --- operators (PsqlOps) ---------------------------------------------------
+
+[op.ilike]
+api = PsqlOps::ilike
+
+[op.not_ilike]
+api = PsqlOps::not_ilike
+
+[op.not_like]
+api = PsqlOps::not_like
+
+[op.similar_to]
+api = PsqlOps::similar_to
+
+[op.not_similar_to]
+api = PsqlOps::not_similar_to
+
+[op.matches]
+api = PsqlOps::matches
+
+[op.imatches]
+api = PsqlOps::imatches
+
+[op.not_matches]
+api = PsqlOps::not_matches
+
+[op.not_imatches]
+api = PsqlOps::not_imatches
+
+[op.between_symmetric]
+api = PsqlOps::between_symmetric
+
+[op.not_between_symmetric]
+api = PsqlOps::not_between_symmetric
+
+[op.contains]
+api = PsqlOps::contains
+
+[op.contained_by]
+api = PsqlOps::contained_by
+
+[op.overlaps]
+api = PsqlOps::overlaps
+
+[op.text_search]
+api = PsqlOps::text_search
+
+[op.json_get]
+api = PsqlOps::json_get
+
+[op.json_get_text]
+api = PsqlOps::json_get_text
+
+[op.json_get_path]
+api = PsqlOps::json_get_path
+
+[op.json_get_path_text]
+api = PsqlOps::json_get_path_text
+
+[op.json_has_key]
+api = PsqlOps::json_has_key
+
+[op.json_has_any_key]
+api = PsqlOps::json_has_any_key
+
+[op.json_has_all_keys]
+api = PsqlOps::json_has_all_keys
+
+[op.eq_any]
+api = PsqlOps::eq_any
+
+[op.ne_all]
+api = PsqlOps::ne_all
+
+[op.any]
+api = PsqlOps::any
+
+[op.all]
+api = PsqlOps::all
+
+[op.is_true]
+api = PsqlOps::is_true
+
+[op.is_not_true]
+api = PsqlOps::is_not_true
+
+[op.is_false]
+api = PsqlOps::is_false
+
+[op.is_not_false]
+api = PsqlOps::is_not_false
+
+[op.is_unknown]
+api = PsqlOps::is_unknown
+
+[op.is_not_unknown]
+api = PsqlOps::is_not_unknown

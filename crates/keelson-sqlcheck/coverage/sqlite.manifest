@@ -1,0 +1,523 @@
+# Tier D manifest — every construct keelson-sqlite claims to render.
+#
+# THIS DIALECT'S TIER IS TOKEN-LEVEL: sqlite3-parser is a faithful port of
+# SQLite's grammar and judges validity, but there is no pg_query-style
+# inspectable tree walker wired up for it, so exercise is detected by token
+# signature against the recorded SQL (identifiers double-quoted, keywords
+# uppercase; `{*}` in a signature matches one operand-shaped token —
+# whitespace-free, not a bare uppercase keyword — and a plain `*` is the
+# literal character; a leading space is written as a double space after `=`).
+# Constructs
+# whose rendering is token-indistinguishable share one entry, named in `api`.
+#
+# When the gate fails naming an id here: add a test that renders the construct
+# through a judged assertion, or move the entry to sqlite.exclusions with a
+# reason.
+
+# --- statements ------------------------------------------------------------
+
+[stmt.select]
+api = sqlite::select
+sig = SELECT
+
+[stmt.insert]
+api = sqlite::insert
+sig = INSERT
+
+[stmt.update]
+api = sqlite::update
+sig = UPDATE
+
+[stmt.delete]
+api = sqlite::delete
+sig = DELETE
+
+# --- OR conflict resolution ------------------------------------------------
+
+[or.rollback]
+api = shared::or_rollback
+sig = OR ROLLBACK
+
+[or.abort]
+api = shared::or_abort
+sig = OR ABORT
+
+[or.replace]
+api = shared::or_replace
+sig = OR REPLACE
+
+[or.fail]
+api = shared::or_fail
+sig = OR FAIL
+
+[or.ignore]
+api = shared::or_ignore
+sig = OR IGNORE
+
+# --- select core -----------------------------------------------------------
+
+[select.distinct]
+api = select::distinct
+sig = SELECT DISTINCT
+
+[values.rows]
+api = select::values / rows (the VALUES select-core) and insert::values / rows — token-indistinguishable
+sig = VALUES (
+
+[values.multi_row]
+api = select::rows / insert::rows with several rows
+sig = ), (
+
+# --- WITH ------------------------------------------------------------------
+
+[cte.with]
+api = shared::with
+sig = WITH
+
+[cte.recursive]
+api = shared::recursive
+sig = WITH RECURSIVE
+
+[cte.columns]
+api = CteChain::columns
+sig = ") AS (
+
+[cte.materialized]
+api = CteChain::materialized
+sig = AS MATERIALIZED
+
+[cte.not_materialized]
+api = CteChain::not_materialized
+sig = NOT MATERIALIZED
+
+# --- FROM items ------------------------------------------------------------
+
+[clause.from]
+api = select::from / update::from (UPDATE … FROM)
+sig = FROM
+
+[from.alias]
+api = TableChain::as_ / JoinChain::as_ / IntoChain::as_
+sig =  AS "
+
+[from.comma_list]
+api = select::from_also / update::from_also
+sig = FROM {*},
+sig = FROM {*} AS {*},
+
+[from.indexed_by]
+api = TableChain::indexed_by / JoinChain::indexed_by
+sig = INDEXED BY
+
+[from.not_indexed]
+api = TableChain::not_indexed / JoinChain::not_indexed
+sig = NOT INDEXED
+
+[expr.subquery]
+api = sqlite::subquery (a FROM item or scalar sub-query)
+sig = (SELECT
+
+# --- joins -----------------------------------------------------------------
+
+[join.inner]
+api = shared::inner_join
+sig = INNER JOIN
+
+[join.left]
+api = shared::left_join
+sig = LEFT JOIN
+
+[join.right]
+api = shared::right_join
+sig = RIGHT JOIN
+
+[join.full]
+api = shared::full_join
+sig = FULL JOIN
+
+[join.cross]
+api = shared::cross_join
+sig = CROSS JOIN
+
+[join.natural]
+api = JoinChain::natural
+sig = NATURAL
+
+[join.on]
+api = JoinChain::on / on_eq
+sig =  ON
+
+[join.using]
+api = JoinChain::using
+sig =  USING (
+
+# --- WHERE / GROUP BY / HAVING / WINDOW ------------------------------------
+
+[clause.where]
+api = shared::where_
+sig =  WHERE
+
+[clause.group_by]
+api = shared::group_by
+sig = GROUP BY
+
+[clause.having]
+api = shared::having
+sig =  HAVING
+
+[clause.window]
+api = shared::window
+sig =  WINDOW "
+
+# --- ORDER BY / LIMIT ------------------------------------------------------
+
+[clause.order_by]
+api = shared::order_by / window::order_by / Function::order_by (token tier cannot tell them apart)
+sig = ORDER BY
+
+[order.asc]
+api = OrderChain::asc
+sig =  ASC
+
+[order.desc]
+api = OrderChain::desc
+sig =  DESC
+
+[order.nulls_first]
+api = OrderChain::nulls_first
+sig = NULLS FIRST
+
+[order.nulls_last]
+api = OrderChain::nulls_last
+sig = NULLS LAST
+
+[expr.collate]
+api = OrderChain::collate / SqliteOps::collate
+sig =  COLLATE
+
+[clause.limit]
+api = shared::limit
+sig = LIMIT
+
+[clause.offset]
+api = shared::offset
+sig = OFFSET
+
+# --- compounds (bare operands — SQLite takes no parentheses here) ----------
+
+[compound.union]
+api = shared::union
+sig = UNION SELECT
+sig = UNION VALUES
+
+[compound.union_all]
+api = shared::union_all
+sig = UNION ALL
+
+[compound.intersect]
+api = shared::intersect
+sig = INTERSECT
+
+[compound.except]
+api = shared::except
+sig = EXCEPT
+
+# --- INSERT ----------------------------------------------------------------
+
+[insert.columns]
+api = IntoChain::columns
+sig = " ("
+
+[insert.query]
+api = insert::query (INSERT … SELECT)
+sig = " SELECT
+sig = ) SELECT
+
+[upsert.on_conflict]
+api = shared::on_conflict
+sig = ON CONFLICT
+
+[upsert.target_columns]
+api = shared::on_conflict with a column list
+sig = ON CONFLICT (
+
+[upsert.do_nothing]
+api = ConflictChain::do_nothing
+sig = DO NOTHING
+
+[upsert.do_update]
+api = ConflictChain::do_update
+sig = DO UPDATE SET
+
+[upsert.excluded]
+api = sqlite::excluded / shared::set_excluded
+sig = excluded.
+
+[clause.returning]
+api = shared::returning
+sig = RETURNING
+
+# --- UPDATE ----------------------------------------------------------------
+
+[clause.set]
+api = update::set / set_col / SetChain::to / to_arg
+sig =  SET
+
+# --- windows and frames ----------------------------------------------------
+
+[window.over_def]
+api = Function::over
+sig = OVER (
+
+[window.over_name]
+api = Function::over_name
+sig = OVER "
+
+[window.based_on]
+api = window::based_on
+sig = OVER ("
+sig =  AS ("
+
+[window.partition_by]
+api = window::partition_by
+sig = PARTITION BY
+
+[frame.rows]
+api = frame::rows
+sig =  ROWS
+
+[frame.range]
+api = frame::range
+sig =  RANGE
+
+[frame.groups]
+api = frame::groups
+sig =  GROUPS
+
+[frame.between]
+api = any frame::to_* (an end bound makes the frame a BETWEEN)
+sig = ROWS BETWEEN
+sig = RANGE BETWEEN
+sig = GROUPS BETWEEN
+
+[frame.unbounded_preceding]
+api = frame::from_unbounded_preceding
+sig = UNBOUNDED PRECEDING
+
+[frame.preceding]
+api = frame::from_preceding / to_preceding
+sig =  {*} PRECEDING
+
+[frame.current_row]
+api = frame::from_current_row / to_current_row
+sig = CURRENT ROW
+
+[frame.following]
+api = frame::from_following / to_following
+sig =  {*} FOLLOWING
+
+[frame.unbounded_following]
+api = frame::from_unbounded_following / to_unbounded_following
+sig = UNBOUNDED FOLLOWING
+
+[frame.exclude_no_others]
+api = frame::exclude_no_others
+sig = EXCLUDE NO OTHERS
+
+[frame.exclude_current_row]
+api = frame::exclude_current_row
+sig = EXCLUDE CURRENT ROW
+
+[frame.exclude_group]
+api = frame::exclude_group
+sig = EXCLUDE GROUP
+
+[frame.exclude_ties]
+api = frame::exclude_ties
+sig = EXCLUDE TIES
+
+# --- function decorations --------------------------------------------------
+
+[func.distinct]
+api = Function::distinct
+sig = (DISTINCT
+
+[func.filter]
+api = Function::filter
+sig = FILTER (WHERE
+
+# --- expressions -----------------------------------------------------------
+
+[expr.arg]
+api = sqlite::arg / args / arg_group / placeholders / template
+sig = ?
+
+[expr.named_arg]
+api = sqlite::named (:name parameters)
+sig = :
+
+[expr.string_literal]
+api = sqlite::s
+sig = '
+
+[expr.ident]
+api = sqlite::quote
+sig = "
+
+[expr.case]
+api = sqlite::case_
+sig = CASE
+
+[case.else]
+api = CaseBuilder::else_
+sig =  ELSE
+
+[expr.cast]
+api = sqlite::cast
+sig = CAST(
+
+[expr.not]
+api = sqlite::not
+sig = NOT
+
+[expr.alias]
+api = Chain::as_ / Function::as_
+sig =  AS "
+
+# --- operators (keelson-core Chain) ----------------------------------------
+
+[op.eq]
+api = Chain::eq
+sig =  =
+
+[op.ne]
+api = Chain::ne
+sig =  <>
+
+[op.lt]
+api = Chain::lt
+sig =  <
+
+[op.lte]
+api = Chain::lte
+sig =  <=
+
+[op.gt]
+api = Chain::gt
+sig =  >
+
+[op.gte]
+api = Chain::gte
+sig =  >=
+
+[op.plus]
+api = Chain::plus
+sig =  +
+
+[op.minus]
+api = Chain::minus
+sig =  -
+
+[op.concat]
+api = Chain::concat
+sig =  ||
+
+[op.in]
+api = Chain::in_
+sig =  IN (
+
+[op.not_in]
+api = Chain::not_in
+sig = NOT IN (
+
+[op.is_null]
+api = Chain::is_null
+sig = IS NULL
+
+[op.is_not_null]
+api = Chain::is_not_null
+sig = IS NOT NULL
+
+[op.is_distinct_from]
+api = Chain::is_distinct_from (SQLite 3.39+)
+sig = IS DISTINCT FROM
+
+[op.is_not_distinct_from]
+api = Chain::is_not_distinct_from (SQLite 3.39+)
+sig = IS NOT DISTINCT FROM
+
+[op.between]
+api = Chain::between
+sig =  BETWEEN
+
+[op.not_between]
+api = Chain::not_between
+sig = NOT BETWEEN
+
+[op.like]
+api = Chain::like
+sig =  LIKE
+
+[op.and]
+api = Chain::and / sqlite::and
+sig =  AND
+
+[op.or]
+api = Chain::or / sqlite::or
+sig =  OR
+
+# --- operators (SqliteOps) -------------------------------------------------
+
+[op.glob]
+api = SqliteOps::glob
+sig =  GLOB
+
+[op.not_glob]
+api = SqliteOps::not_glob
+sig = NOT GLOB
+
+[op.regexp]
+api = SqliteOps::regexp
+sig =  REGEXP
+
+[op.not_regexp]
+api = SqliteOps::not_regexp
+sig = NOT REGEXP
+
+[op.match]
+api = SqliteOps::match_
+sig =  MATCH
+
+[op.not_match]
+api = SqliteOps::not_match
+sig = NOT MATCH
+
+[op.not_like]
+api = SqliteOps::not_like / not_like_escape
+sig = NOT LIKE
+
+[op.like_escape]
+api = SqliteOps::like_escape / not_like_escape
+sig =  ESCAPE
+
+[op.json_get]
+api = SqliteOps::json_get
+sig =  ->
+
+[op.json_get_text]
+api = SqliteOps::json_get_text
+sig =  ->>
+
+[op.is]
+api = SqliteOps::is_ (IS as null-safe =)
+sig = IS ?
+sig = IS "
+sig = IS '
+sig = IS (
+
+[op.is_not]
+api = SqliteOps::is_not
+sig = IS NOT ?
+sig = IS NOT "
+sig = IS NOT '
+sig = IS NOT (

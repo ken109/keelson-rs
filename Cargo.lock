@@ -1318,6 +1318,7 @@ dependencies = [
  "pg_query",
  "postgres",
  "rusqlite",
+ "serde_json",
  "sqlite3-parser",
  "sqlparser",
  "testcontainers",

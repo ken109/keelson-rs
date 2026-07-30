@@ -33,6 +33,10 @@ postgres = { workspace = true, optional = true }
 rusqlite = { workspace = true, optional = true }
 testcontainers = { workspace = true, optional = true }
 testcontainers-modules = { workspace = true, optional = true }
+# Tier D (`coverage`) walks pg_query's parse tree generically by serialising it:
+# every protobuf node derives `serde::Serialize`, so one JSON walk sees every
+# field without hand-writing a visitor over two hundred node types.
+serde_json.workspace = true
 sqlite3-parser.workspace = true
 sqlparser.workspace = true
 

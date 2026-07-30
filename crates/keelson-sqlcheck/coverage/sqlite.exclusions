@@ -1,0 +1,11 @@
+# Tier D exclusions — sqlite constructs deliberately NOT in the manifest.
+# See psql.exclusions for the two kinds of entry and the rules.
+
+[select.all]
+reason = SELECT ALL is the grammar default; deliberately unrepresentable — the absence of distinct() is what it means (keelson-sqlite select::distinct)
+
+[compound.operand_parens]
+reason = SQLite's compound-select-stmt takes bare select-cores; parenthesised operands are a syntax error, so there is nothing to render (keelson-sqlite lib.rs, difference 1)
+
+[expr.group]
+reason = plain parenthesisation (sqlite::group) is not detectable at token level — every rendered statement contains parentheses — and it is exercised by every chained operator in the corpus
