@@ -10,16 +10,17 @@
 #                 (docs/testing-tiers.md, Tier D). Runs the suite a second time
 #                 because recording is env-var-gated; parallel with `fast`, so it
 #                 adds no wall-clock.
-#   msrv          `cargo check --workspace --all-targets --locked` on the
-#                 `rust-version` declared in Cargo.toml (read from the manifest
-#                 at run time, so the job can never drift from what the
-#                 workspace claims). Check-only on purpose: it proves the code
-#                 and lockfile compile on the declared MSRV, while the
-#                 behavioral gates stay on stable (which is what users build
-#                 with, and where new clippy lints surface early). Duplicating
-#                 the full test run on the MSRV would double CI time for almost
-#                 no extra signal — test behavior does not vary by toolchain
-#                 here.
+#   msrv          `cargo check --workspace --locked` on the `rust-version`
+#                 declared in Cargo.toml (read from the manifest at run time, so
+#                 the job can never drift from what the workspace claims).
+#                 Deliberately NOT --all-targets: rust-version is a promise to
+#                 *consumers*, and test targets pull in dev-only dependencies —
+#                 the test judges — whose own MSRV tracks stable (libsqlite3-sys
+#                 already needs 1.95). Consumers never build those. Check-only
+#                 on purpose: it proves the published surface and lockfile
+#                 compile on the declared MSRV, while the behavioral gates stay
+#                 on stable (which is what users build with, and where new
+#                 clippy lints surface early).
 #   engine        the live-docker tier: real postgres:17-alpine and mysql:8.4
 #                 PREPARE every statement via testcontainers (~14 containers,
 #                 several minutes). Runs on PRs and pushes to main — engine
@@ -108,7 +109,7 @@ jobs:
         with:
           toolchain: ${{ steps.msrv.outputs.version }}
       - uses: Swatinem/rust-cache@v2
-      - run: cargo check --workspace --all-targets --locked
+      - run: cargo check --workspace --locked
 
   engine:
     name: engine tier (live-docker)
