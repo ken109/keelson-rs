@@ -63,6 +63,7 @@
 
 #![warn(missing_docs)]
 
+pub mod clause;
 mod dialect;
 mod error;
 pub mod expr;

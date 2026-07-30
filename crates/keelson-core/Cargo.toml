@@ -19,6 +19,10 @@ testing = []
 serde.workspace = true
 
 [dev-dependencies]
+# A dev-dependency on itself is how an integration test reaches a feature-gated
+# item: `tests/*.rs` is a separate crate, so `#[cfg(test)]` does not cover it and
+# `dialect::testing` would otherwise be invisible to `tests/grammar_raw.rs`.
+keelson-core = { path = ".", features = ["testing"] }
 serde_json.workspace = true
 
 [lints]
