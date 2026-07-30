@@ -402,6 +402,47 @@ fn an_index_hint_on_a_joined_table_lands_on_that_table() {
     );
 }
 
+/// *10.9.4*: `index_hint: USE {INDEX|KEY} [FOR {JOIN|ORDER BY|GROUP BY}] …` —
+/// `FOR GROUP BY` is the third scope, restricting the hint to resolving the
+/// `GROUP BY`. The manual has it; nothing had tested it.
+#[test]
+fn a_group_by_hint_scope_on_the_from_table() {
+    let q = mysql::select((
+        select::columns((quote("user_id"), f("COUNT", "*").as_("n"))),
+        select::from(quote("posts"))
+            .use_index(["PRIMARY"])
+            .for_group_by(),
+        select::group_by(quote("user_id")),
+    ));
+    check(
+        &q,
+        "SELECT `user_id`, COUNT(*) AS `n` FROM `posts` \
+         USE INDEX FOR GROUP BY (`PRIMARY`) GROUP BY `user_id`",
+    );
+}
+
+/// The same scope through a join's hint — [`JoinChain`] carries the other
+/// `for_group_by`, and the hint stays with the joined table.
+#[test]
+fn a_group_by_hint_scope_on_a_joined_table() {
+    let q = mysql::select((
+        select::columns((quote(("p", "user_id")), f("COUNT", "*"))),
+        select::from(quote("users")).as_("u"),
+        select::inner_join(quote("posts"))
+            .as_("p")
+            .force_index(["PRIMARY"])
+            .for_group_by()
+            .on_eq(quote(("p", "user_id")), quote(("u", "id"))),
+        select::group_by(quote(("p", "user_id"))),
+    ));
+    check(
+        &q,
+        "SELECT `p`.`user_id`, COUNT(*) FROM `users` AS `u` \
+         INNER JOIN `posts` AS `p` FORCE INDEX FOR GROUP BY (`PRIMARY`) \
+         ON (`p`.`user_id` = `u`.`id`) GROUP BY `p`.`user_id`",
+    );
+}
+
 /// `PARTITION` precedes the alias everywhere except `DELETE`.
 ///
 /// The engine tier cannot answer here: MySQL refuses `PARTITION` on a

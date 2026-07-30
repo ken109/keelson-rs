@@ -27,6 +27,14 @@
 //! All of them still assert the intended string, which is the part that says "this
 //! is the SQL we meant" and the part no parser can answer.
 //!
+//! **A run with no judge announces itself.** On a plain `cargo test` there is no
+//! engine, so a [`check_without_grammar`] case has nothing vouching for its SQL at
+//! all, and a [`check_shape_only`] case never does on any build. Both write a
+//! `SKIPPED (no judge)` line to stderr — past libtest's capture, so it is visible
+//! without `--nocapture` — naming the case's file and line, instead of passing as
+//! silently as a fully judged one. [`check_without_engine`] stays quiet: its
+//! grammar tier does run.
+//!
 //! **Where the expected strings come from.** Each is derived from the statement's
 //! production in the MySQL 8.4 reference manual — cited in the test where the shape
 //! is not obvious — or from bob's rendering of the same construct where bob has one,
@@ -42,6 +50,32 @@
 
 use keelson_mysql::{Query, Value};
 use keelson_sqlcheck::{Dialect, assert_sql, assert_valid, live, normalize};
+
+/// Whether this build reaches a real MySQL.
+fn engine_available() -> bool {
+    live::available().contains(&Dialect::Mysql)
+}
+
+/// Announce visibly that a case ran with no judge vouching for its SQL.
+///
+/// The weakened assertions below drop the `sqlparser` tier on purpose, which
+/// leaves the engine as the only judge — and on a plain `cargo test` there is no
+/// engine. `eprintln!` is captured and discarded for a passing test, so a message
+/// through it is silence in exactly the situation this exists for; writing to the
+/// stderr handle directly bypasses libtest's capture. `#[track_caller]` all the
+/// way down makes the message name the test's own file and line.
+#[track_caller]
+fn announce_unjudged(construct: &str, detail: &str) {
+    use std::io::Write as _;
+    let caller = std::panic::Location::caller();
+    // One pre-formatted write_all rather than writeln!'s piecewise writes, so
+    // parallel tests cannot interleave inside a message.
+    let line = format!(
+        "SKIPPED (no judge) {caller}: {construct} — {detail}; only the string \
+         comparison ran.\n"
+    );
+    let _ = std::io::stderr().write_all(line.as_bytes());
+}
 
 /// Build, then run every check this build can: grammar, engine, and intent.
 #[track_caller]
@@ -66,8 +100,17 @@ pub(crate) fn check_without_grammar(q: &impl Query, expected: &str, construct: &
         "sqlparser now accepts {construct} — move this case to `check`\n  sql: {sql}"
     );
 
-    if live::available().contains(&Dialect::Mysql) {
+    if engine_available() {
         live::assert_valid(Dialect::Mysql, &sql);
+    } else {
+        // With the grammar tier dropped, the engine was the only judge — and this
+        // build has none. Say so out loud instead of passing as if verified.
+        announce_unjudged(
+            construct,
+            "sqlparser cannot parse this valid MySQL and no engine is compiled in, \
+             so nothing has vouched for the SQL; re-run with `--features live-docker` \
+             to have a real MySQL 8.4 judge it",
+        );
     }
     assert_eq!(
         normalize(&sql),
@@ -111,6 +154,14 @@ pub(crate) fn check_shape_only(
     assert!(
         keelson_sqlcheck::check_mysql(&sql).is_err(),
         "sqlparser now accepts {construct} — move this case to `check_without_engine`\n  sql: {sql}"
+    );
+    // No judge can be asked on *any* build — sqlparser cannot parse the construct
+    // and the shared schema cannot satisfy it — so this announces on every run,
+    // not only when the engine is missing. A silent pass here would read as
+    // verified SQL, which it is not.
+    announce_unjudged(
+        construct,
+        &format!("sqlparser cannot parse it and the engine cannot be asked ({reason})"),
     );
     assert_eq!(
         normalize(&sql),

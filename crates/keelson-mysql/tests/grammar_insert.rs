@@ -406,6 +406,35 @@ fn replace_into_with_a_column_list_and_rows() {
     assert_eq!(args.len(), 4);
 }
 
+/// `REPLACE … SET assignment_list` — the second of REPLACE's three row sources,
+/// straight from the production quoted on [`ReplaceQuery`](mysql::ReplaceQuery).
+#[test]
+fn replace_the_set_row_source() {
+    let q = mysql::replace((
+        replace::into(quote("tags")),
+        replace::set_col("id").to_arg(1i32),
+        replace::set_col("name").to_arg("rust"),
+    ));
+    let args = check(&q, "REPLACE INTO `tags` SET `id` = ?, `name` = ?");
+    assert_eq!(args, vec![Value::I32(1), Value::Text("rust".into())]);
+}
+
+/// As on `INSERT`: `SET` and `VALUES` are alternative productions, `SET` wins,
+/// and the column list goes with the discarded `VALUES` — the `SET` production
+/// has no `(col_name, …)`. `REPLACE` shares the row-source writer with `INSERT`,
+/// and this pins that the sharing carries the rule across.
+#[test]
+fn replace_set_wins_over_values_and_takes_the_column_list_with_it() {
+    let q = mysql::replace((
+        replace::into(quote("tags")).columns(["id"]),
+        replace::values(arg(9i32)),
+        replace::set_col("name").to_arg("rust"),
+    ));
+    let args = check(&q, "REPLACE INTO `tags` SET `name` = ?");
+    // The discarded row's argument is discarded with it.
+    assert_eq!(args, vec![Value::Text("rust".into())]);
+}
+
 /// `REPLACE [LOW_PRIORITY | DELAYED] [INTO] …` — the only two modifiers it has.
 #[test]
 fn replace_low_priority_with_the_set_row_source() {
