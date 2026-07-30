@@ -1,0 +1,21 @@
+[package]
+name = "keelson-sqlcheck"
+description = "Test-only: checks generated SQL against each dialect's real grammar."
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+pg_query.workspace = true
+sqlite3-parser.workspace = true
+sqlparser.workspace = true
+
+[dev-dependencies]
+keelson-golden.workspace = true
+
+[lints]
+workspace = true
