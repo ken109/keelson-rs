@@ -28,10 +28,28 @@ testing = []
 # and the optional dependencies it implies switched off, and does not compile.
 live-docker = ["keelson-sqlcheck/live-docker"]
 
+# First-class `Value` variants for the types nearly every application binds.
+# They live here, feature-gated, rather than in a satellite crate: `Value` is an
+# enum, and an enum's variants cannot be added from outside the crate that owns
+# it — a separate `keelson-types` crate could only offer `CustomValue` wrappers,
+# which is exactly the downcasting these variants exist to remove. Backend-only
+# conversions would mean `arg(uuid)` does not compile in builder code, which is
+# the ergonomic point. None of these is a default feature: the no-features build
+# is byte-for-byte what it was before they existed. The type × dialect mapping
+# each variant implies is recorded in docs/type-mappings.md.
+chrono = ["dep:chrono"]
+uuid = ["dep:uuid"]
+decimal = ["dep:rust_decimal"]
+json = ["dep:serde_json"]
+
 [dependencies]
 # `Value` serialises as a bare scalar so a built argument list can be compared,
 # logged or shipped as plain JSON. That is the only reason serde is here.
 serde.workspace = true
+chrono = { workspace = true, optional = true }
+uuid = { workspace = true, optional = true }
+rust_decimal = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
 
 [dev-dependencies]
 # A dev-dependency on itself is how an integration test reaches a feature-gated

@@ -45,6 +45,38 @@ pub enum Value {
     Bytes(Vec<u8>),
     /// A homogeneous array, for dialects that have one (PostgreSQL).
     Array(Vec<Value>),
+    /// A calendar date with no time and no zone — `DATE`.
+    #[cfg(feature = "chrono")]
+    Date(chrono::NaiveDate),
+    /// A wall-clock time with no date and no zone — `TIME`.
+    #[cfg(feature = "chrono")]
+    Time(chrono::NaiveTime),
+    /// A date and time with no zone — `TIMESTAMP` / `DATETIME`. What it means
+    /// depends on context the database never sees, which is why it is a
+    /// different variant from [`Value::TimestampTz`], not a special case of it.
+    #[cfg(feature = "chrono")]
+    DateTime(chrono::NaiveDateTime),
+    /// An instant, carried in UTC — `TIMESTAMPTZ`.
+    ///
+    /// There is deliberately no offset-preserving variant: every zoned
+    /// `chrono::DateTime<Tz>` is normalised to UTC on conversion, because no
+    /// target database round-trips an offset (PostgreSQL's `timestamptz`
+    /// stores UTC and renders in the session zone; MySQL's `TIMESTAMP`
+    /// converts through the session zone; SQLite has no zone at all). A
+    /// variant that pretended otherwise would promise what no backend keeps.
+    #[cfg(feature = "chrono")]
+    TimestampTz(chrono::DateTime<chrono::Utc>),
+    /// A UUID — `uuid` on PostgreSQL, hyphenated text elsewhere.
+    #[cfg(feature = "uuid")]
+    Uuid(uuid::Uuid),
+    /// An exact decimal number — `NUMERIC` / `DECIMAL`. A separate variant
+    /// from the floats because binary floating point cannot represent decimal
+    /// scale, which is the entire reason an application reaches for `Decimal`.
+    #[cfg(feature = "decimal")]
+    Decimal(rust_decimal::Decimal),
+    /// A JSON document — `jsonb` / `JSON`, serialised text elsewhere.
+    #[cfg(feature = "json")]
+    Json(serde_json::Value),
     /// Escape hatch for dialect-specific types. Backends downcast through
     /// [`CustomValue::as_any`].
     Custom(Arc<dyn CustomValue>),
@@ -54,8 +86,10 @@ pub enum Value {
 ///
 /// Implementors are carried through the builder untouched and handed to the
 /// backend, which recovers the concrete type with [`Self::as_any`]. This is where
-/// `uuid`, `chrono` and `serde_json` values live, so that core needs no optional
-/// dependency on any of them.
+/// genuinely dialect-specific types live — PostgreSQL ranges, geometric types
+/// and the like. The types nearly every application binds (`chrono`, `uuid`,
+/// `rust_decimal`, `serde_json`) have first-class feature-gated variants
+/// instead, with their mappings recorded in `docs/type-mappings.md`.
 pub trait CustomValue: fmt::Debug + Send + Sync + 'static {
     /// The name used in error messages and `Debug` output.
     fn type_name(&self) -> &'static str;
@@ -109,6 +143,20 @@ impl Value {
             Value::Text(_) => "text",
             Value::Bytes(_) => "bytes",
             Value::Array(_) => "array",
+            #[cfg(feature = "chrono")]
+            Value::Date(_) => "date",
+            #[cfg(feature = "chrono")]
+            Value::Time(_) => "time",
+            #[cfg(feature = "chrono")]
+            Value::DateTime(_) => "datetime",
+            #[cfg(feature = "chrono")]
+            Value::TimestampTz(_) => "timestamptz",
+            #[cfg(feature = "uuid")]
+            Value::Uuid(_) => "uuid",
+            #[cfg(feature = "decimal")]
+            Value::Decimal(_) => "decimal",
+            #[cfg(feature = "json")]
+            Value::Json(_) => "json",
             Value::Custom(c) => c.type_name(),
         }
     }
@@ -133,6 +181,23 @@ impl PartialEq for Value {
             (Text(a), Text(b)) => a == b,
             (Bytes(a), Bytes(b)) => a == b,
             (Array(a), Array(b)) => a == b,
+            #[cfg(feature = "chrono")]
+            (Date(a), Date(b)) => a == b,
+            #[cfg(feature = "chrono")]
+            (Time(a), Time(b)) => a == b,
+            #[cfg(feature = "chrono")]
+            (DateTime(a), DateTime(b)) => a == b,
+            #[cfg(feature = "chrono")]
+            (TimestampTz(a), TimestampTz(b)) => a == b,
+            #[cfg(feature = "uuid")]
+            (Uuid(a), Uuid(b)) => a == b,
+            // rust_decimal compares numerically, so `1.10 == 1.100` here even
+            // though the two serialise differently. That is the right call for
+            // an argument list: the database would treat them as equal too.
+            #[cfg(feature = "decimal")]
+            (Decimal(a), Decimal(b)) => a == b,
+            #[cfg(feature = "json")]
+            (Json(a), Json(b)) => a == b,
             // Custom values have no shared notion of equality, so identity is
             // the only honest answer.
             (Custom(a), Custom(b)) => Arc::ptr_eq(a, b),
@@ -170,6 +235,32 @@ impl serde::Serialize for Value {
                 }
                 seq.end()
             }
+            // The temporal types serialise as ISO 8601 strings — the one
+            // rendering every dialect, log reader and JSON consumer agrees on.
+            // Fractional seconds appear only when non-zero, in 3/6/9-digit
+            // groups, so a whole-second timestamp stays short. The exact forms
+            // are pinned in docs/type-mappings.md and by test.
+            #[cfg(feature = "chrono")]
+            Value::Date(v) => s.collect_str(&v.format("%Y-%m-%d")),
+            #[cfg(feature = "chrono")]
+            Value::Time(v) => s.collect_str(&v.format("%H:%M:%S%.f")),
+            #[cfg(feature = "chrono")]
+            Value::DateTime(v) => s.collect_str(&v.format("%Y-%m-%dT%H:%M:%S%.f")),
+            #[cfg(feature = "chrono")]
+            Value::TimestampTz(v) => {
+                s.collect_str(&v.to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true))
+            }
+            // Hyphenated lowercase — the RFC 9562 text form.
+            #[cfg(feature = "uuid")]
+            Value::Uuid(v) => s.collect_str(v),
+            // A string, never a JSON number: `1.10` as a float would collapse
+            // to `1.1` (or worse), and exactness is what `Decimal` is for.
+            #[cfg(feature = "decimal")]
+            Value::Decimal(v) => s.collect_str(v),
+            // Structural passthrough, like `Array` — the document itself, not a
+            // string containing it.
+            #[cfg(feature = "json")]
+            Value::Json(v) => v.serialize(s),
             Value::Custom(c) => match c.to_plain() {
                 Value::Custom(_) => s.serialize_none(),
                 plain => plain.serialize(s),
@@ -267,6 +358,198 @@ impl ToValue for () {
 impl<T: CustomValue> ToValue for Arc<T> {
     fn to_value(self) -> Value {
         Value::Custom(self)
+    }
+}
+
+#[cfg(feature = "chrono")]
+mod chrono_impls {
+    use super::{FromValue, ToValue, Value};
+    use crate::error::{Error, Result};
+    use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc};
+
+    impl ToValue for NaiveDate {
+        fn to_value(self) -> Value {
+            Value::Date(self)
+        }
+    }
+
+    impl ToValue for NaiveTime {
+        fn to_value(self) -> Value {
+            Value::Time(self)
+        }
+    }
+
+    impl ToValue for NaiveDateTime {
+        fn to_value(self) -> Value {
+            Value::DateTime(self)
+        }
+    }
+
+    /// Any zoned datetime — `Utc`, `FixedOffset`, `Local` — binds as the
+    /// instant it names, normalised to UTC. The offset is dropped because no
+    /// target database stores one; an application that needs the original
+    /// offset keeps it in its own column.
+    impl<Tz: TimeZone> ToValue for DateTime<Tz> {
+        fn to_value(self) -> Value {
+            Value::TimestampTz(self.with_timezone(&Utc))
+        }
+    }
+
+    // Reading back accepts the matching variant or its ISO 8601 text form,
+    // because SQLite has no temporal storage class at all and MySQL drivers
+    // routinely hand temporal columns back as text. The text forms accepted
+    // are exactly the ones `Value` serialises to (docs/type-mappings.md),
+    // plus the space-separated datetime that SQLite and MySQL conventionally
+    // store, so a value written through keelson always reads back.
+
+    impl FromValue for NaiveDate {
+        fn from_value(v: Value) -> Result<Self> {
+            let found = v.type_name();
+            match v {
+                Value::Date(d) => Ok(d),
+                Value::Text(s) => s
+                    .parse()
+                    .map_err(|_| Error::type_mismatch("NaiveDate", found)),
+                _ => Err(Error::type_mismatch("NaiveDate", found)),
+            }
+        }
+    }
+
+    impl FromValue for NaiveTime {
+        fn from_value(v: Value) -> Result<Self> {
+            let found = v.type_name();
+            match v {
+                Value::Time(t) => Ok(t),
+                Value::Text(s) => s
+                    .parse()
+                    .map_err(|_| Error::type_mismatch("NaiveTime", found)),
+                _ => Err(Error::type_mismatch("NaiveTime", found)),
+            }
+        }
+    }
+
+    impl FromValue for NaiveDateTime {
+        fn from_value(v: Value) -> Result<Self> {
+            let found = v.type_name();
+            match v {
+                Value::DateTime(dt) => Ok(dt),
+                Value::Text(s) => s
+                    .parse()
+                    .or_else(|_| NaiveDateTime::parse_from_str(&s, "%Y-%m-%d %H:%M:%S%.f"))
+                    .map_err(|_| Error::type_mismatch("NaiveDateTime", found)),
+                _ => Err(Error::type_mismatch("NaiveDateTime", found)),
+            }
+        }
+    }
+
+    impl FromValue for DateTime<Utc> {
+        fn from_value(v: Value) -> Result<Self> {
+            let found = v.type_name();
+            match v {
+                Value::TimestampTz(dt) => Ok(dt),
+                Value::Text(s) => DateTime::parse_from_rfc3339(&s)
+                    .map(|dt| dt.with_timezone(&Utc))
+                    .map_err(|_| Error::type_mismatch("DateTime<Utc>", found)),
+                _ => Err(Error::type_mismatch("DateTime<Utc>", found)),
+            }
+        }
+    }
+}
+
+#[cfg(feature = "uuid")]
+mod uuid_impls {
+    use super::{FromValue, ToValue, Value};
+    use crate::error::{Error, Result};
+    use uuid::Uuid;
+
+    impl ToValue for Uuid {
+        fn to_value(self) -> Value {
+            Value::Uuid(self)
+        }
+    }
+
+    impl FromValue for Uuid {
+        fn from_value(v: Value) -> Result<Self> {
+            let found = v.type_name();
+            match v {
+                Value::Uuid(u) => Ok(u),
+                // Text covers the standard MySQL/SQLite mapping (`CHAR(36)` /
+                // `TEXT`); 16 raw bytes covers a `BINARY(16)`/`BLOB` column an
+                // application chose for compactness.
+                Value::Text(s) => {
+                    Uuid::parse_str(&s).map_err(|_| Error::type_mismatch("Uuid", found))
+                }
+                Value::Bytes(b) => {
+                    Uuid::from_slice(&b).map_err(|_| Error::type_mismatch("Uuid", found))
+                }
+                _ => Err(Error::type_mismatch("Uuid", found)),
+            }
+        }
+    }
+}
+
+#[cfg(feature = "decimal")]
+mod decimal_impls {
+    use super::{FromValue, ToValue, Value};
+    use crate::error::{Error, Result};
+    use rust_decimal::Decimal;
+
+    impl ToValue for Decimal {
+        fn to_value(self) -> Value {
+            Value::Decimal(self)
+        }
+    }
+
+    impl FromValue for Decimal {
+        fn from_value(v: Value) -> Result<Self> {
+            let found = v.type_name();
+            // Text covers drivers that hand `NUMERIC` back as a string (the
+            // lossless wire form) and the SQLite `TEXT` mapping; integers are
+            // exact so they widen in. Floats are deliberately rejected: a
+            // binary fraction has no faithful decimal scale, and inventing one
+            // silently is the bug `Decimal` exists to prevent.
+            match v {
+                Value::Decimal(d) => Ok(d),
+                Value::Text(s) => s
+                    .parse()
+                    .map_err(|_| Error::type_mismatch("Decimal", found)),
+                Value::I8(x) => Ok(Decimal::from(x)),
+                Value::I16(x) => Ok(Decimal::from(x)),
+                Value::I32(x) => Ok(Decimal::from(x)),
+                Value::I64(x) => Ok(Decimal::from(x)),
+                Value::U8(x) => Ok(Decimal::from(x)),
+                Value::U16(x) => Ok(Decimal::from(x)),
+                Value::U32(x) => Ok(Decimal::from(x)),
+                Value::U64(x) => Ok(Decimal::from(x)),
+                _ => Err(Error::type_mismatch("Decimal", found)),
+            }
+        }
+    }
+}
+
+#[cfg(feature = "json")]
+mod json_impls {
+    use super::{FromValue, ToValue, Value};
+    use crate::error::{Error, Result};
+
+    impl ToValue for serde_json::Value {
+        fn to_value(self) -> Value {
+            Value::Json(self)
+        }
+    }
+
+    impl FromValue for serde_json::Value {
+        fn from_value(v: Value) -> Result<Self> {
+            let found = v.type_name();
+            match v {
+                Value::Json(j) => Ok(j),
+                // Every dialect's JSON type comes off the wire as text in at
+                // least one driver, so parseable text reads as the document.
+                Value::Text(s) => serde_json::from_str(&s)
+                    .map_err(|_| Error::type_mismatch("serde_json::Value", found)),
+                _ => Err(Error::type_mismatch("serde_json::Value", found)),
+            }
+        }
     }
 }
 
@@ -519,5 +802,195 @@ mod tests {
     fn type_mismatch_explains_both_sides() {
         let e = i32::from_value(Value::Text("3".into())).unwrap_err();
         assert_eq!(e.to_string(), "cannot read text as i32");
+    }
+
+    // Expected strings below are the ISO 8601 / RFC 3339 / RFC 9562 text forms
+    // pinned in docs/type-mappings.md, written out by hand — not copied from
+    // output.
+
+    #[cfg(feature = "chrono")]
+    mod chrono_values {
+        use super::*;
+        use chrono::{DateTime, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc};
+
+        fn date() -> NaiveDate {
+            NaiveDate::from_ymd_opt(2026, 7, 30).unwrap()
+        }
+
+        fn time() -> NaiveTime {
+            NaiveTime::from_hms_opt(12, 34, 56).unwrap()
+        }
+
+        #[test]
+        fn to_value_wraps_each_temporal_type() {
+            assert_eq!(date().to_value(), Value::Date(date()));
+            assert_eq!(time().to_value(), Value::Time(time()));
+            let dt = date().and_time(time());
+            assert_eq!(dt.to_value(), Value::DateTime(dt));
+            let utc = Utc.with_ymd_and_hms(2026, 7, 30, 12, 34, 56).unwrap();
+            assert_eq!(utc.to_value(), Value::TimestampTz(utc));
+        }
+
+        #[test]
+        fn zoned_datetimes_normalise_to_utc() {
+            // 21:34:56+09:00 names the same instant as 12:34:56Z.
+            let jst: DateTime<FixedOffset> = "2026-07-30T21:34:56+09:00".parse().unwrap();
+            let utc = Utc.with_ymd_and_hms(2026, 7, 30, 12, 34, 56).unwrap();
+            assert_eq!(jst.to_value(), Value::TimestampTz(utc));
+        }
+
+        #[test]
+        fn serialises_as_iso_8601_strings() {
+            assert_eq!(json(date().to_value()), serde_json::json!("2026-07-30"));
+            assert_eq!(json(time().to_value()), serde_json::json!("12:34:56"));
+            assert_eq!(
+                json(date().and_time(time()).to_value()),
+                serde_json::json!("2026-07-30T12:34:56")
+            );
+            let utc = Utc.with_ymd_and_hms(2026, 7, 30, 12, 34, 56).unwrap();
+            assert_eq!(
+                json(utc.to_value()),
+                serde_json::json!("2026-07-30T12:34:56Z")
+            );
+        }
+
+        #[test]
+        fn fractional_seconds_appear_only_when_non_zero() {
+            let t = NaiveTime::from_hms_milli_opt(12, 34, 56, 789).unwrap();
+            assert_eq!(json(t.to_value()), serde_json::json!("12:34:56.789"));
+            let dt = date().and_time(t);
+            assert_eq!(
+                json(dt.to_value()),
+                serde_json::json!("2026-07-30T12:34:56.789")
+            );
+            let utc = DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc);
+            assert_eq!(
+                json(utc.to_value()),
+                serde_json::json!("2026-07-30T12:34:56.789Z")
+            );
+        }
+
+        #[test]
+        fn round_trips_from_its_own_variant_and_serialised_text() {
+            let utc = Utc.with_ymd_and_hms(2026, 7, 30, 12, 34, 56).unwrap();
+            assert_eq!(NaiveDate::from_value(date().to_value()).unwrap(), date());
+            assert_eq!(
+                NaiveDate::from_value(Value::Text("2026-07-30".into())).unwrap(),
+                date()
+            );
+            assert_eq!(
+                NaiveTime::from_value(Value::Text("12:34:56".into())).unwrap(),
+                time()
+            );
+            let dt = date().and_time(time());
+            assert_eq!(
+                NaiveDateTime::from_value(Value::Text("2026-07-30T12:34:56".into())).unwrap(),
+                dt
+            );
+            // The space-separated form SQLite and MySQL conventionally store.
+            assert_eq!(
+                NaiveDateTime::from_value(Value::Text("2026-07-30 12:34:56".into())).unwrap(),
+                dt
+            );
+            assert_eq!(DateTime::<Utc>::from_value(utc.to_value()).unwrap(), utc);
+            assert_eq!(
+                DateTime::<Utc>::from_value(Value::Text("2026-07-30T21:34:56+09:00".into()))
+                    .unwrap(),
+                utc
+            );
+            assert!(NaiveDate::from_value(Value::I32(1)).is_err());
+            assert!(NaiveDate::from_value(Value::Text("not a date".into())).is_err());
+        }
+
+        #[test]
+        fn type_names_are_reported() {
+            assert_eq!(date().to_value().type_name(), "date");
+            assert_eq!(time().to_value().type_name(), "time");
+            assert_eq!(date().and_time(time()).to_value().type_name(), "datetime");
+            let utc = Utc.with_ymd_and_hms(2026, 7, 30, 0, 0, 0).unwrap();
+            assert_eq!(utc.to_value().type_name(), "timestamptz");
+        }
+    }
+
+    #[cfg(feature = "uuid")]
+    mod uuid_values {
+        use super::*;
+        use uuid::Uuid;
+
+        const HYPHENATED: &str = "550e8400-e29b-41d4-a716-446655440000";
+
+        #[test]
+        fn binds_serialises_and_round_trips() {
+            let u = Uuid::parse_str(HYPHENATED).unwrap();
+            assert_eq!(u.to_value(), Value::Uuid(u));
+            assert_eq!(u.to_value().type_name(), "uuid");
+            assert_eq!(json(u.to_value()), serde_json::json!(HYPHENATED));
+            assert_eq!(Uuid::from_value(u.to_value()).unwrap(), u);
+            assert_eq!(Uuid::from_value(Value::Text(HYPHENATED.into())).unwrap(), u);
+            assert_eq!(
+                Uuid::from_value(Value::Bytes(u.as_bytes().to_vec())).unwrap(),
+                u
+            );
+            assert!(Uuid::from_value(Value::Bytes(vec![1, 2, 3])).is_err());
+            assert!(Uuid::from_value(Value::I32(1)).is_err());
+        }
+    }
+
+    #[cfg(feature = "decimal")]
+    mod decimal_values {
+        use super::*;
+        use rust_decimal::Decimal;
+
+        #[test]
+        fn binds_serialises_and_round_trips() {
+            // 19.99 with an explicit scale of 2.
+            let d = Decimal::new(1999, 2);
+            assert_eq!(d.to_value(), Value::Decimal(d));
+            assert_eq!(d.to_value().type_name(), "decimal");
+            // A string, never a JSON number — exactness survives any reader.
+            assert_eq!(json(d.to_value()), serde_json::json!("19.99"));
+            assert_eq!(Decimal::from_value(d.to_value()).unwrap(), d);
+            assert_eq!(Decimal::from_value(Value::Text("19.99".into())).unwrap(), d);
+            assert_eq!(
+                Decimal::from_value(Value::I64(7)).unwrap(),
+                Decimal::from(7)
+            );
+            // Floats are rejected: no faithful decimal scale exists for them.
+            assert!(Decimal::from_value(Value::F64(19.99)).is_err());
+        }
+
+        #[test]
+        fn trailing_zeros_survive_serialisation() {
+            // 1.10 keeps scale 2 — `NUMERIC` preserves scale, so keelson does.
+            let d = Decimal::new(110, 2);
+            assert_eq!(json(d.to_value()), serde_json::json!("1.10"));
+            // ...while equality is numeric, like the database's.
+            assert_eq!(d.to_value(), Decimal::new(11, 1).to_value());
+        }
+    }
+
+    #[cfg(feature = "json")]
+    mod json_values {
+        use super::*;
+
+        #[test]
+        fn binds_serialises_structurally_and_round_trips() {
+            let doc = serde_json::json!({"a": [1, 2], "b": "x"});
+            assert_eq!(doc.clone().to_value(), Value::Json(doc.clone()));
+            assert_eq!(doc.clone().to_value().type_name(), "json");
+            // The document itself, not a string containing it.
+            assert_eq!(json(doc.clone().to_value()), doc);
+            assert_eq!(
+                serde_json::Value::from_value(doc.clone().to_value()).unwrap(),
+                doc
+            );
+            assert_eq!(
+                serde_json::Value::from_value(Value::Text(r#"{"a":[1,2],"b":"x"}"#.into()))
+                    .unwrap(),
+                doc
+            );
+            assert!(serde_json::Value::from_value(Value::Text("not json".into())).is_err());
+            assert!(serde_json::Value::from_value(Value::I32(1)).is_err());
+        }
     }
 }
