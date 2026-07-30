@@ -1,0 +1,71 @@
+--- /Users/ken109/go/pkg/mod/github.com/stephenafamo/bob@v0.42.0/test/utils/utils.go	2025-12-27 22:05:59
++++ /private/tmp/claude-501/-Users-ken109-ghq-github-com-ken109-rig-rs/a7f86215-5300-4cdd-a4e1-f46740c0fa88/scratchpad/bob/test/utils/utils.go	2026-07-30 11:30:31
+@@ -65,10 +65,35 @@
+ 
+ func RunTests(t *testing.T, cases Testcases, format FormatFunc) {
+ 	t.Helper()
++	goldenSrc, goldenDialect := goldenSource(1)
+ 	for name, tc := range cases {
+ 		t.Run(name, func(t *testing.T) {
+ 			sql, args, err := bob.Build(context.Background(), tc.Query)
++
++			g := GoldenCase{
++				Kind:         "query",
++				Dialect:      goldenDialect,
++				Source:       goldenSrc,
++				Name:         name,
++				Doc:          tc.Doc,
++				ExpectedSQL:  tc.ExpectedSQL,
++				GeneratedSQL: sql,
++				CleanSQL:     Clean(sql),
++				Args:         goldenArgs(args),
++			}
+ 			if err != nil {
++				g.BuildErr = err.Error()
++			}
++			if format != nil && err == nil {
++				if n, ferr := format(sql); ferr == nil {
++					g.NormalizedSQL = n
++				} else {
++					g.NormalizeError = ferr.Error()
++				}
++			}
++			goldenEmit(g)
++
++			if err != nil {
+ 				t.Fatalf("error: %v", err)
+ 			}
+ 			diff, err := QueryDiff(tc.ExpectedSQL, sql, format)
+@@ -100,12 +125,32 @@
+ 
+ func RunExpressionTests(t *testing.T, d bob.Dialect, cases ExpressionTestcases) {
+ 	t.Helper()
++	goldenSrc, goldenDialect := goldenSource(1)
+ 	for name, tc := range cases {
+ 		t.Run(name, func(t *testing.T) {
+ 			b := &strings.Builder{}
+ 			args, err := bob.Express(context.Background(), b, d, 1, tc.Expression)
+ 			sql := b.String()
+ 
++			g := GoldenCase{
++				Kind:         "expression",
++				Dialect:      goldenDialect,
++				Source:       goldenSrc,
++				Name:         name,
++				Doc:          tc.Doc,
++				ExpectedSQL:  tc.ExpectedSQL,
++				GeneratedSQL: sql,
++				CleanSQL:     Clean(sql),
++				Args:         goldenArgs(args),
++			}
++			if err != nil {
++				g.BuildErr = err.Error()
++			}
++			if tc.ExpectedError != nil {
++				g.ExpectedError = tc.ExpectedError.Error()
++			}
++			goldenEmit(g)
++
+ 			if diff := ErrDiff(tc.ExpectedError, err); diff != "" {
+ 				t.Fatalf("diff: %s", diff)
+ 			}
