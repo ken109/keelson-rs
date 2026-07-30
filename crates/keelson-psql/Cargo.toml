@@ -28,6 +28,7 @@ keelson-sqlcheck = { workspace = true, features = ["live"] }
 # presence, and no others) — that is pg_query's protobuf, which
 # keelson-sqlcheck deliberately does not re-export.
 pg_query.workspace = true
+proptest.workspace = true
 
 [lints]
 workspace = true

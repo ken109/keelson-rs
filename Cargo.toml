@@ -18,6 +18,7 @@ keelson-psql = { path = "crates/keelson-psql" }
 keelson-sqlite = { path = "crates/keelson-sqlite" }
 
 pg_query = "6"
+proptest = "1"
 regex = "1"
 mysql = "27"
 postgres = "0.19"
