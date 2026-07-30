@@ -91,7 +91,7 @@ pub use conflict::{
     Conflict, ConflictAction, ConflictClause, ConflictTarget, HasConflict, HasConflictClause,
 };
 pub use cte::{Cte, CteCycle, CteSearch, SearchOrder};
-pub use fetch::{Fetch, HasFetch};
+pub use fetch::{Fetch, FirstOrNext, HasFetch};
 pub use frame::{Frame, FrameExclusion, FrameMode, HasFrame};
 pub use from::{
     HasTableRef, IndexHint, IndexHintKind, IndexHintScope, IndexedBy, TableFunctions, TableRef,
@@ -101,7 +101,7 @@ pub use having::{HasHaving, Having};
 pub use join::{HasJoins, Join, JoinKind};
 pub use limit::{HasLimit, Limit};
 pub use lock::{HasLocks, Lock, LockStrength, LockWait, Locks};
-pub use offset::{HasOffset, Offset};
+pub use offset::{HasOffset, Offset, RowsKeyword};
 pub use order_by::{HasOrderBy, NullsPosition, OrderBy, OrderDef, OrderDirection};
 pub use returning::{HasReturning, Returning};
 pub use select::{HasSelectList, SelectList};

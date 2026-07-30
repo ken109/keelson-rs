@@ -116,6 +116,22 @@ not a statement — it takes the column list with it, so choosing a row source c
 one whole production. `PARTITION` is in both and stays. Real MySQL is what caught
 this: the grammar backend accepts the invalid form.
 
+## `OFFSET` and `FETCH` default to `OFFSET n` and `FETCH NEXT n ROWS`
+
+```sql
+OFFSET $1                     -- the default; OFFSET $1 ROWS on request
+FETCH NEXT $1 ROWS ONLY       -- the default; FETCH FIRST $1 ROW ONLY reachable too
+```
+
+`ROW`/`ROWS` and `FIRST`/`NEXT` are pure synonyms in the grammar, so which one a
+statement says can never change what it does — but unlike `SELECT ALL` or
+`UNION DISTINCT`, which are the grammar's defaults and add nothing when written,
+these keywords are part of a spelling a human reads and diffs against existing
+queries. So every spelling is representable (`Offset::rows`,
+`Fetch::first_or_next`, `Fetch::rows`), and the defaults are the tersest common
+form: bare `OFFSET n`, which every dialect accepts, and `FETCH NEXT … ROWS`,
+which is what the clause rendered before the other spellings existed.
+
 ## Formatting is not part of the contract
 
 Tests compare with `keelson_sqlcheck::normalize`, which trims and collapses runs of
