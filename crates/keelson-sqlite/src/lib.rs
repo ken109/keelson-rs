@@ -286,20 +286,22 @@ mod tests {
 
     #[test]
     fn a_statement_missing_a_clause_it_cannot_render_without_says_so() {
-        assert_eq!(
-            insert(()).build().unwrap_err().to_string(),
-            "query is missing the target table of an INSERT"
+        // The substrings name the SQL concepts, not the message wording.
+        let err = insert(()).build().unwrap_err();
+        assert!(
+            matches!(&err, Error::Incomplete(what) if what.contains("INSERT")),
+            "got: {err}"
         );
-        assert_eq!(
-            update(update::table(quote("users")))
-                .build()
-                .unwrap_err()
-                .to_string(),
-            "query is missing the assignments of an UPDATE"
+        let err = update(update::table(quote("users"))).build().unwrap_err();
+        assert!(
+            matches!(&err, Error::Incomplete(what)
+                if what.contains("assignments") && what.contains("UPDATE")),
+            "got: {err}"
         );
-        assert_eq!(
-            delete(()).build().unwrap_err().to_string(),
-            "query is missing the table of a DELETE"
+        let err = delete(()).build().unwrap_err();
+        assert!(
+            matches!(&err, Error::Incomplete(what) if what.contains("DELETE")),
+            "got: {err}"
         );
     }
 
@@ -309,9 +311,13 @@ mod tests {
     #[test]
     fn an_offset_without_a_limit_is_refused() {
         let q = select((select::from(quote("users")), select::offset(5)));
-        assert_eq!(
-            q.build().unwrap_err().to_string(),
-            "query is missing the LIMIT that an OFFSET belongs to"
+        let err = q.build().unwrap_err();
+        // The substrings name the SQL concepts (the missing LIMIT, the dangling
+        // OFFSET), not the message wording.
+        assert!(
+            matches!(&err, Error::Incomplete(what)
+                if what.contains("LIMIT") && what.contains("OFFSET")),
+            "got: {err}"
         );
     }
 
@@ -319,15 +325,21 @@ mod tests {
     /// alongside it.
     #[test]
     fn a_values_statement_refuses_the_clauses_only_a_select_core_has() {
+        // The substrings name the SQL concepts (VALUES plus the refused
+        // clause), not the message wording.
         let q = select((select::values((1, 2)), select::from(quote("users"))));
-        assert_eq!(
-            q.build().unwrap_err().to_string(),
-            "a VALUES statement cannot carry a FROM clause"
+        let err = q.build().unwrap_err();
+        assert!(
+            matches!(&err, Error::Other(msg)
+                if msg.contains("VALUES") && msg.contains("FROM")),
+            "got: {err}"
         );
         let q = select((select::values((1, 2)), select::distinct()));
-        assert_eq!(
-            q.build().unwrap_err().to_string(),
-            "a VALUES statement cannot carry DISTINCT"
+        let err = q.build().unwrap_err();
+        assert!(
+            matches!(&err, Error::Other(msg)
+                if msg.contains("VALUES") && msg.contains("DISTINCT")),
+            "got: {err}"
         );
     }
 }

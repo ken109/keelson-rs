@@ -404,8 +404,12 @@ fn a_from_item_that_is_a_set_returning_function() {
 ///
 /// `gram.y` spells the whole thing as one `func_alias_clause`, so the alias and the
 /// column definitions share a single `AS`. That is why the alias here is
-/// [`Function::as_table`] and not the from-item chain's `as_`: a second alias
-/// would be a second `AS`, which is a syntax error.
+/// [`Function::as_table`] and not the select-list `as_`: a second alias would be
+/// a second `AS`, which is a syntax error. The builder makes that collision
+/// unwritable — `columns`/`as_table` return a `TableFunction`, on which `as_`
+/// (and `over`) does not exist, so `f(..).columns(..).as_("r")` — which used to
+/// compile and render the unparseable `json_to_recordset($1) AS ("a" int) AS "r"`
+/// — is now refused by the type system.
 #[test]
 fn a_function_from_item_names_and_types_its_columns() {
     let args = check(
@@ -682,6 +686,37 @@ fn a_cross_joined_item_keeps_its_decorations() {
         )),
         r#"SELECT "g"."n" FROM ONLY "users" AS "u"
            CROSS JOIN generate_series(1, 2) AS "g" ("n")"#,
+    );
+}
+
+/// A cross-joined item may carry a sampling clause: both operands of `gram.y`'s
+/// `table_ref CROSS JOIN table_ref` are `table_ref`s, and a `table_ref` is
+/// `relation_expr opt_alias_clause tablesample_clause` — so `TABLESAMPLE`
+/// follows the alias there exactly as it does in a plain from-item.
+#[test]
+fn a_cross_joined_item_may_be_sampled() {
+    check(
+        &psql::select((
+            select::columns(quote(("u", "id"))),
+            select::from(quote("users")).as_("u"),
+            select::cross_join(quote("posts"))
+                .as_("p")
+                .tablesample("BERNOULLI", 25),
+        )),
+        r#"SELECT "u"."id" FROM "users" AS "u"
+           CROSS JOIN "posts" AS "p" TABLESAMPLE BERNOULLI (25)"#,
+    );
+
+    check(
+        &psql::select((
+            select::columns(quote(("users", "id"))),
+            select::from(quote("users")),
+            select::cross_join(quote("posts"))
+                .tablesample("SYSTEM", 10)
+                .repeatable(200),
+        )),
+        r#"SELECT "users"."id" FROM "users"
+           CROSS JOIN "posts" TABLESAMPLE SYSTEM (10) REPEATABLE (200)"#,
     );
 }
 
@@ -2659,16 +2694,27 @@ fn an_empty_grouping_element_or_function_list_is_a_recorded_failure() {
             select::from(quote("posts")),
             select::group_by(element),
         ));
-        assert_eq!(
-            q.build().unwrap_err().to_string(),
-            "query is missing the columns of a grouping element"
+        let err = q.build().unwrap_err();
+        // The substring names the SQL concept (a grouping element's columns),
+        // not the message wording.
+        assert!(
+            matches!(&err, psql::Error::Incomplete(what) if what.contains("grouping element")),
+            "got: {err}"
         );
     }
 
-    let q = psql::select((select::columns(quote("id")), select::from_function([])));
-    assert_eq!(
-        q.build().unwrap_err().to_string(),
-        "query is missing the functions of a from-item"
+    // The element type is spelled out because an empty `[]` no longer fixes
+    // it: `from_function` accepts both `Function` and `TableFunction` items.
+    let q = psql::select((
+        select::columns(quote("id")),
+        select::from_function([] as [psql::Function; 0]),
+    ));
+    let err = q.build().unwrap_err();
+    // The substring names the SQL concept (a from-item's functions), not the
+    // message wording.
+    assert!(
+        matches!(&err, psql::Error::Incomplete(what) if what.contains("from-item")),
+        "got: {err}"
     );
 
     // The non-empty forms are unaffected — `GROUPING SETS (())`, the legal empty
@@ -2864,6 +2910,181 @@ fn copying_a_window_and_re_partitioning_it_is_refused_by_the_server() {
         assert!(
             keelson_sqlcheck::live::check(Dialect::Psql, &sql).is_err(),
             "re-partitioning a copied window should be refused: {sql}"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The operators the coverage gate found unexercised (docs/testing-tiers.md)
+// ---------------------------------------------------------------------------
+
+/// 9.7 and 9.16: the remaining pattern and JSON operators. Every placeholder
+/// whose type nothing else pins is wrapped in `CAST`, so the engine tier can
+/// resolve the operator (`jsonb ? $1` alone would be ambiguous or untypable).
+#[test]
+fn the_json_and_array_operators_resolve_under_casts() {
+    // Value-typed results go in the select list.
+    let values: [(Expr, &str); 4] = [
+        (
+            cast(arg("{}"), "jsonb").json_get(s("a")),
+            r#"(CAST($1 AS jsonb) -> 'a')"#,
+        ),
+        (
+            cast(arg("{}"), "jsonb").json_get_text(s("a")),
+            r#"(CAST($1 AS jsonb) ->> 'a')"#,
+        ),
+        (
+            cast(arg("{}"), "jsonb").json_get_path(cast(arg("{a}"), "text[]")),
+            r#"(CAST($1 AS jsonb) #> CAST($2 AS text[]))"#,
+        ),
+        (
+            cast(arg("{}"), "jsonb").json_get_path_text(cast(arg("{a}"), "text[]")),
+            r#"(CAST($1 AS jsonb) #>> CAST($2 AS text[]))"#,
+        ),
+    ];
+    for (value, rendered) in values {
+        check(
+            &psql::select((select::columns(value), select::from(quote("users")))),
+            &format!(r#"SELECT {rendered} FROM "users""#),
+        );
+    }
+
+    // Boolean-typed results are predicates.
+    let predicates: [(Expr, &str); 4] = [
+        (
+            cast(arg("{}"), "jsonb").json_has_key(s("a")),
+            r#"(CAST($1 AS jsonb) ? 'a')"#,
+        ),
+        (
+            cast(arg("{}"), "jsonb").json_has_any_key(cast(arg("{a}"), "text[]")),
+            r#"(CAST($1 AS jsonb) ?| CAST($2 AS text[]))"#,
+        ),
+        (
+            cast(arg("{}"), "jsonb").json_has_all_keys(cast(arg("{a}"), "text[]")),
+            r#"(CAST($1 AS jsonb) ?& CAST($2 AS text[]))"#,
+        ),
+        (
+            cast(arg("{1}"), "int[]").overlaps(cast(arg("{2}"), "int[]")),
+            r#"(CAST($1 AS int[]) && CAST($2 AS int[]))"#,
+        ),
+    ];
+    for (predicate, rendered) in predicates {
+        check(
+            &psql::select((
+                select::columns(quote("id")),
+                select::from(quote("users")),
+                select::where_(predicate),
+            )),
+            &format!(r#"SELECT "id" FROM "users" WHERE {rendered}"#),
+        );
+    }
+}
+
+/// 9.7.3: `!~*`, the one member of the POSIX family the walk above misses; and
+/// 9.13: `@@`, full-text match, framed so the engine can type both sides.
+#[test]
+fn negated_case_insensitive_match_and_text_search() {
+    check(
+        &psql::select((
+            select::columns(quote("id")),
+            select::from(quote("posts")),
+            select::where_(quote("title").not_imatches(arg("^a"))),
+        )),
+        r#"SELECT "id" FROM "posts" WHERE ("title" !~* $1)"#,
+    );
+
+    check(
+        &psql::select((
+            select::columns(quote("id")),
+            select::from(quote("posts")),
+            select::where_(
+                cast(quote("title"), "tsvector").text_search(f("to_tsquery", arg("rust"))),
+            ),
+        )),
+        r#"SELECT "id" FROM "posts" WHERE (CAST("title" AS tsvector) @@ to_tsquery($1))"#,
+    );
+}
+
+/// 9.9.4: `AT TIME ZONE`. The zone is a literal — `s`, not `arg` — only to keep
+/// the expectation readable; a bound zone works the same way.
+#[test]
+fn at_time_zone_rewrites_a_timestamp() {
+    check(
+        &psql::select((
+            select::columns(quote("created_at").at_time_zone(s("UTC"))),
+            select::from(quote("users")),
+        )),
+        r#"SELECT ("created_at" AT TIME ZONE 'UTC') FROM "users""#,
+    );
+}
+
+/// A frame whose *end* is `n PRECEDING` — legal so long as the start is further
+/// back, which `$1 = 5` and `$2 = 2` satisfy when bound.
+#[test]
+fn a_frame_may_end_before_the_current_row() {
+    check(
+        &psql::select((
+            select::columns(f("sum", quote("views")).over((
+                window::order_by(quote("id")),
+                frame::rows(),
+                frame::from_preceding(5),
+                frame::to_preceding(2),
+            ))),
+            select::from(quote("posts")),
+        )),
+        r#"SELECT sum("views") OVER (ORDER BY "id"
+               ROWS BETWEEN 5 PRECEDING AND 2 PRECEDING) FROM "posts""#,
+    );
+}
+
+/// `frame_start` lists `UNBOUNDED FOLLOWING` and `frame_end` lists `UNBOUNDED
+/// PRECEDING`, so [`frame::from_unbounded_following`] and
+/// [`frame::to_unbounded_preceding`] are representable — but the refusal does
+/// not wait for the server: PostgreSQL raises *"frame start cannot be
+/// UNBOUNDED FOLLOWING"* from `gram.y` itself, while building the parse tree,
+/// so even the grammar tier says no. That makes these two the rare
+/// representable-but-unjudgeable constructs: no judged corpus can ever contain
+/// them, which is why they sit in `coverage/psql.exclusions` rather than in
+/// the manifest — and why this test pins the refusal, so that a pg_query
+/// upgrade that starts accepting them fails here and moves them into the
+/// manifest.
+#[test]
+fn the_frame_bounds_the_grammar_itself_refuses() {
+    let cases = [
+        (
+            psql::select((
+                select::columns(f("sum", quote("views")).over((
+                    window::order_by(quote("id")),
+                    frame::rows(),
+                    frame::from_unbounded_following(),
+                    frame::to_unbounded_following(),
+                ))),
+                select::from(quote("posts")),
+            )),
+            "frame start cannot be UNBOUNDED FOLLOWING",
+        ),
+        (
+            psql::select((
+                select::columns(f("sum", quote("views")).over((
+                    window::order_by(quote("id")),
+                    frame::rows(),
+                    frame::from_unbounded_preceding(),
+                    frame::to_unbounded_preceding(),
+                ))),
+                select::from(quote("posts")),
+            )),
+            "frame end cannot be UNBOUNDED PRECEDING",
+        ),
+    ];
+    for (q, refusal) in cases {
+        let (sql, _) = q
+            .build()
+            .expect("it still builds — rendering is not validation");
+        let err = keelson_sqlcheck::check_psql(&sql)
+            .expect_err("gram.y refuses this frame before any judge can see it");
+        assert!(
+            err.contains(refusal),
+            "expected {refusal:?} in the parser's own words: {err}"
         );
     }
 }

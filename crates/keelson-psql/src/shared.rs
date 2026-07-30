@@ -35,7 +35,7 @@ use keelson_core::expr::{Expr, IntoExpr, IntoExprList, IntoIdent};
 use keelson_core::{Mod, mod_fn};
 
 use crate::extras::{Incomplete, LateralBareName, Sample, SampledTable};
-use crate::function::Function;
+use crate::function::TableFunction;
 use crate::statement::{HasExtraTables, HasTargetTable};
 
 // ---------------------------------------------------------------------------
@@ -272,11 +272,23 @@ pub fn target_table(table: impl IntoExpr) -> TableChain<TargetSlot> {
 /// because `ROWS FROM (f())` and `f()` mean the same thing and the shorter form is
 /// what a person writes.
 ///
+/// Each item is a [`Function`](crate::Function) or a [`TableFunction`] — the
+/// latter is what [`Function::columns`](crate::Function::columns)/
+/// [`Function::as_table`](crate::Function::as_table) return, carrying the
+/// `func_alias_clause` a record-returning function needs. A list mixing the two
+/// converts the plain ones with `TableFunction::from`.
+///
 /// *No* functions is not a from-item: an empty [`TableFunctions`] renders nothing,
 /// which would leave the `FROM ` in front of it dangling and make `build()` hand
 /// back unparseable SQL with no error at all. See [`Incomplete`].
-pub fn from_functions(functions: impl IntoIterator<Item = Function>) -> TableChain<FromSlot> {
-    let list: Vec<Expr> = functions.into_iter().map(IntoExpr::into_expr).collect();
+pub fn from_functions<F>(functions: impl IntoIterator<Item = F>) -> TableChain<FromSlot>
+where
+    F: Into<TableFunction>,
+{
+    let list: Vec<Expr> = functions
+        .into_iter()
+        .map(|f| f.into().into_expr())
+        .collect();
     if list.is_empty() {
         return table_chain(Expr::custom(Incomplete("the functions of a from-item")));
     }
@@ -591,6 +603,29 @@ impl CrossJoinChain {
     #[must_use]
     pub fn with_ordinality(self) -> CrossJoinChain {
         CrossJoinChain(self.0.with_ordinality())
+    }
+
+    /// `TABLESAMPLE method (args)` on the cross-joined table.
+    ///
+    /// Grammatical here because both operands of `gram.y`'s
+    /// `table_ref CROSS JOIN table_ref` are `table_ref`s, and a `table_ref` is
+    /// `relation_expr opt_alias_clause tablesample_clause`.
+    #[must_use]
+    pub fn tablesample(
+        self,
+        method: impl Into<Cow<'static, str>>,
+        args: impl IntoExprList,
+    ) -> CrossJoinChain {
+        CrossJoinChain(self.0.tablesample(method, args))
+    }
+
+    /// `REPEATABLE (seed)` on the cross-joined table's sampling clause.
+    ///
+    /// Ignored without a [`tablesample`](Self::tablesample), like
+    /// [`TableChain::repeatable`].
+    #[must_use]
+    pub fn repeatable(self, seed: impl IntoExpr) -> CrossJoinChain {
+        CrossJoinChain(self.0.repeatable(seed))
     }
 }
 

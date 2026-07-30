@@ -453,28 +453,32 @@ fn a_recursive_cte_in_front_of_an_insert() {
 
 #[test]
 fn an_insert_with_no_target_table_refuses_to_build() {
-    assert_eq!(
-        sqlite::insert(insert::values(arg(1i32)))
-            .build()
-            .unwrap_err()
-            .to_string(),
-        "query is missing the target table of an INSERT"
+    let err = sqlite::insert(insert::values(arg(1i32)))
+        .build()
+        .unwrap_err();
+    // The substring names the SQL concept (an INSERT's target table), not the
+    // message wording.
+    assert!(
+        matches!(&err, sqlite::Error::Incomplete(what) if what.contains("INSERT")),
+        "got: {err}"
     );
 }
 
 /// `DO UPDATE` with no `SET` does not parse, so it is refused rather than written.
 #[test]
 fn do_update_with_no_assignments_refuses_to_build() {
-    assert_eq!(
-        sqlite::insert((
-            insert::into(quote("tags")).columns(["name"]),
-            insert::values(arg("rust")),
-            insert::on_conflict(quote("name")).do_update(()),
-        ))
-        .build()
-        .unwrap_err()
-        .to_string(),
-        "query is missing the assignments of ON CONFLICT DO UPDATE"
+    let err = sqlite::insert((
+        insert::into(quote("tags")).columns(["name"]),
+        insert::values(arg("rust")),
+        insert::on_conflict(quote("name")).do_update(()),
+    ))
+    .build()
+    .unwrap_err();
+    // The substring names the SQL concept (the missing assignments), not the
+    // message wording.
+    assert!(
+        matches!(&err, sqlite::Error::Incomplete(what) if what.contains("assignments")),
+        "got: {err}"
     );
 }
 
@@ -484,15 +488,18 @@ fn do_update_with_no_assignments_refuses_to_build() {
 /// at build time rather than handed over to be rejected.
 #[test]
 fn default_values_with_an_upsert_refuses_to_build() {
-    assert_eq!(
-        sqlite::insert((
-            insert::into(quote("users")),
-            insert::on_conflict(()).do_nothing(),
-        ))
-        .build()
-        .unwrap_err()
-        .to_string(),
-        "a DEFAULT VALUES insert cannot carry an ON CONFLICT clause"
+    let err = sqlite::insert((
+        insert::into(quote("users")),
+        insert::on_conflict(()).do_nothing(),
+    ))
+    .build()
+    .unwrap_err();
+    // The substrings name the SQL concepts (DEFAULT VALUES vs ON CONFLICT),
+    // not the message wording.
+    assert!(
+        matches!(&err, sqlite::Error::Other(msg)
+            if msg.contains("DEFAULT VALUES") && msg.contains("ON CONFLICT")),
+        "got: {err}"
     );
 }
 
@@ -500,17 +507,19 @@ fn default_values_with_an_upsert_refuses_to_build() {
 /// without one — `ON CONFLICT WHERE …` is not a production.
 #[test]
 fn an_index_predicate_with_no_column_list_refuses_to_build() {
-    assert_eq!(
-        sqlite::insert((
-            insert::into(quote("tags")).columns(["name"]),
-            insert::values(arg("rust")),
-            insert::on_conflict(())
-                .where_(quote("id").gt(0))
-                .do_nothing(),
-        ))
-        .build()
-        .unwrap_err()
-        .to_string(),
-        "query is missing the column list an ON CONFLICT index predicate belongs to"
+    let err = sqlite::insert((
+        insert::into(quote("tags")).columns(["name"]),
+        insert::values(arg("rust")),
+        insert::on_conflict(())
+            .where_(quote("id").gt(0))
+            .do_nothing(),
+    ))
+    .build()
+    .unwrap_err();
+    // The substring names the SQL concept (the missing column list), not the
+    // message wording.
+    assert!(
+        matches!(&err, sqlite::Error::Incomplete(what) if what.contains("column list")),
+        "got: {err}"
     );
 }

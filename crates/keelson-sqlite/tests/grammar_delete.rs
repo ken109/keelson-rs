@@ -246,11 +246,11 @@ fn returning_after_a_cte() {
 
 #[test]
 fn a_delete_with_no_table_refuses_to_build() {
-    assert_eq!(
-        sqlite::delete(delete::where_("1"))
-            .build()
-            .unwrap_err()
-            .to_string(),
-        "query is missing the table of a DELETE"
+    let err = sqlite::delete(delete::where_("1")).build().unwrap_err();
+    // The substring names the SQL concept (a DELETE's table), not the message
+    // wording.
+    assert!(
+        matches!(&err, sqlite::Error::Incomplete(what) if what.contains("DELETE")),
+        "got: {err}"
     );
 }

@@ -41,8 +41,6 @@ pub struct Function {
     order_by: OrderBy,
     within_group: bool,
     filter: Vec<Expr>,
-    alias: Option<Cow<'static, str>>,
-    columns: Vec<ColumnDef>,
     over: Option<OverClause>,
 }
 
@@ -111,14 +109,18 @@ impl Function {
         self
     }
 
-    /// The alias in front of a set-returning function's column definitions:
-    /// `f() AS "t" ("a" int)`.
+    /// The alias of a set-returning function used as a from-item: `f() AS "t"`,
+    /// or — with [`columns`](TableFunction::columns) — `f() AS "t" ("a" int)`.
     ///
-    /// Not the select-list alias — that is [`as_`](Self::as_).
+    /// Not the select-list alias — that is [`as_`](Self::as_). The two must not
+    /// meet: `gram.y`'s `func_alias_clause` shares one `AS` between the alias
+    /// and the column definitions, so a second alias would be a second `AS`,
+    /// which is a syntax error. That is why this returns a [`TableFunction`],
+    /// on which `as_` — and the rest of the expression-position decorations —
+    /// does not exist.
     #[must_use]
-    pub fn as_table(mut self, alias: impl Into<Cow<'static, str>>) -> Function {
-        self.alias = Some(alias.into());
-        self
+    pub fn as_table(self, alias: impl Into<Cow<'static, str>>) -> TableFunction {
+        TableFunction::from(self).as_table(alias)
     }
 
     /// Name and type the columns a set-returning function returns:
@@ -126,18 +128,18 @@ impl Function {
     ///
     /// The name is quoted; the type is written verbatim, so `int`, `text[]` and
     /// `numeric(10, 2)` all work.
+    ///
+    /// Returns a [`TableFunction`] for the same reason
+    /// [`as_table`](Self::as_table) does: the column definitions spend the one
+    /// `AS` the `func_alias_clause` production has, so the select-list
+    /// [`as_`](Self::as_) cannot be allowed to write another.
     #[must_use]
-    pub fn columns<N, T>(mut self, columns: impl IntoIterator<Item = (N, T)>) -> Function
+    pub fn columns<N, T>(self, columns: impl IntoIterator<Item = (N, T)>) -> TableFunction
     where
         N: Into<Cow<'static, str>>,
         T: Into<Cow<'static, str>>,
     {
-        self.columns.extend(
-            columns
-                .into_iter()
-                .map(|(name, ty)| ColumnDef::new(name, ty)),
-        );
-        self
+        TableFunction::from(self).columns(columns)
     }
 
     /// Attach `OVER (…)`, built from window mods — `psql::window::*` and
@@ -225,17 +227,6 @@ impl Expression for Function {
 
         w.write_slice(&self.filter, " FILTER (WHERE ", " AND ", ")");
 
-        // `AS` introduces the column-definition list, and the alias — when there
-        // is one — sits between them: `f() AS "t" ("a" int)`.
-        if self.alias.is_some() || !self.columns.is_empty() {
-            w.push_str(" AS");
-            if let Some(alias) = &self.alias {
-                w.push_str(" ");
-                w.push_quoted(&[alias]);
-            }
-            w.write_slice(&self.columns, " (", ", ", ")");
-        }
-
         match &self.over {
             None => {}
             Some(OverClause::Name(name)) => {
@@ -258,6 +249,91 @@ impl IntoExpr for Function {
 }
 
 impl IntoExprList for Function {
+    fn into_expr_list(self) -> Vec<Expr> {
+        vec![self.into_expr()]
+    }
+}
+
+/// A [`Function`] committed to the from-item form: the call plus `gram.y`'s
+/// `func_alias_clause`, `[ AS ] [ alias ] ( column_definition [, ...] )`.
+///
+/// [`Function::as_table`] and [`Function::columns`] return this instead of
+/// `Function`, and the expression-position enders — [`Function::as_`],
+/// [`Function::over`], [`Function::over_name`] — do not exist here. That is the
+/// point: `func_alias_clause` has exactly one `AS` shared between the alias and
+/// the column definitions, so `f() AS ("a" int) AS "r"` — the column form plus
+/// the select-list alias — is a syntax error, and this type makes it
+/// unwritable rather than an error to render. The from-item alias *is* the
+/// [`as_table`](Self::as_table) alias.
+///
+/// [`from_functions`](crate::shared::from_functions) accepts a plain
+/// `Function` and a `TableFunction` alike, so `f(..)` and
+/// `f(..).columns(..)` both go straight in.
+#[derive(Debug, Clone)]
+pub struct TableFunction {
+    function: Function,
+    alias: Option<Cow<'static, str>>,
+    columns: Vec<ColumnDef>,
+}
+
+impl TableFunction {
+    /// The alias in front of the column definitions: `f() AS "t" ("a" int)`.
+    #[must_use]
+    pub fn as_table(mut self, alias: impl Into<Cow<'static, str>>) -> TableFunction {
+        self.alias = Some(alias.into());
+        self
+    }
+
+    /// Add column definitions. Several calls accumulate into the one list.
+    #[must_use]
+    pub fn columns<N, T>(mut self, columns: impl IntoIterator<Item = (N, T)>) -> TableFunction
+    where
+        N: Into<Cow<'static, str>>,
+        T: Into<Cow<'static, str>>,
+    {
+        self.columns.extend(
+            columns
+                .into_iter()
+                .map(|(name, ty)| ColumnDef::new(name, ty)),
+        );
+        self
+    }
+}
+
+impl From<Function> for TableFunction {
+    fn from(function: Function) -> TableFunction {
+        TableFunction {
+            function,
+            alias: None,
+            columns: Vec::new(),
+        }
+    }
+}
+
+impl Expression for TableFunction {
+    fn write_sql(&self, w: &mut SqlWriter<'_>) {
+        self.function.write_sql(w);
+
+        // `AS` introduces the column-definition list, and the alias — when there
+        // is one — sits between them: `f() AS "t" ("a" int)`.
+        if self.alias.is_some() || !self.columns.is_empty() {
+            w.push_str(" AS");
+            if let Some(alias) = &self.alias {
+                w.push_str(" ");
+                w.push_quoted(&[alias]);
+            }
+            w.write_slice(&self.columns, " (", ", ", ")");
+        }
+    }
+}
+
+impl IntoExpr for TableFunction {
+    fn into_expr(self) -> Expr {
+        Expr::custom(self)
+    }
+}
+
+impl IntoExprList for TableFunction {
     fn into_expr_list(self) -> Vec<Expr> {
         vec![self.into_expr()]
     }
@@ -398,6 +474,11 @@ mod tests {
     #[test]
     fn an_unnamed_call_is_a_recorded_failure() {
         let err = build(&Psql, &Function::default()).unwrap_err();
-        assert_eq!(err.to_string(), "query is missing the name of a function");
+        // The substring names the SQL concept (a function's name), not the
+        // message wording.
+        assert!(
+            matches!(&err, keelson_core::Error::Incomplete(what) if what.contains("function")),
+            "got: {err}"
+        );
     }
 }

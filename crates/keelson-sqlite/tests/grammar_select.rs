@@ -1162,3 +1162,166 @@ fn a_filter_on_a_window_function() {
         r#"SELECT count(*) FILTER (WHERE ("views" > 0)) OVER (PARTITION BY "status") FROM "posts""#,
     );
 }
+
+// ---------------------------------------------------------------------------
+// The constructs the coverage gate found unexercised (docs/testing-tiers.md)
+// ---------------------------------------------------------------------------
+
+/// A comma in `FROM` — SQLite's `table-or-subquery [, ...]` alternative to a
+/// join clause; the comma means `CROSS JOIN`.
+#[test]
+fn a_second_from_item_joins_with_a_comma() {
+    built(
+        sqlite::select((
+            select::columns(quote(("users", "id"))),
+            select::from(quote("users")),
+            select::from_also(quote("posts")),
+            select::where_(quote(("posts", "user_id")).eq(quote(("users", "id")))),
+        )),
+        r#"SELECT "users"."id" FROM "users", "posts"
+           WHERE ("posts"."user_id" = "users"."id")"#,
+    );
+}
+
+/// The two frame exclusions the window walk above misses.
+#[test]
+fn a_frame_may_exclude_the_current_row_or_its_group() {
+    built(
+        sqlite::select((
+            select::columns(f("count", "*").over((
+                window::order_by(quote("id")),
+                frame::rows(),
+                frame::from_preceding(1),
+                frame::to_following(1),
+                frame::exclude_current_row(),
+            ))),
+            select::from(quote("posts")),
+        )),
+        r#"SELECT count(*) OVER (ORDER BY "id"
+           ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING EXCLUDE CURRENT ROW) FROM "posts""#,
+    );
+
+    built(
+        sqlite::select((
+            select::columns(f("count", "*").over((
+                window::order_by(quote("status")),
+                frame::groups(),
+                frame::from_preceding(1),
+                frame::to_following(1),
+                frame::exclude_group(),
+            ))),
+            select::from(quote("posts")),
+        )),
+        r#"SELECT count(*) OVER (ORDER BY "status"
+           GROUPS BETWEEN 1 PRECEDING AND 1 FOLLOWING EXCLUDE GROUP) FROM "posts""#,
+    );
+}
+
+/// The negated and less-travelled predicates of `expr`
+/// (<https://www.sqlite.org/lang_expr.html>), each engine-checked against a
+/// real column.
+#[test]
+fn every_remaining_comparison_predicate() {
+    let predicates: [(Expr, &str); 8] = [
+        (quote("age").lte(arg(65i32)), r#"("age" <= ?1)"#),
+        (
+            quote("id").not_in((arg(1i32), arg(2i32))),
+            r#"("id" NOT IN (?1, ?2))"#,
+        ),
+        (
+            quote("age").not_between(arg(18i32), arg(65i32)),
+            r#"("age" NOT BETWEEN ?1 AND ?2)"#,
+        ),
+        (
+            quote("name").not_glob(s("Ada*")),
+            r#"("name" NOT GLOB 'Ada*')"#,
+        ),
+        (quote("name").not_like(arg("a%")), r#"("name" NOT LIKE ?1)"#),
+        (quote("email").is_(quote("name")), r#"("email" IS "name")"#),
+        (
+            quote("email").is_not(quote("name")),
+            r#"("email" IS NOT "name")"#,
+        ),
+        (
+            quote("email").is_distinct_from(quote("name")),
+            r#"("email" IS DISTINCT FROM "name")"#,
+        ),
+    ];
+    for (predicate, rendered) in predicates {
+        built(
+            sqlite::select((
+                select::columns(quote("id")),
+                select::from(quote("users")),
+                select::where_(predicate),
+            )),
+            &format!(r#"SELECT "id" FROM "users" WHERE {rendered}"#),
+        );
+    }
+
+    built(
+        sqlite::select((
+            select::columns(quote("id")),
+            select::from(quote("users")),
+            select::where_(quote("email").is_not_distinct_from(quote("name"))),
+        )),
+        r#"SELECT "id" FROM "users" WHERE ("email" IS NOT DISTINCT FROM "name")"#,
+    );
+}
+
+/// `MATCH` is in the grammar's binary-operator production and *prepares*
+/// against an ordinary table — it is only running the statement that fails
+/// without a virtual table behind it — so the engine tier can judge it like
+/// any other operator.
+#[test]
+fn match_prepares_against_an_ordinary_table() {
+    for (predicate, rendered) in [
+        (quote("name").match_(arg("a")), r#"("name" MATCH ?1)"#),
+        (
+            quote("name").not_match(arg("a")),
+            r#"("name" NOT MATCH ?1)"#,
+        ),
+    ] {
+        built(
+            sqlite::select((
+                select::columns(quote("id")),
+                select::from(quote("users")),
+                select::where_(predicate),
+            )),
+            &format!(r#"SELECT "id" FROM "users" WHERE {rendered}"#),
+        );
+    }
+}
+
+/// `REGEXP` also parses, but unlike `MATCH` it resolves to a `regexp()`
+/// function at *prepare* time and a stock SQLite ships none — so the grammar
+/// tier is the only judge it can have, and the engine's refusal is pinned
+/// rather than skipped: a SQLite that starts shipping `regexp()` shows up
+/// here.
+#[test]
+fn regexp_parses_but_needs_an_application_supplied_function() {
+    use keelson_sqlcheck::normalize;
+
+    for (predicate, rendered) in [
+        (quote("name").regexp(arg("^a")), r#"("name" REGEXP ?1)"#),
+        (
+            quote("name").not_regexp(arg("^a")),
+            r#"("name" NOT REGEXP ?1)"#,
+        ),
+    ] {
+        let q = sqlite::select((
+            select::columns(quote("id")),
+            select::from(quote("users")),
+            select::where_(predicate),
+        ));
+        let (sql, _) = q.build().expect("the query must build");
+        let expected = format!(r#"SELECT "id" FROM "users" WHERE {rendered}"#);
+        assert_eq!(normalize(&sql), normalize(&expected));
+        keelson_sqlcheck::assert_valid(Dialect::Sqlite, &sql);
+        if keelson_sqlcheck::live::available().contains(&Dialect::Sqlite) {
+            assert!(
+                keelson_sqlcheck::live::check(Dialect::Sqlite, &sql).is_err(),
+                "a stock SQLite has no regexp() to prepare against: {sql}"
+            );
+        }
+    }
+}

@@ -393,7 +393,12 @@ fn an_update_with_no_table_is_a_recorded_failure() {
     let err = mysql::update(update::set_col("age").to_arg(1i32))
         .build()
         .unwrap_err();
-    assert_eq!(err.to_string(), "query is missing the table of an UPDATE");
+    // The substring names the SQL concept (an UPDATE's table), not the message
+    // wording.
+    assert!(
+        matches!(&err, mysql::Error::Incomplete(what) if what.contains("UPDATE")),
+        "got: {err}"
+    );
 }
 
 /// `UPDATE t` with no `SET` is not a statement, so an empty assignment list is a
@@ -403,8 +408,11 @@ fn an_update_with_no_assignments_is_a_recorded_failure() {
     let err = mysql::update(update::table(quote("users")))
         .build()
         .unwrap_err();
-    assert_eq!(
-        err.to_string(),
-        "query is missing the assignments of an UPDATE"
+    // The substrings name the SQL concepts (an UPDATE's assignments), not the
+    // message wording.
+    assert!(
+        matches!(&err, mysql::Error::Incomplete(what)
+            if what.contains("assignments") && what.contains("UPDATE")),
+        "got: {err}"
     );
 }

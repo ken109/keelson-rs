@@ -358,7 +358,12 @@ fn a_delete_with_no_table_is_a_recorded_failure() {
     let err = mysql::delete(delete::where_(quote("id").eq(arg(1i32))))
         .build()
         .unwrap_err();
-    assert_eq!(err.to_string(), "query is missing the table of a DELETE");
+    // The substring names the SQL concept (a DELETE's table), not the message
+    // wording.
+    assert!(
+        matches!(&err, mysql::Error::Incomplete(what) if what.contains("DELETE")),
+        "got: {err}"
+    );
 }
 
 /// A `USING` list with no `FROM` table is not a repair of anything either.
@@ -367,5 +372,10 @@ fn a_delete_with_only_a_using_list_is_a_recorded_failure() {
     let err = mysql::delete(delete::using(quote("posts")))
         .build()
         .unwrap_err();
-    assert_eq!(err.to_string(), "query is missing the table of a DELETE");
+    // The substring names the SQL concept (a DELETE's table), not the message
+    // wording.
+    assert!(
+        matches!(&err, mysql::Error::Incomplete(what) if what.contains("DELETE")),
+        "got: {err}"
+    );
 }

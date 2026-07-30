@@ -349,9 +349,12 @@ mod tests {
         let mut t = ConflictTarget::default();
         t.where_mut().append_where("deleted_at IS NULL");
         assert!(!t.is_empty());
-        assert_eq!(
-            build(&Numbered, &t).unwrap_err().to_string(),
-            "query is missing the column list an ON CONFLICT index predicate belongs to"
+        let err = build(&Numbered, &t).unwrap_err();
+        // The substring names the SQL concept (the missing column list), not
+        // the message wording.
+        assert!(
+            matches!(&err, Error::Incomplete(what) if what.contains("column list")),
+            "got: {err}"
         );
     }
 
@@ -381,11 +384,12 @@ mod tests {
     fn do_update_without_assignments_is_a_recorded_failure() {
         // `DO UPDATE` with no SET does not parse, so it is refused rather than
         // written.
-        assert_eq!(
-            build(&Numbered, &ConflictClause::do_update())
-                .unwrap_err()
-                .to_string(),
-            "query is missing the assignments of ON CONFLICT DO UPDATE"
+        let err = build(&Numbered, &ConflictClause::do_update()).unwrap_err();
+        // The substring names the SQL concept (the missing assignments), not
+        // the message wording.
+        assert!(
+            matches!(&err, Error::Incomplete(what) if what.contains("assignments")),
+            "got: {err}"
         );
     }
 

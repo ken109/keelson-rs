@@ -338,12 +338,14 @@ fn a_cte_in_front_of_an_update() {
 
 #[test]
 fn an_update_with_no_target_table_refuses_to_build() {
-    assert_eq!(
-        sqlite::update(update::set_col("name").to(s("a")))
-            .build()
-            .unwrap_err()
-            .to_string(),
-        "query is missing the table of an UPDATE"
+    let err = sqlite::update(update::set_col("name").to(s("a")))
+        .build()
+        .unwrap_err();
+    // The substring names the SQL concept (an UPDATE's table), not the message
+    // wording.
+    assert!(
+        matches!(&err, sqlite::Error::Incomplete(what) if what.contains("UPDATE")),
+        "got: {err}"
     );
 }
 
@@ -351,11 +353,14 @@ fn an_update_with_no_target_table_refuses_to_build() {
 /// recorded failure rather than a clause that renders nothing.
 #[test]
 fn an_update_with_no_assignments_refuses_to_build() {
-    assert_eq!(
-        sqlite::update(update::table(quote("users")))
-            .build()
-            .unwrap_err()
-            .to_string(),
-        "query is missing the assignments of an UPDATE"
+    let err = sqlite::update(update::table(quote("users")))
+        .build()
+        .unwrap_err();
+    // The substrings name the SQL concepts (an UPDATE's assignments), not the
+    // message wording.
+    assert!(
+        matches!(&err, sqlite::Error::Incomplete(what)
+            if what.contains("assignments") && what.contains("UPDATE")),
+        "got: {err}"
     );
 }

@@ -366,9 +366,12 @@ mod tests {
             name: "c".into(),
             ..Cte::default()
         };
-        assert_eq!(
-            build(&Numbered, &cte).unwrap_err().to_string(),
-            "query is missing the query of a CTE"
+        let err = build(&Numbered, &cte).unwrap_err();
+        // The substring names the SQL concept (a CTE's body), not the message
+        // wording.
+        assert!(
+            matches!(&err, Error::Incomplete(what) if what.contains("CTE")),
+            "got: {err}"
         );
     }
 
@@ -420,9 +423,13 @@ mod tests {
             columns: vec!["id".into()],
             ..CteSearch::default()
         };
-        assert_eq!(
-            build(&Numbered, &search).unwrap_err().to_string(),
-            "query is missing the SET column of a CTE SEARCH clause"
+        let err = build(&Numbered, &search).unwrap_err();
+        // The substrings name the SQL concepts (SET column, SEARCH clause), not
+        // the message wording.
+        assert!(
+            matches!(&err, Error::Incomplete(what)
+                if what.contains("SET") && what.contains("SEARCH")),
+            "got: {err}"
         );
     }
 
@@ -445,9 +452,13 @@ mod tests {
         assert!(args.is_empty(), "a constant binds nothing");
 
         cycle.default_val = None;
-        assert_eq!(
-            build(&Numbered, &cycle).unwrap_err().to_string(),
-            "query is missing both TO and DEFAULT of a CTE CYCLE clause"
+        let err = build(&Numbered, &cycle).unwrap_err();
+        // The substrings name the SQL concepts (TO/DEFAULT of a CYCLE clause),
+        // not the message wording.
+        assert!(
+            matches!(&err, Error::Incomplete(what)
+                if what.contains("TO") && what.contains("DEFAULT") && what.contains("CYCLE")),
+            "got: {err}"
         );
     }
 
@@ -457,9 +468,13 @@ mod tests {
             columns: vec!["id".into()],
             ..CteCycle::default()
         };
-        assert_eq!(
-            build(&Numbered, &cycle).unwrap_err().to_string(),
-            "query is missing the SET and USING columns of a CTE CYCLE clause"
+        let err = build(&Numbered, &cycle).unwrap_err();
+        // The substrings name the SQL concepts (SET/USING of a CYCLE clause),
+        // not the message wording.
+        assert!(
+            matches!(&err, Error::Incomplete(what)
+                if what.contains("SET") && what.contains("USING") && what.contains("CYCLE")),
+            "got: {err}"
         );
     }
 }

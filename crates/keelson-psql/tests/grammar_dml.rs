@@ -681,9 +681,12 @@ fn do_update_without_assignments_is_a_build_error() {
         insert::values((arg(1i32), arg("rust"))),
         insert::on_conflict(quote("name")).do_update(()),
     ));
-    assert_eq!(
-        q.build().unwrap_err().to_string(),
-        "query is missing the assignments of ON CONFLICT DO UPDATE"
+    let err = q.build().unwrap_err();
+    // The substring names the SQL concept (the missing assignments), not the
+    // message wording.
+    assert!(
+        matches!(&err, psql::Error::Incomplete(what) if what.contains("assignments")),
+        "got: {err}"
     );
 }
 
@@ -698,9 +701,12 @@ fn an_index_predicate_without_a_column_list_is_a_build_error() {
             .where_(quote("id").is_not_null())
             .do_nothing(),
     ));
-    assert_eq!(
-        q.build().unwrap_err().to_string(),
-        "query is missing the column list an ON CONFLICT index predicate belongs to"
+    let err = q.build().unwrap_err();
+    // The substring names the SQL concept (the missing column list), not the
+    // message wording.
+    assert!(
+        matches!(&err, psql::Error::Incomplete(what) if what.contains("column list")),
+        "got: {err}"
     );
 }
 
@@ -1256,9 +1262,13 @@ fn update_without_assignments_is_a_build_error() {
         update::table(quote("posts")),
         update::where_(quote("id").eq(arg(1i32))),
     ));
-    assert_eq!(
-        q.build().unwrap_err().to_string(),
-        "query is missing the assignments of an UPDATE"
+    let err = q.build().unwrap_err();
+    // The substrings name the SQL concepts (an UPDATE's assignments), not the
+    // message wording.
+    assert!(
+        matches!(&err, psql::Error::Incomplete(what)
+            if what.contains("assignments") && what.contains("UPDATE")),
+        "got: {err}"
     );
 }
 
@@ -1785,30 +1795,38 @@ fn a_qualified_assignment_target_is_refused_by_postgresql() {
     );
 }
 
-/// The dangerous shape: a from-item list whose *leading* entry is missing renders
-/// with no `FROM` at all, because `FROM , "u"` would repair nothing. The result is
-/// valid SQL that both tiers accept and that updates every row — so only the
-/// comparison against intent catches it. Written down because a caller who reaches
-/// for `from_also` first gets no diagnostic of any kind.
+/// The dangerous shape: a from-item list whose *leading* entry is missing has
+/// nothing for `from_also` to extend — dropping it silently used to render
+/// valid SQL that updates every row. The missing leading item is
+/// a `build()` error instead.
 #[test]
-fn an_extra_from_item_with_no_leading_one_is_dropped_silently() {
+fn an_extra_from_item_with_no_leading_one_is_a_build_error() {
     let q = psql::update((
         update::table(quote("posts")),
         update::set_col("status").to_arg("archived"),
         update::from_also(quote("users")).as_("u"),
     ));
-    let args = check(&q, r#"UPDATE "posts" SET "status" = $1"#);
-    assert_eq!(args, vec![Value::Text("archived".into())]);
+    let err = q.build().unwrap_err();
+    // The substring names the SQL concept (the missing leading FROM item), not
+    // the message wording.
+    assert!(
+        matches!(&err, psql::Error::Incomplete(what) if what.contains("FROM")),
+        "got: {err}"
+    );
 }
 
 /// The same rule on a `DELETE`, whose list is spelled `USING`.
 #[test]
-fn an_extra_using_item_with_no_leading_one_is_dropped_silently() {
+fn an_extra_using_item_with_no_leading_one_is_a_build_error() {
     let q = psql::delete((
         delete::from(quote("comments")),
         delete::using_also(quote("posts")).as_("p"),
     ));
-    assert!(check(&q, r#"DELETE FROM "comments""#).is_empty());
+    let err = q.build().unwrap_err();
+    assert!(
+        matches!(&err, psql::Error::Incomplete(what) if what.contains("USING")),
+        "got: {err}"
+    );
 }
 
 /// `VALUES ()` is not a row in PostgreSQL, so an empty one is dropped rather than

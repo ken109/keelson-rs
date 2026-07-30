@@ -65,10 +65,12 @@ pub trait HasExtraTables {
 /// either; and if the leading item is absent the whole clause goes, because
 /// `FROM , "x"` is not a repair of anything.
 ///
-/// One thing must not go with it: joins. They hang off the leading item, so
-/// with no item they have nowhere to attach — and dropping a join the caller
-/// asked for would build *valid* SQL that silently means something else, which
-/// no grammar or engine can catch after the fact. That is recorded as
+/// Two things must not go with it: joins and the extra items. Joins hang off
+/// the leading item, so with no item they have nowhere to attach; extra items
+/// are second and later entries of a list the leading item opens, so with no
+/// item there is no list to be in. Dropping either one the caller asked for
+/// would build *valid* SQL that silently means something else, which no
+/// grammar or engine can catch after the fact. That is recorded as
 /// [`Error::Incomplete`](keelson_core::Error::Incomplete) with `missing`
 /// naming the absent item (`FROM` or `USING`, per statement).
 fn write_from_list(
@@ -79,7 +81,7 @@ fn write_from_list(
     missing: &'static str,
 ) {
     if first.is_empty() {
-        if !first.joins.is_empty() {
+        if !first.joins.is_empty() || rest.iter().any(|t| !t.is_empty()) {
             w.record_error(keelson_core::Error::Incomplete(missing));
         }
         return;

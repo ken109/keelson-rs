@@ -301,24 +301,27 @@ mod tests {
 
     #[test]
     fn a_statement_missing_a_clause_it_cannot_render_without_says_so() {
-        assert_eq!(
-            insert(()).build().unwrap_err().to_string(),
-            "query is missing the target table of an INSERT"
+        // The substrings name the SQL concepts, not the message wording.
+        let err = insert(()).build().unwrap_err();
+        assert!(
+            matches!(&err, Error::Incomplete(what) if what.contains("INSERT")),
+            "got: {err}"
         );
-        assert_eq!(
-            replace(()).build().unwrap_err().to_string(),
-            "query is missing the target table of a REPLACE"
+        let err = replace(()).build().unwrap_err();
+        assert!(
+            matches!(&err, Error::Incomplete(what) if what.contains("REPLACE")),
+            "got: {err}"
         );
-        assert_eq!(
-            update(update::table(quote("users")))
-                .build()
-                .unwrap_err()
-                .to_string(),
-            "query is missing the assignments of an UPDATE"
+        let err = update(update::table(quote("users"))).build().unwrap_err();
+        assert!(
+            matches!(&err, Error::Incomplete(what)
+                if what.contains("assignments") && what.contains("UPDATE")),
+            "got: {err}"
         );
-        assert_eq!(
-            delete(()).build().unwrap_err().to_string(),
-            "query is missing the table of a DELETE"
+        let err = delete(()).build().unwrap_err();
+        assert!(
+            matches!(&err, Error::Incomplete(what) if what.contains("DELETE")),
+            "got: {err}"
         );
     }
 }

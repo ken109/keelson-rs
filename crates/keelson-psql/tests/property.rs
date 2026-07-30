@@ -1,4 +1,4 @@
-//! Property-based tests of recursive nesting (Linear DEV-183).
+//! Property-based tests of recursive nesting.
 //!
 //! Combinatorial coverage handles clause *presence*; it cannot reach the
 //! recursive part of the grammar, where expressions and sub-queries nest without

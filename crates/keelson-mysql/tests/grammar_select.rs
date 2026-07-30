@@ -335,6 +335,48 @@ fn a_lateral_derived_table_sees_the_items_before_it() {
     );
 }
 
+/// *15.2.15.9 Lateral Derived Tables*: `LATERAL` is grammatical only in front
+/// of a derived table — ``FROM LATERAL `posts` `` is a syntax error with
+/// nothing to mean, since a base table cannot see the items before it anyway.
+/// `.lateral()` on a bare table or CTE name records the error at the call and
+/// `build()` refuses — the same judgment keelson-psql applies to
+/// PostgreSQL's grammar.
+#[test]
+fn lateral_on_a_bare_table_is_a_build_error() {
+    use keelson_mysql::Query as _;
+
+    let q = mysql::select((
+        select::from(quote("users")),
+        select::inner_join(quote("posts")).lateral().on(raw("TRUE")),
+    ));
+    assert_eq!(
+        q.build().unwrap_err().to_string(),
+        "LATERAL is set on a bare table or CTE name, but LATERAL can precede only a derived table"
+    );
+
+    // The comma-list path is judged the same way.
+    let q = mysql::select((
+        select::from(quote("users")),
+        select::from_also(quote("posts")).lateral(),
+    ));
+    assert!(q.build().is_err(), "a comma-listed bare name is no better");
+
+    // A raw fragment stays trusted — progressive enhancement means
+    // hand-written SQL is never judged — and a derived table is exactly what
+    // the keyword is for (`a_lateral_derived_table_sees_the_items_before_it`).
+    let q = mysql::select((
+        select::columns(quote(("d", "one"))),
+        select::from(quote("users")).as_("u"),
+        select::from_also(raw("(SELECT 1 AS `one`)"))
+            .lateral()
+            .as_("d"),
+    ));
+    check(
+        &q,
+        "SELECT `d`.`one` FROM `users` AS `u`, LATERAL (SELECT 1 AS `one`) AS `d`",
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Index hints
 // ---------------------------------------------------------------------------
@@ -1280,4 +1322,160 @@ fn a_conditional_mod_is_an_option() {
         (!admin).then(|| select::where_(quote("is_active").eq(arg(true)))),
     ));
     check(&q, "SELECT `id` FROM `users`");
+}
+
+// ---------------------------------------------------------------------------
+// The constructs the coverage gate found unexercised (docs/testing-tiers.md)
+// ---------------------------------------------------------------------------
+
+/// *10.9.2*: `RESOURCE_GROUP` is the one fixed-shape hint the walk above
+/// misses. The group need not exist for `PREPARE` — an unresolvable hint is a
+/// warning, which is the whole point of hints.
+#[test]
+fn the_resource_group_hint() {
+    let q = mysql::select((
+        select::resource_group("batch"),
+        select::columns(quote("id")),
+        select::from(quote("users")),
+    ));
+    check(&q, "SELECT /*+ RESOURCE_GROUP(batch) */ `id` FROM `users`");
+}
+
+/// *15.2.14 / 15.2.4*: the `ALL` spellings of `INTERSECT` and `EXCEPT`
+/// (8.0.31, same release as the operators themselves).
+#[test]
+fn intersect_all_and_except_all_keep_duplicates() {
+    let posts = || {
+        mysql::select((
+            select::columns(quote("user_id")),
+            select::from(quote("posts")),
+        ))
+    };
+    let q = mysql::select((
+        select::columns(quote("id")),
+        select::from(quote("users")),
+        select::intersect_all(posts()),
+    ));
+    check(
+        &q,
+        "SELECT `id` FROM `users` INTERSECT ALL (SELECT `user_id` FROM `posts`)",
+    );
+
+    let q = mysql::select((
+        select::columns(quote("id")),
+        select::from(quote("users")),
+        select::except_all(posts()),
+    ));
+    check(
+        &q,
+        "SELECT `id` FROM `users` EXCEPT ALL (SELECT `user_id` FROM `posts`)",
+    );
+}
+
+/// *14.20.2*: a frame that runs from the current row to the partition's end —
+/// the one bound the frame walk above never reaches.
+#[test]
+fn a_frame_may_run_to_unbounded_following() {
+    let q = mysql::select((
+        select::columns(f("SUM", quote("views")).over((
+            window::order_by(quote("id")),
+            frame::rows(),
+            frame::from_current_row(),
+            frame::to_unbounded_following(),
+        ))),
+        select::from(quote("posts")),
+    ));
+    check(
+        &q,
+        "SELECT SUM(`views`) OVER (ORDER BY `id` \
+         ROWS BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING) FROM `posts`",
+    );
+}
+
+/// The negated and less-travelled comparison predicates (*14.4.2*, *14.8.2*).
+/// Each is a one-line spelling of its production; what the engine tier adds is
+/// that every one of them still resolves against real columns.
+#[test]
+fn every_remaining_comparison_predicate() {
+    let predicates: [(mysql::Expr, &str); 8] = [
+        (
+            quote("id").not_in((arg(1i32), arg(2i32))),
+            "(`id` NOT IN (?, ?))",
+        ),
+        (quote("email").is_not_null(), "(`email` IS NOT NULL)"),
+        (
+            quote("age").not_between(arg(1i32), arg(9i32)),
+            "(`age` NOT BETWEEN ? AND ?)",
+        ),
+        (
+            quote("name").like_escape(arg("a!_%"), s("!")),
+            "(`name` LIKE ? ESCAPE '!')",
+        ),
+        (quote("name").not_regexp(arg("^a")), "(`name` NOT REGEXP ?)"),
+        (quote("name").rlike(arg("^a")), "(`name` RLIKE ?)"),
+        (quote("age").bang_eq(arg(21i32)), "(`age` != ?)"),
+        (
+            quote("id").ne_all(mysql::query(mysql::select((
+                select::columns(quote("user_id")),
+                select::from(quote("posts")),
+            )))),
+            "(`id` <> ALL (SELECT `user_id` FROM `posts`))",
+        ),
+    ];
+    for (predicate, rendered) in predicates {
+        check(
+            &mysql::select((
+                select::columns(quote("id")),
+                select::from(quote("users")),
+                select::where_(predicate),
+            )),
+            &format!("SELECT `id` FROM `users` WHERE {rendered}"),
+        );
+    }
+}
+
+/// *14.3.2*: the three-valued tests the boolean walk above misses. MySQL has
+/// no boolean type — `is_active` is `tinyint(1)` — and `IS TRUE` is defined on
+/// numbers, which is exactly what makes these engine-checkable here.
+#[test]
+fn the_remaining_boolean_tests() {
+    let predicates: [(mysql::Expr, &str); 4] = [
+        (
+            quote("is_active").is_not_true(),
+            "(`is_active` IS NOT TRUE)",
+        ),
+        (quote("is_active").is_false(), "(`is_active` IS FALSE)"),
+        (
+            quote("is_active").is_not_false(),
+            "(`is_active` IS NOT FALSE)",
+        ),
+        (quote("is_active").is_unknown(), "(`is_active` IS UNKNOWN)"),
+    ];
+    for (predicate, rendered) in predicates {
+        check(
+            &mysql::select((
+                select::columns(quote("id")),
+                select::from(quote("users")),
+                select::where_(predicate),
+            )),
+            &format!("SELECT `id` FROM `users` WHERE {rendered}"),
+        );
+    }
+}
+
+/// *14.12*: the bit operators the arithmetic walk above misses. Values, not
+/// predicates, so they stand in the select list.
+#[test]
+fn the_remaining_bit_operators() {
+    let values: [(mysql::Expr, &str); 3] = [
+        (quote("views").bit_or(arg(8i32)), "(`views` | ?)"),
+        (quote("views").bit_xor(arg(8i32)), "(`views` ^ ?)"),
+        (quote("views").shift_right(arg(2i32)), "(`views` >> ?)"),
+    ];
+    for (value, rendered) in values {
+        check(
+            &mysql::select((select::columns(value), select::from(quote("posts")))),
+            &format!("SELECT {rendered} FROM `posts`"),
+        );
+    }
 }

@@ -779,3 +779,35 @@ fn delete_every_clause_against_every_other() {
     );
     assert!(cases >= 32, "the cross product shrank: {cases}");
 }
+
+/// The twin of the join-mods guard: the extra from-items of `from_also` are
+/// second and later entries of the list the leading `FROM` item opens, so with
+/// no leading item they used to be dropped silently — valid SQL, the caller's
+/// item simply gone. Now `build()` refuses. DELETE has no from-item
+/// list at all — no `using`, no `from_also` — so SELECT and UPDATE are the
+/// whole surface.
+#[test]
+fn extra_from_items_without_a_leading_item_are_a_build_error() {
+    let q = sqlite::select((
+        select::columns(quote("id")),
+        select::from_also(quote("users")),
+    ));
+    let err = q.build().unwrap_err();
+    // The substring names the SQL concept (the missing leading FROM item), not
+    // the message wording.
+    assert!(
+        matches!(&err, sqlite::Error::Incomplete(what) if what.contains("FROM")),
+        "got: {err}"
+    );
+
+    let q = sqlite::update((
+        update::table(quote("posts")),
+        update::set_col("views").to(arg(1i32)),
+        update::from_also(quote("users")),
+    ));
+    let err = q.build().unwrap_err();
+    assert!(
+        matches!(&err, sqlite::Error::Incomplete(what) if what.contains("FROM")),
+        "got: {err}"
+    );
+}

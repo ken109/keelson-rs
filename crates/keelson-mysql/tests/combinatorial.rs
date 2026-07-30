@@ -224,8 +224,14 @@ fn run<Q: Query + Clone>(
             }
         };
 
-        // Advisory grammar tier: only where sqlparser has no known gap.
+        // Advisory grammar tier: only where sqlparser has no known gap. A
+        // gap-flagged case is still judged (string intent below, engine when
+        // compiled in), so its SQL still belongs in Tier D's recording —
+        // `check_mysql` records only on success, which a gap never reaches.
         let has_gap = selected.iter().any(|p| p.gap);
+        if has_gap {
+            keelson_sqlcheck::record(Dialect::Mysql, &sql);
+        }
         if !has_gap && let Err(e) = keelson_sqlcheck::check_mysql(&sql) {
             failures.push(format!(
                 "[{}] sqlparser rejected (no gap declared): {e}\n  sql: {sql}",
@@ -1100,4 +1106,47 @@ fn delete_multi_table_every_clause_against_every_other() {
         assemble,
     );
     assert!(cases >= 6, "the cross product shrank: {cases}");
+}
+
+/// The twin of the join-mods guard: the extra table references of
+/// `from_also` / `using_also` are second and later entries of the list the
+/// leading item opens, so with no leading item they used to be dropped
+/// silently — valid SQL, the caller's item simply gone. Now `build()` refuses
+/// (DEV-201). `UPDATE` diverges the same way it did for joins: its target list
+/// *is* the `table_references`, and an absent target is already its own
+/// `Incomplete` before the list writer runs, so `table_also` can never be
+/// dropped — the error names the missing target instead.
+#[test]
+fn extra_table_refs_without_a_leading_item_are_a_build_error() {
+    let q = mysql::select((
+        select::columns(quote("id")),
+        select::from_also(quote("users")),
+    ));
+    let err = q.build().unwrap_err();
+    // The substrings name the SQL concepts (the missing leading FROM / USING
+    // item, the missing UPDATE target), not the message wording.
+    assert!(
+        matches!(&err, mysql::Error::Incomplete(what) if what.contains("FROM")),
+        "got: {err}"
+    );
+
+    let q = mysql::delete((
+        delete::from(quote("comments")),
+        delete::using_also(quote("posts")),
+    ));
+    let err = q.build().unwrap_err();
+    assert!(
+        matches!(&err, mysql::Error::Incomplete(what) if what.contains("USING")),
+        "got: {err}"
+    );
+
+    let q = mysql::update((
+        update::table_also(quote("posts")),
+        update::set_col("views").to(arg(1i32)),
+    ));
+    let err = q.build().unwrap_err();
+    assert!(
+        matches!(&err, mysql::Error::Incomplete(what) if what.contains("UPDATE")),
+        "got: {err}"
+    );
 }

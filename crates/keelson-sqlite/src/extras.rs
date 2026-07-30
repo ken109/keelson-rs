@@ -367,18 +367,22 @@ mod tests {
             query: Some(Expr::raw("SELECT 1")),
             ..Compound::default()
         };
-        assert_eq!(
-            build(&Sqlite, &no_op).unwrap_err().to_string(),
-            "query is missing the operator of a compound SELECT"
+        let err = build(&Sqlite, &no_op).unwrap_err();
+        // The substrings name the SQL concepts (the missing half of a compound
+        // SELECT), not the message wording.
+        assert!(
+            matches!(&err, Error::Incomplete(what) if what.contains("operator")),
+            "got: {err}"
         );
 
         let no_query = Compound {
             op: Some(CompoundOp::Union),
             ..Compound::default()
         };
-        assert_eq!(
-            build(&Sqlite, &no_query).unwrap_err().to_string(),
-            "query is missing the operand of a compound SELECT"
+        let err = build(&Sqlite, &no_query).unwrap_err();
+        assert!(
+            matches!(&err, Error::Incomplete(what) if what.contains("operand")),
+            "got: {err}"
         );
     }
 

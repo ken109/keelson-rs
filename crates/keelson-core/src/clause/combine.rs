@@ -303,18 +303,24 @@ mod tests {
             query: Some(sub(1)),
             ..Combine::default()
         };
-        assert_eq!(
-            build(&Numbered, &no_op).unwrap_err().to_string(),
-            "query is missing the operator of a set operation"
+        let err = build(&Numbered, &no_op).unwrap_err();
+        // The substring names the SQL concept (the missing operator), not the
+        // message wording.
+        assert!(
+            matches!(&err, Error::Incomplete(what) if what.contains("operator")),
+            "got: {err}"
         );
 
         let no_query = Combine {
             op: Some(SetOp::Except),
             ..Combine::default()
         };
-        assert_eq!(
-            build(&Numbered, &no_query).unwrap_err().to_string(),
-            "query is missing the query of a set operation"
+        let err = build(&Numbered, &no_query).unwrap_err();
+        // The substring names the SQL concept (the missing operand query), not
+        // the message wording.
+        assert!(
+            matches!(&err, Error::Incomplete(what) if what.contains("query")),
+            "got: {err}"
         );
     }
 
@@ -359,16 +365,22 @@ mod tests {
         let mut cs = Combines::default();
         cs.fetch.set_fetch(2i64);
         assert!(!cs.is_empty());
-        assert_eq!(
-            build(&Numbered, &cs).unwrap_err().to_string(),
-            "query is missing the set operation its combined FETCH applies to"
+        let err = build(&Numbered, &cs).unwrap_err();
+        // The substrings name the SQL concepts (the missing set operation and
+        // the clause left dangling), not the message wording.
+        assert!(
+            matches!(&err, Error::Incomplete(what)
+                if what.contains("set operation") && what.contains("FETCH")),
+            "got: {err}"
         );
 
         let mut cs = Combines::default();
         cs.order_by.append_order("1");
-        assert_eq!(
-            build(&Numbered, &cs).unwrap_err().to_string(),
-            "query is missing the set operation its combined ORDER BY applies to"
+        let err = build(&Numbered, &cs).unwrap_err();
+        assert!(
+            matches!(&err, Error::Incomplete(what)
+                if what.contains("set operation") && what.contains("ORDER BY")),
+            "got: {err}"
         );
     }
 
@@ -381,9 +393,16 @@ mod tests {
         cs.append_combine(Combine::new(SetOp::Union, sub(1)));
         cs.limit.set_limit(10i64);
         cs.fetch.set_fetch(2i64);
-        assert_eq!(
-            build(&Numbered, &cs).unwrap_err().to_string(),
-            "LIMIT and FETCH are both set, but they are two spellings of one clause — set only one"
+        let err = build(&Numbered, &cs).unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                Error::ConflictingClauses {
+                    first: "LIMIT",
+                    second: "FETCH"
+                }
+            ),
+            "got: {err}"
         );
     }
 

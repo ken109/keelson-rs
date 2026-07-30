@@ -382,9 +382,11 @@ fn an_insert_with_no_table_is_a_recorded_failure() {
     let err = mysql::insert(insert::values(arg(1i32)))
         .build()
         .unwrap_err();
-    assert_eq!(
-        err.to_string(),
-        "query is missing the target table of an INSERT"
+    // The substring names the SQL concept (an INSERT's target table), not the
+    // message wording.
+    assert!(
+        matches!(&err, mysql::Error::Incomplete(what) if what.contains("INSERT")),
+        "got: {err}"
     );
 }
 
@@ -500,8 +502,10 @@ fn a_replace_with_no_table_is_a_recorded_failure() {
     let err = mysql::replace(replace::values(arg(1i32)))
         .build()
         .unwrap_err();
-    assert_eq!(
-        err.to_string(),
-        "query is missing the target table of a REPLACE"
+    // The substring names the SQL concept (a REPLACE's target table), not the
+    // message wording.
+    assert!(
+        matches!(&err, mysql::Error::Incomplete(what) if what.contains("REPLACE")),
+        "got: {err}"
     );
 }

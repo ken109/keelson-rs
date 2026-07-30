@@ -30,7 +30,7 @@ use keelson_core::clause::{
     LockWait, NamedWindow, OrderBy, OrderDef, OrderDirection, Set, SetOp, TableRef, Values, Window,
 };
 use keelson_core::expr::{Expr, IntoExpr, IntoExprList, IntoIdent};
-use keelson_core::{Mod, mod_fn};
+use keelson_core::{Expression, Mod, SqlWriter, mod_fn};
 
 use crate::extras::{
     HasDuplicateKeyUpdate, HasHints, HasModifiers, HasRowAlias, Modifier, RowAlias, row_value,
@@ -356,9 +356,13 @@ impl<S> TableChain<S> {
 
     /// `LATERAL` — let a derived table refer to columns of the items before it
     /// (MySQL 8.0.14).
+    ///
+    /// Only grammatical in front of a derived table; on a bare table or CTE
+    /// name this records a `build()` error instead, because
+    /// ``FROM LATERAL `posts` `` is a syntax error with nothing to mean.
     #[must_use]
     pub fn lateral(mut self) -> TableChain<S> {
-        self.table.lateral = true;
+        self.table = lateral_table(self.table);
         self
     }
 
@@ -444,6 +448,48 @@ impl<Q, S: TableSlot<Q>> Mod<Q> for TableChain<S> {
     }
 }
 
+/// Mark a table reference `LATERAL`, refusing the one item shape the grammar
+/// has no sentence for: a bare table or CTE name ([`Expr::Ident`]).
+///
+/// MySQL's `LATERAL` (8.0.14, *15.2.15.9 Lateral Derived Tables*) is
+/// grammatical only in front of a derived table — the manual's production is
+/// `LATERAL table_subquery [AS] alias` and nothing else takes the keyword, and
+/// there is nothing for it to mean on a name anyway (a base table cannot
+/// reference the items before it). The item is wrapped in [`LateralBareName`],
+/// which records the error `build()` surfaces — catching the mistake at the
+/// `.lateral()` call rather than letting valid-looking SQL leave with
+/// ``LATERAL `posts` `` in it.
+///
+/// Only [`Expr::Ident`] items are judged. A raw fragment could be anything —
+/// progressive enhancement means hand-written SQL is trusted — and derived
+/// tables arrive as other variants.
+fn lateral_table(mut table: TableRef) -> TableRef {
+    table.lateral = true;
+    if matches!(table.expression, Some(Expr::Ident(_))) {
+        let name = table.expression.take().expect("just matched Some");
+        table.expression = Some(Expr::custom(LateralBareName(name)));
+    }
+    table
+}
+
+/// A from-item that was marked `LATERAL` but is a bare table or CTE name.
+///
+/// The chain methods swap this in when `.lateral()` is called on such an item,
+/// so the mistake is caught where it is made; the item still renders, keeping
+/// the debug print honest, while `build()` refuses. The same judgment, for the
+/// same reason, as keelson-psql's `LateralBareName`.
+#[derive(Debug)]
+struct LateralBareName(Expr);
+
+impl Expression for LateralBareName {
+    fn write_sql(&self, w: &mut SqlWriter<'_>) {
+        w.record_error(keelson_core::Error::other(
+            "LATERAL is set on a bare table or CTE name, but LATERAL can precede only a derived table",
+        ));
+        w.write_expr(&self.0);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Joins
 // ---------------------------------------------------------------------------
@@ -514,11 +560,15 @@ impl JoinChain {
         self
     }
 
-    /// `LATERAL` on the joined table — what lets a joined derived table see the
+    /// `LATERAL` on the joined item — what lets a joined derived table see the
     /// columns of the item it is joined to.
+    ///
+    /// Only grammatical in front of a derived table; on a bare table or CTE
+    /// name this records a `build()` error instead, because
+    /// ``JOIN LATERAL `posts` `` is a syntax error with nothing to mean.
     #[must_use]
     pub fn lateral(mut self) -> JoinChain {
-        self.join.to.lateral = true;
+        self.join.to = lateral_table(self.join.to);
         self
     }
 

@@ -712,7 +712,12 @@ mod tests {
             else_: None,
         };
         let err = build(&TestDialect, &empty).unwrap_err();
-        assert_eq!(err.to_string(), "query is missing a CASE WHEN branch");
+        // The substring names the SQL concept (a CASE WHEN branch), not the
+        // message wording.
+        assert!(
+            matches!(&err, crate::Error::Incomplete(what) if what.contains("CASE WHEN")),
+            "got: {err}"
+        );
     }
 
     /// Not judged: two expressions with a separator between them is a *list*, and

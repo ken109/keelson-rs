@@ -1,4 +1,4 @@
-//! Combinatorial clause coverage for the PostgreSQL dialect (Linear DEV-181).
+//! Combinatorial clause coverage for the PostgreSQL dialect.
 //!
 //! Per-clause tests prove each clause renders correctly *alone*. This file
 //! drives clause **presence** combinatorially, because the bugs worth finding
@@ -130,6 +130,10 @@ fn parse_single(sql: &str) -> N {
     let parsed = pg_query::parse(sql).unwrap_or_else(|e| {
         panic!("libpg_query rejected the generated SQL\n  error: {e}\n  sql: {sql}")
     });
+    // This suite parses for itself instead of going through
+    // `keelson_sqlcheck::check`, so Tier D's recorder is fed here explicitly;
+    // a no-op unless KEELSON_SQLCHECK_RECORD is set.
+    keelson_sqlcheck::record(keelson_sqlcheck::Dialect::Psql, sql);
     let stmts = &parsed.protobuf.stmts;
     assert_eq!(stmts.len(), 1, "one statement expected: {sql}");
     stmts[0]
@@ -1685,8 +1689,7 @@ fn self_joins() {
 // (or silently dropping a clause) with no recorded error
 // ===========================================================================
 //
-// These four were pinned as warts when this file was written (Linear
-// DEV-197..200). They are fixed: each is now a recorded failure that
+// These four were pinned as warts when this file was written. They are fixed: each is now a recorded failure that
 // `build()` surfaces — never a guess, never a silent drop — and each test
 // asserts the exact error a caller sees. The matrices' skip predicates still
 // exclude these shapes, because a configuration that refuses to build cannot
@@ -1696,7 +1699,7 @@ fn self_joins() {
 /// A combined tail clause exists to apply to the result of a set operation.
 /// With no operation there is no such result — rendering it anyway used to
 /// produce `LIMIT $1 ORDER BY 1`, which no PostgreSQL grammar accepts — so
-/// `build()` refuses (DEV-197).
+/// `build()` refuses.
 #[test]
 fn combined_tail_without_a_set_operation_is_a_build_error() {
     let q = psql::select((
@@ -1705,16 +1708,20 @@ fn combined_tail_without_a_set_operation_is_a_build_error() {
         select::limit(arg(1i64)),
         select::order_by_combined(raw("1")),
     ));
-    assert_eq!(
-        q.build().unwrap_err().to_string(),
-        "query is missing the set operation its combined ORDER BY applies to"
+    let err = q.build().unwrap_err();
+    // The substrings name the SQL concepts (the missing set operation, the
+    // dangling combined ORDER BY), not the message wording.
+    assert!(
+        matches!(&err, psql::Error::Incomplete(what)
+            if what.contains("set operation") && what.contains("ORDER BY")),
+        "got: {err}"
     );
 }
 
 /// `LIMIT` and `FETCH` are two spellings of one grammar production
 /// (gram.y `select_limit`), so a statement gets one of them, never both.
 /// Not last-write-wins: mod application order must not change meaning, so
-/// `build()` refuses instead of picking a winner (DEV-198).
+/// `build()` refuses instead of picking a winner.
 #[test]
 fn limit_and_fetch_together_are_a_build_error() {
     let q = psql::select((
@@ -1723,9 +1730,16 @@ fn limit_and_fetch_together_are_a_build_error() {
         select::limit(arg(1i64)),
         select::fetch(arg(2i64)),
     ));
-    assert_eq!(
-        q.build().unwrap_err().to_string(),
-        "LIMIT and FETCH are both set, but they are two spellings of one clause — set only one"
+    let err = q.build().unwrap_err();
+    assert!(
+        matches!(
+            &err,
+            psql::Error::ConflictingClauses {
+                first: "LIMIT",
+                second: "FETCH"
+            }
+        ),
+        "got: {err}"
     );
 }
 
@@ -1733,7 +1747,7 @@ fn limit_and_fetch_together_are_a_build_error() {
 /// *silently dropped* — the built SQL was valid and simply missed a clause the
 /// caller asked for, which neither a grammar nor an engine can notice. Now the
 /// missing item is a `build()` error, and DELETE/USING — the same shape — is
-/// guarded the same way (DEV-199).
+/// guarded the same way.
 #[test]
 fn update_join_without_from_is_a_build_error() {
     let q = psql::update((
@@ -1741,34 +1755,81 @@ fn update_join_without_from_is_a_build_error() {
         psql::update::set_col("views").to(arg(1i32)),
         psql::update::inner_join(quote("users")).using(["id"]),
     ));
-    assert_eq!(
-        q.build().unwrap_err().to_string(),
-        "query is missing the FROM item its joins attach to"
+    let err = q.build().unwrap_err();
+    // The substring names the SQL concept (the FROM item the joins need), not
+    // the message wording.
+    assert!(
+        matches!(&err, psql::Error::Incomplete(what) if what.contains("FROM")),
+        "got: {err}"
     );
 
     let q = psql::delete((
         psql::delete::from(quote("comments")),
         psql::delete::inner_join(quote("users")).using(["id"]),
     ));
-    assert_eq!(
-        q.build().unwrap_err().to_string(),
-        "query is missing the USING item its joins attach to"
+    let err = q.build().unwrap_err();
+    assert!(
+        matches!(&err, psql::Error::Incomplete(what) if what.contains("USING")),
+        "got: {err}"
+    );
+}
+
+/// The twin of the join guard above: the extra from-items of `from_also` /
+/// `using_also` are second and later entries of the list the leading item
+/// opens, so with no leading item they used to be dropped just as silently —
+/// valid SQL, the caller's item simply gone. Now `build()` refuses.
+#[test]
+fn extra_from_items_without_a_leading_item_are_a_build_error() {
+    let q = psql::select((
+        select::columns(quote("id")),
+        select::from_also(quote("users")),
+    ));
+    let err = q.build().unwrap_err();
+    // The substrings name the SQL concepts (the missing leading FROM / USING
+    // item), not the message wording.
+    assert!(
+        matches!(&err, psql::Error::Incomplete(what) if what.contains("FROM")),
+        "got: {err}"
+    );
+
+    let q = psql::update((
+        psql::update::table(quote("posts")),
+        psql::update::set_col("views").to(arg(1i32)),
+        psql::update::from_also(quote("users")),
+    ));
+    let err = q.build().unwrap_err();
+    assert!(
+        matches!(&err, psql::Error::Incomplete(what) if what.contains("FROM")),
+        "got: {err}"
+    );
+
+    let q = psql::delete((
+        psql::delete::from(quote("comments")),
+        psql::delete::using_also(quote("users")),
+    ));
+    let err = q.build().unwrap_err();
+    assert!(
+        matches!(&err, psql::Error::Incomplete(what) if what.contains("USING")),
+        "got: {err}"
     );
 }
 
 /// `LATERAL` in front of a bare table (or CTE) name is a syntax error in
 /// PostgreSQL's grammar — the keyword is grammatical only before a sub-query
 /// or function item. `.lateral()` on such an item now records the error at the
-/// call, and `build()` refuses (DEV-200).
+/// call, and `build()` refuses.
 #[test]
 fn lateral_on_a_bare_table_is_a_build_error() {
     let q = psql::select((
         select::from(quote("users")),
         select::inner_join(quote("posts")).lateral().on(raw("TRUE")),
     ));
-    assert_eq!(
-        q.build().unwrap_err().to_string(),
-        "LATERAL is set on a bare table or CTE name, but LATERAL can precede only a sub-query or a function item"
+    let err = q.build().unwrap_err();
+    // The substring names the SQL concept (a misplaced LATERAL), not the
+    // message wording.
+    assert!(
+        matches!(&err, psql::Error::Other(msg) if msg.contains("LATERAL")),
+        "got: {err}"
     );
 }
 

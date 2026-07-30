@@ -139,7 +139,7 @@ SELECT "id" FROM "users" LIMIT $1 ORDER BY 1    -- what these shapes used to ren
 UPDATE "posts" SET "views" = $1                  -- …or worse: valid SQL missing the join
 ```
 
-Four shapes found by the combinatorial suite (DEV-197..200) had the builder
+Four shapes found by the combinatorial suite had the builder
 hand back garbage — or, worse, valid SQL that silently dropped a clause —
 with `build()` reporting `Ok`. All four are now recorded on the writer and
 surfaced once by `build()`, extending the rule that rendering is infallible
@@ -159,10 +159,36 @@ and errors travel through the writer:
   This was the worst of the four: the SQL built *valid* and simply omitted
   the join the caller asked for. MySQL's `UPDATE` differs legitimately — its
   target list *is* a `table_references`, joins and all — and keeps rendering.
+  The same rule covers **extra from-items** (`from_also`/`using_also`): with
+  no leading item to open the list, they used to vanish the same silent way,
+  and are now the same `Error::Incomplete`. MySQL's `UPDATE` is exempt again,
+  for the same reason with a different outcome: an absent target is already
+  its own `Incomplete` before the extras are reached.
 - **`.lateral()` on a bare table or CTE name** records an error at the call
-  (keelson-psql wraps the item): `LATERAL` is grammatical only before a
-  sub-query or function item. Raw fragments stay trusted — progressive
-  enhancement means hand-written SQL is never judged.
+  (keelson-psql and keelson-mysql wrap the item): `LATERAL` is grammatical
+  only before a sub-query or function item in PostgreSQL's grammar, and only
+  before a derived table in MySQL's (8.4 manual, *15.2.15.9 Lateral Derived
+  Tables*). Raw fragments stay trusted —
+  progressive enhancement means hand-written SQL is never judged.
+
+## A function from-item's alias and its column definitions share one `AS`
+
+```sql
+json_to_recordset($1) AS "r" ("a" int)           -- gram.y's func_alias_clause
+json_to_recordset($1) AS ("a" int) AS "r"        -- a syntax error
+```
+
+PostgreSQL's `func_alias_clause` is one production: `[ AS ] [ alias ]
+( column_definition [, ...] )`. The alias sits *inside* it, between the single
+`AS` and the column definitions — there is no second `AS` for a select-list
+alias to use. `Function::columns` and `Function::as_table` therefore return a
+`TableFunction`, a type on which the expression-position enders (`as_`,
+`over`, `over_name`) do not exist, so the colliding combination
+`f(..).columns(..).as_("r")` — which used to compile and render the
+unparseable second line — cannot be written at all. This is the
+typestate arm of the "never a guess" rule above: where the collision is
+visible in the types, it is refused at compile time rather than recorded at
+`build()`.
 
 ## Formatting is not part of the contract
 

@@ -262,6 +262,11 @@ mod tests {
     #[test]
     fn an_unnamed_call_is_a_recorded_failure() {
         let err = build(&Mysql, &Function::default()).unwrap_err();
-        assert_eq!(err.to_string(), "query is missing the name of a function");
+        // The substring names the SQL concept (a function's name), not the
+        // message wording.
+        assert!(
+            matches!(&err, keelson_core::Error::Incomplete(what) if what.contains("function")),
+            "got: {err}"
+        );
     }
 }

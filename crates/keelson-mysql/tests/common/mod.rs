@@ -100,6 +100,11 @@ pub(crate) fn check_without_grammar(q: &impl Query, expected: &str, construct: &
         "sqlparser now accepts {construct} — move this case to `check`\n  sql: {sql}"
     );
 
+    // Still a judged case — string intent always, engine when compiled in — so
+    // its SQL belongs in Tier D's recording, which `check_mysql` only feeds on
+    // success. No-op unless KEELSON_SQLCHECK_RECORD is set.
+    keelson_sqlcheck::record(Dialect::Mysql, &sql);
+
     if engine_available() {
         live::assert_valid(Dialect::Mysql, &sql);
     } else {
@@ -155,6 +160,9 @@ pub(crate) fn check_shape_only(
         keelson_sqlcheck::check_mysql(&sql).is_err(),
         "sqlparser now accepts {construct} — move this case to `check_without_engine`\n  sql: {sql}"
     );
+    // The string comparison still judges this case, so its SQL belongs in
+    // Tier D's recording (no-op unless KEELSON_SQLCHECK_RECORD is set).
+    keelson_sqlcheck::record(Dialect::Mysql, &sql);
     // No judge can be asked on *any* build — sqlparser cannot parse the construct
     // and the shared schema cannot satisfy it — so this announces on every run,
     // not only when the engine is missing. A silent pass here would read as
