@@ -127,30 +127,27 @@ pub fn check_sqlite(sql: &str) -> Result<(), String> {
     CONN.with(|conn| conn.prepare(sql).map(|_| ()).map_err(|e| e.to_string()))
 }
 
-/// Check `sql` against a real PostgreSQL, with the shared schema applied.
-///
-/// `Client::prepare` sends a Parse message, so the server runs its full
-/// parse-and-analyse pass — the same work `PREPARE` does.
-///
-/// The container is started once per test binary, held in a `static` so it
-/// outlives every test, and removed at process exit by `exit_cleanup`. Set
-/// [`PSQL_URL_ENV`] to skip the container and share one server across binaries.
+/// The running live PostgreSQL: its URL, a judging client, and the container
+/// keeping it alive.
 #[cfg(feature = "live-docker")]
-pub fn check_psql(sql: &str) -> Result<(), String> {
-    use std::sync::Mutex;
+struct PsqlLive {
+    url: String,
+    client: std::sync::Mutex<postgres::Client>,
+    // Never dropped (statics are not), which is what keeps the container
+    // running until process exit; dropping it would remove it mid-run.
+    _container: Option<testcontainers::Container<testcontainers_modules::postgres::Postgres>>,
+}
 
+/// The container (or [`PSQL_URL_ENV`] server), started once per test binary,
+/// held in a `static` so it outlives every test, and removed at process exit
+/// by `exit_cleanup`.
+#[cfg(feature = "live-docker")]
+fn psql_live() -> &'static PsqlLive {
     use testcontainers::{ImageExt as _, runners::SyncRunner};
 
-    struct Live {
-        client: Mutex<postgres::Client>,
-        // Never dropped (statics are not), which is what keeps the container
-        // running until process exit; dropping it would remove it mid-run.
-        _container: Option<testcontainers::Container<testcontainers_modules::postgres::Postgres>>,
-    }
+    static PG: OnceLock<PsqlLive> = OnceLock::new();
 
-    static PG: OnceLock<Live> = OnceLock::new();
-
-    let live = PG.get_or_init(|| {
+    PG.get_or_init(|| {
         let (url, container) = match std::env::var(PSQL_URL_ENV) {
             Ok(url) => (url, None),
             Err(_) => {
@@ -167,9 +164,7 @@ pub fn check_psql(sql: &str) -> Result<(), String> {
                     .expect("mapped PostgreSQL port");
                 exit_cleanup::remove_at_exit(container.id());
                 (
-                    format!(
-                        "host=127.0.0.1 port={port} user=postgres password=postgres dbname=postgres"
-                    ),
+                    format!("postgresql://postgres:postgres@127.0.0.1:{port}/postgres"),
                     Some(container),
                 )
             }
@@ -178,13 +173,29 @@ pub fn check_psql(sql: &str) -> Result<(), String> {
         let mut client = postgres::Client::connect(&url, postgres::NoTls)
             .expect("connecting to PostgreSQL (container, or the KEELSON_LIVE_PSQL_URL server)");
         ensure_psql_schema(&mut client);
-        Live {
-            client: Mutex::new(client),
+        PsqlLive {
+            url,
+            client: std::sync::Mutex::new(client),
             _container: container,
         }
-    });
+    })
+}
 
-    let mut client = live
+/// The URL of the running live PostgreSQL, container or [`PSQL_URL_ENV`]
+/// server, with the shared schema applied — so other test suites (the
+/// keelson-sqlx round-trips) reuse this container instead of starting one.
+#[cfg(feature = "live-docker")]
+pub fn psql_url() -> &'static str {
+    &psql_live().url
+}
+
+/// Check `sql` against a real PostgreSQL, with the shared schema applied.
+///
+/// `Client::prepare` sends a Parse message, so the server runs its full
+/// parse-and-analyse pass — the same work `PREPARE` does.
+#[cfg(feature = "live-docker")]
+pub fn check_psql(sql: &str) -> Result<(), String> {
+    let mut client = psql_live()
         .client
         .lock()
         .expect("PostgreSQL client mutex poisoned");
@@ -223,28 +234,25 @@ fn ensure_psql_schema(client: &mut postgres::Client) {
         .expect("releasing the schema advisory lock");
 }
 
-/// Check `sql` against a real MySQL, with the shared schema applied.
-///
-/// This is the important one: MySQL's Tier 1 backend is a generic parser that is
-/// wrong in both directions, so the server is the only source of truth we have for
-/// this dialect. `Conn::prep` issues a server-side `PREPARE`.
+/// The running live MySQL: its URL, a judging connection, and the container
+/// keeping it alive.
 #[cfg(feature = "live-docker")]
-pub fn check_mysql(sql: &str) -> Result<(), String> {
-    use std::sync::Mutex;
+struct MysqlLive {
+    url: String,
+    conn: std::sync::Mutex<mysql::Conn>,
+    // Never dropped (statics are not), which is what keeps the container
+    // running until process exit; dropping it would remove it mid-run.
+    _container: Option<testcontainers::Container<testcontainers_modules::mysql::Mysql>>,
+}
 
-    use mysql::prelude::Queryable as _;
+/// The container (or [`MYSQL_URL_ENV`] server), started once per test binary.
+#[cfg(feature = "live-docker")]
+fn mysql_live() -> &'static MysqlLive {
     use testcontainers::{ImageExt as _, runners::SyncRunner};
 
-    struct Live {
-        conn: Mutex<mysql::Conn>,
-        // Never dropped (statics are not), which is what keeps the container
-        // running until process exit; dropping it would remove it mid-run.
-        _container: Option<testcontainers::Container<testcontainers_modules::mysql::Mysql>>,
-    }
+    static MY: OnceLock<MysqlLive> = OnceLock::new();
 
-    static MY: OnceLock<Live> = OnceLock::new();
-
-    let live = MY.get_or_init(|| {
+    MY.get_or_init(|| {
         let (url, container) = match std::env::var(MYSQL_URL_ENV) {
             Ok(url) => (url, None),
             Err(_) => {
@@ -266,13 +274,35 @@ pub fn check_mysql(sql: &str) -> Result<(), String> {
         let mut conn = mysql::Conn::new(mysql::Opts::from_url(&url).expect("MySQL url"))
             .expect("connecting to MySQL (container, or the KEELSON_LIVE_MYSQL_URL server)");
         ensure_mysql_schema(&mut conn);
-        Live {
-            conn: Mutex::new(conn),
+        MysqlLive {
+            url,
+            conn: std::sync::Mutex::new(conn),
             _container: container,
         }
-    });
+    })
+}
 
-    let mut conn = live.conn.lock().expect("MySQL connection mutex poisoned");
+/// The URL of the running live MySQL, container or [`MYSQL_URL_ENV`] server,
+/// with the shared schema applied — for reuse by other test suites (the
+/// keelson-sqlx round-trips).
+#[cfg(feature = "live-docker")]
+pub fn mysql_url() -> &'static str {
+    &mysql_live().url
+}
+
+/// Check `sql` against a real MySQL, with the shared schema applied.
+///
+/// This is the important one: MySQL's Tier 1 backend is a generic parser that is
+/// wrong in both directions, so the server is the only source of truth we have for
+/// this dialect. `Conn::prep` issues a server-side `PREPARE`.
+#[cfg(feature = "live-docker")]
+pub fn check_mysql(sql: &str) -> Result<(), String> {
+    use mysql::prelude::Queryable as _;
+
+    let mut conn = mysql_live()
+        .conn
+        .lock()
+        .expect("MySQL connection mutex poisoned");
     conn.prep(sql).map(|_| ()).map_err(|e| e.to_string())
 }
 

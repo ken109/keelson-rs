@@ -1,0 +1,62 @@
+[package]
+name = "keelson-sqlx"
+description = "The sqlx backend for keelson: pools, connections and transactions implementing keelson-exec's traits for PostgreSQL, MySQL and SQLite."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[features]
+# One crate, per-database features — mirroring sqlx's own feature model so a
+# user's feature lists line up. Per-database drivers, deliberately not
+# sqlx::Any: Any erases exactly the type information docs/type-mappings.md
+# requires kept (a uuid must bind native on PostgreSQL).
+psql = ["sqlx/postgres"]
+mysql = ["sqlx/mysql"]
+sqlite = ["sqlx/sqlite"]
+
+# The mapped-type features, in lockstep with keelson-core's. Each turns on the
+# core Value variant, the sqlx type integration, and the crate here (used
+# where a pinned text form is rendered by hand, e.g. every mapped type on
+# SQLite).
+chrono = ["keelson-core/chrono", "sqlx/chrono", "dep:chrono"]
+uuid = ["keelson-core/uuid", "sqlx/uuid", "dep:uuid"]
+decimal = ["keelson-core/decimal", "sqlx/rust_decimal", "dep:rust_decimal"]
+json = ["keelson-core/json", "sqlx/json", "dep:serde_json"]
+
+# The engine round-trip tests (tests/roundtrip.rs, tests/transactions.rs)
+# against containerised PostgreSQL 17 and MySQL 8.4, reusing
+# keelson-sqlcheck's containers and URL overrides:
+#
+#   cargo test -p keelson-sqlx --features live-docker
+#
+# Same dev-dependency-cycle caveat as keelson-core's live-docker feature.
+live-docker = ["psql", "mysql", "keelson-sqlcheck/live-docker"]
+
+[dependencies]
+keelson-core.workspace = true
+keelson-exec.workspace = true
+sqlx = { workspace = true }
+# `rt` because StreamExecutor spawns its producer task; `sync` for the channel.
+tokio = { workspace = true, features = ["rt", "sync"] }
+futures-util.workspace = true
+chrono = { workspace = true, optional = true }
+uuid = { workspace = true, optional = true }
+rust_decimal = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+
+[dev-dependencies]
+# Self-dependency so the test crates always have SQLite plus every mapped type
+# — `cargo test` with no flags exercises the whole harness against real
+# SQLite; the server engines come in via `live-docker` above.
+keelson-sqlx = { path = ".", features = ["sqlite", "chrono", "uuid", "decimal", "json"] }
+keelson-sqlcheck = { workspace = true }
+keelson-psql.workspace = true
+keelson-mysql.workspace = true
+keelson-sqlite.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true
