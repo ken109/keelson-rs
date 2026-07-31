@@ -12,7 +12,7 @@
 //! no change tracking and no identity map, and every call below is a statement
 //! you can predict from the call site.
 
-use keelson::exec::{ExecError, Execute as _};
+use keelson::exec::ExecError;
 use keelson::models::{null, set};
 use keelson::prelude::*;
 use keelson::sqlite::{quote, select};

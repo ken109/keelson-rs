@@ -21,7 +21,7 @@
 //! is yours. What you keep is the binding, the placeholder rewriting, the row
 //! mapping and the tracing span.
 
-use keelson::exec::{ExecError, Execute as _};
+use keelson::exec::ExecError;
 use keelson::prelude::*;
 use keelson::sqlite::{self, QueryType, arg, quote, select};
 use keelson::{FromRow, Value};

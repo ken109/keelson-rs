@@ -18,7 +18,7 @@
 //! Swapping engines is a feature flag and a pool type: `keelson::sqlx::psql`
 //! and `keelson::sqlx::mysql` are the same three verbs over the same traits.
 
-use keelson::exec::{ExecError, Execute as _, Executor, Statement};
+use keelson::exec::{ExecError, Executor, Statement};
 use keelson::prelude::*;
 use keelson::sqlite::{self, arg, insert, quote, select};
 use keelson::{FromRow, Value};

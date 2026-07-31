@@ -9,7 +9,7 @@
 //! visible. Nothing below is an unusual code path; it is the ordinary one,
 //! with the failing case chosen deliberately.
 
-use keelson::exec::{ExecError, Execute as _, Statement};
+use keelson::exec::{ExecError, Statement};
 use keelson::prelude::*;
 use keelson::sqlite::{self, arg, insert, quote, select};
 use keelson::{FromRow, Value};

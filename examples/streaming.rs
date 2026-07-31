@@ -17,7 +17,7 @@
 //!   `impl Stream`. That keeps the futures crate out of keelson's public API;
 //!   a `Stream` impl can be added later without breaking anything.
 
-use keelson::exec::{ExecError, Statement, StreamExecutor as _};
+use keelson::exec::{ExecError, Statement};
 use keelson::prelude::*;
 use keelson::sqlite::{self, arg, insert, quote, select};
 use keelson_examples::Sandbox;
