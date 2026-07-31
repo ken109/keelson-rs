@@ -21,6 +21,25 @@
 //!   inside the usecase. A one-statement CRUD method needs no such thing —
 //!   one statement is already all-or-nothing in every engine.
 //!
+//! # Why the parameters are spelled differently
+//!
+//! `&dyn Executor` in one signature and `impl Atomic` in the next is not
+//! inconsistency. Each asks for exactly the capability it needs, and asking
+//! for no more is what keeps the layers honest:
+//!
+//! | parameter | what it may do |
+//! |---|---|
+//! | `&dyn Executor` | run statements |
+//! | `impl Atomic` | …and carve one all-or-nothing block out of wherever it is |
+//! | a pool, via `within` | …and start a transaction |
+//! | `&Transaction` | …and commit or roll it back |
+//!
+//! It only goes downward: an `impl Atomic` can be passed on as
+//! `&dyn Executor`, but nothing turns a `&dyn Executor` back into a scope —
+//! erasing it threw away whether a transaction is open. That is exactly why a
+//! repository can be handed the caller's transaction without being able to
+//! end it.
+//!
 //! # A note on `Send`
 //!
 //! Awaiting an `async fn` from a trait is `Send` when the compiler can see

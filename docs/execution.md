@@ -130,6 +130,20 @@ transaction SQL is written once in keelson-exec.**
 same words: every query-taking function, every generated `save`, every hook
 accepts pool and transaction alike as `&dyn Executor`.
 
+**What the four parameter types mean, since they are a ladder and not a
+matter of taste.** `&dyn Executor` may run statements; `impl Atomic` may also
+carve one all-or-nothing block out of wherever it turns out to be;
+`impl Begin` (a pool) may also start a transaction and choose its isolation
+level; `&Transaction` may also commit or roll back — and deliberately may not
+`begin`. The rule for a signature is *take the weakest that does the job*,
+and the ladder only goes downward: a scope can always be passed on as
+`&dyn Executor`, but nothing recovers a scope from one, because erasing it
+threw away whether a transaction is open. That one-way street is the safety
+property the hook contract rests on (below): a hook is not trusted, it is
+merely handed a type with no method that could end the caller's transaction.
+The table lives in keelson-exec's crate docs, where a signature is being
+written; `examples/repositories.rs` works it through a layered application.
+
 **Who issues the transaction SQL — a quiet clash, resolved toward A.** B
 gave each backend a `TxBackend` with its own commit/rollback; A had
 keelson-exec own the vocabulary (`BEGIN`, `COMMIT`, `ROLLBACK`,

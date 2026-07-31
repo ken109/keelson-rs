@@ -24,6 +24,38 @@
 //!   owns the transaction SQL (`BEGIN`/`COMMIT`/`SAVEPOINT …`) so its
 //!   semantics cannot drift between backends.
 //!
+//! # Which one does my function take?
+//!
+//! The question every signature in an application asks, and the answer is a
+//! **capability**, not a style. Each row may do everything above it:
+//!
+//! | parameter | what the function may do |
+//! |---|---|
+//! | `db: &dyn Executor` | run statements |
+//! | `db: impl Atomic` | …and carve one all-or-nothing block out of wherever it turns out to be |
+//! | `db: impl Begin` (a pool) | …and start a transaction, with an isolation level |
+//! | `db: &Transaction` | …and commit or roll it back — and, on purpose, *not* `begin`: nesting is spelled [`savepoint`](Transaction::savepoint) |
+//!
+//! **Take the weakest row that does the job.** A repository method that runs
+//! one statement takes `&dyn Executor`; a unit of work that must not
+//! half-apply takes [`impl Atomic`](Atomic); a usecase saying "a transaction
+//! begins here" takes a pool and calls [`within`](BeginExt::within).
+//!
+//! The ladder only goes downward. An `impl Atomic` can be handed on as
+//! `&dyn Executor`, and so can a [`Transaction`] — but nothing recovers a
+//! scope from `&dyn Executor`, because erasing it threw away whether a
+//! transaction is open. That one-way street is a safety property rather than
+//! a limitation: a hook receives `&dyn Executor` not because hooks are
+//! trusted, but because the type it is given has no method that could end the
+//! caller's transaction.
+//!
+//! It is also why the spellings differ. [`Executor`]'s three methods are
+//! object-safe, so it is erased and compiles once; [`Atomic::atomic`] takes
+//! the caller's closure, whose type differs at every call site, so it can
+//! only be generic — and being generic is exactly what lets it open a scope.
+//! `impl Atomic` still accepts everything: `&pool`, `pool`, `Arc<pool>`,
+//! `&dyn Begin`, and the `&Transaction` a scope closure hands you.
+//!
 //! The full design, with every rejected alternative, is `docs/execution.md`.
 //! The type-by-type binding contract backends implement against is
 //! `docs/type-mappings.md`.
