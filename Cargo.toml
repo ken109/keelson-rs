@@ -1,6 +1,9 @@
 [workspace]
 resolver = "3"
-members = ["crates/*"]
+# `examples` is a member so the runnable examples are built and linted by the
+# same `cargo clippy --workspace --all-targets` gate as the crates. It is
+# `publish = false`, so `cargo package --workspace` skips it.
+members = ["crates/*", "examples"]
 
 [workspace.package]
 version = "0.0.0"

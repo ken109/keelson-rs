@@ -1,0 +1,54 @@
+# The generator configuration `src/models/` and `src/queries/` were written
+# from. Regenerate with:
+#
+#     cd examples
+#     cargo run -p keelson-gen -- --config keelson.toml --url sqlite://blog.db
+#
+# `--url` is deliberately not stored here: a connection string is an
+# environment's business, not a repository's. `tests/generated_is_fresh.rs`
+# builds a throwaway database from schema.sql and re-runs the generator against
+# it, so a schema change that nobody regenerated for fails the test suite.
+dialect = "sqlite"
+out = "src/models"
+
+# Hooks are hand-written and live *outside* the generated tree; the generated
+# `Table` impl delegates to `crate::hooks::<table>::<hook>`.
+[hooks]
+module = "crate::hooks"
+
+[output]
+# Emit `factories.rs` beside the models. Off by default -- a production crate
+# has no reason to carry test-data machinery it never calls; an examples crate
+# very much does (see `factories.rs`).
+factories = true
+
+[tables.users]
+hooks = ["before_insert", "after_insert"]
+
+# The schema cannot say that `posts.published_at` -- a plain TEXT column with
+# no default -- holds a datetime. The override records the intent, and the
+# generator emits an `assert_bind` line for it, so a replacement type that
+# could not bind is a compile error at a named line rather than a runtime
+# surprise.
+[[types.override]]
+tables = ["posts"]
+rust_type = "chrono::NaiveDateTime"
+[types.override.match]
+name = "published_at"
+db_type = "TEXT"
+
+# A view has no foreign keys and no key of its own, so nothing in the catalog
+# says how it joins or how many rows sit on each end. Declaring the relation is
+# what gives `post_authors` a typed `rel` field on both sides.
+[[relationships]]
+table = "post_authors"
+column = "user_id"
+ref_table = "users"
+ref_column = "id"
+cardinality = "many_to_one"
+
+# Layer 4: the hand-written .sql files under queries/ become typed modules in
+# src/queries/. Same generator run, different output directory.
+[queries]
+dir = "queries"
+out = "src/queries"

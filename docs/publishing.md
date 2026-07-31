@@ -82,7 +82,7 @@ dependencies carry `version` beside `path`, which `cargo package` requires.
 ## Verifying a package before publishing
 
 ```sh
-cargo package --workspace --exclude keelson-sqlcheck --allow-dirty
+cargo package --workspace --exclude keelson-sqlcheck --exclude keelson-examples --allow-dirty
 ```
 
 This packages each crate into `target/package/*.crate` and then *builds* each
@@ -91,10 +91,12 @@ tarballs. It catches the two failure modes that a normal `cargo build` cannot:
 a file the crate reads but does not ship (an `include_str!` reaching outside
 the package directory), and metadata a registry requires.
 
-The `--exclude` is not optional: `cargo package --workspace` packages
-`publish = false` crates too, and `keelson-sqlcheck` cannot survive the trip for
-the `include_str!` reason above. Excluding it verifies exactly the set that
-would be published.
+The `--exclude`s are not optional: `cargo package --workspace` packages
+`publish = false` crates too. `keelson-sqlcheck` cannot survive the trip for
+the `include_str!` reason above, and `keelson-examples` depends on `keelson` by
+path alone — deliberately, since it is the repository's own examples and there
+is no released version for it to name. Excluding both verifies exactly the set
+that would be published.
 
 Every published crate carries `description`, `license`, `repository` and
 `authors`; the first three are what crates.io rejects an upload for.

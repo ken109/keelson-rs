@@ -245,6 +245,23 @@ cargo install keelson-gen
 keelson-gen --config keelson.toml --url "$DATABASE_URL"
 ```
 
+## Examples
+
+[`examples/`](https://github.com/ken109/keelson-rs/tree/main/examples) holds
+thirteen runnable programs, one topic each — from a first `SELECT` to
+generated models, relation loading, factories and `.sql` files. They need no
+server (SQLite in a temporary file) and each asserts its own output, so CI
+runs them:
+
+```sh
+cargo run -p keelson-examples --example builder_basics
+./scripts/run-examples.sh            # all of them
+```
+
+The directory is also a worked application: a schema, a `keelson.toml`, the
+committed generated code, hand-written hooks, and a test that fails when the
+generated files stop matching their sources.
+
 ## Migrations are not keelson's job
 
 **keelson is DML-only.** It generates and runs `SELECT`/`INSERT`/`UPDATE`/

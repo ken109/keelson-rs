@@ -1,0 +1,117 @@
+[package]
+name = "keelson-examples"
+description = "Runnable examples for keelson. Not published."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+# What an application writes. `keelson` is a facade: it re-exports the
+# individual crates under short names, so `keelson::sqlite` *is*
+# `keelson_sqlite` and every path in their documentation is reachable through
+# it. The example files themselves use this line and nothing else.
+#
+# `psql` and `mysql` are here only because `dialects.rs` renders all three
+# dialects side by side; an application picks one.
+keelson = { path = "../crates/keelson", features = [
+    "sqlx-sqlite",
+    "psql",
+    "mysql",
+    "models",
+    "factory",
+    "macros",
+    "chrono",
+] }
+
+# The generated files under src/models/ and src/queries/ name the crates
+# directly (`keelson_models::Column`, `keelson_sqlite::select`), because that
+# is what generated code should do: it must not assume the application took the
+# facade. Depending on both costs nothing -- they are the same crates, and
+# cargo unifies the features.
+keelson-core = { workspace = true, features = ["chrono"] }
+keelson-exec.workspace = true
+keelson-factory.workspace = true
+keelson-models.workspace = true
+keelson-sqlite.workspace = true
+
+chrono.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[dev-dependencies]
+# `tests/generated_is_fresh.rs` re-runs the generator against a throwaway
+# database built from schema.sql and diffs the result against what is
+# committed -- the migrate -> regenerate -> compile loop, enforced.
+keelson-gen.workspace = true
+rusqlite.workspace = true
+
+# ---------------------------------------------------------------------------
+# The examples, in reading order. Each is standalone: nothing below depends on
+# having read the one above, and `cargo run --example <name>` is the whole
+# invocation.
+#
+# Explicit `[[example]]` entries rather than an examples/ subdirectory: the
+# files then sit at the top of this directory, where someone browsing the
+# repository will actually find them.
+# ---------------------------------------------------------------------------
+
+# Layer 1 -- the query builder. No database, no async: these print SQL.
+[[example]]
+name = "builder_basics"
+path = "builder_basics.rs"
+
+[[example]]
+name = "dynamic_queries"
+path = "dynamic_queries.rs"
+
+[[example]]
+name = "joins_and_ctes"
+path = "joins_and_ctes.rs"
+
+[[example]]
+name = "dialects"
+path = "dialects.rs"
+
+[[example]]
+name = "raw_sql"
+path = "raw_sql.rs"
+
+# Layer 2 -- execution, against a throwaway SQLite database.
+[[example]]
+name = "execute"
+path = "execute.rs"
+
+[[example]]
+name = "transactions"
+path = "transactions.rs"
+
+[[example]]
+name = "streaming"
+path = "streaming.rs"
+
+[[example]]
+name = "errors"
+path = "errors.rs"
+
+# Layers 3 and 4 -- the generated models, factories and .sql files.
+[[example]]
+name = "models"
+path = "models.rs"
+
+[[example]]
+name = "relations"
+path = "relations.rs"
+
+[[example]]
+name = "factories"
+path = "factories.rs"
+
+[[example]]
+name = "sql_files"
+path = "sql_files.rs"
+
+[lints]
+workspace = true

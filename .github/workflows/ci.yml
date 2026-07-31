@@ -1,8 +1,9 @@
 # keelson CI — the same three gates the repo enforces locally, wired into Actions.
 #
 # Job layout (all parallel):
-#   fast          build + test + clippy(-D warnings) + fmt on stable. The grammar
-#                 judges and real SQLite run here already: rusqlite is bundled and
+#   fast          build + test + clippy(-D warnings) + fmt on stable, plus the
+#                 examples, which assert their own output. The grammar judges and
+#                 real SQLite run here already: rusqlite is bundled and
 #                 pg_query/sqlite3-parser/sqlparser compile in, so a plain
 #                 `cargo test` is the full non-engine verification. No services.
 #   release-surface
@@ -84,6 +85,9 @@ jobs:
       - run: cargo test --workspace
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo fmt --all --check
+      # The examples assert their own output, so running them is a behavioural
+      # gate and not just a second compile. No services: SQLite in a temp file.
+      - run: ./scripts/run-examples.sh
 
   release-surface:
     name: docs / feature matrix / package
@@ -104,11 +108,11 @@ jobs:
       - name: keelson feature matrix
         run: ./scripts/feature-matrix.sh
       # What crates.io would receive, built in isolation from its own tarball.
-      # `--exclude keelson-sqlcheck` is the publish=false test judge, which
-      # reads the repository's tests/schema/ and cannot survive packaging; see
+      # The two `--exclude`s are the publish=false members, which
+      # `cargo package --workspace` would otherwise package anyway; see
       # docs/publishing.md.
       - name: package the publishable set
-        run: cargo package --workspace --exclude keelson-sqlcheck --allow-dirty
+        run: cargo package --workspace --exclude keelson-sqlcheck --exclude keelson-examples --allow-dirty
 
   coverage-gate:
     name: sqlcheck coverage gate (Tier D)

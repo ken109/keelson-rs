@@ -1574,6 +1574,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "keelson-examples"
+version = "0.0.0"
+dependencies = [
+ "chrono",
+ "keelson",
+ "keelson-core",
+ "keelson-exec",
+ "keelson-factory",
+ "keelson-gen",
+ "keelson-models",
+ "keelson-sqlite",
+ "rusqlite",
+ "tokio",
+]
+
+[[package]]
 name = "keelson-exec"
 version = "0.0.0"
 dependencies = [
