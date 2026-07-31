@@ -11,9 +11,12 @@
 //! On top of the spec's set, the shapes the spec schema does not have:
 //! a nullable foreign key (`comments.user_id`), a composite primary key
 //! (`post_tags`), and real database views — `user_emails` and `post_authors`
-//! as `SELECT`-only models on both ends of config-declared relations, and
+//! as `SELECT`-only models on both ends of config-declared relations,
 //! `editable_users` as the one view SQLite will write through (it carries
-//! `INSTEAD OF` triggers, and the config declares its key).
+//! `INSTEAD OF` triggers, and the config declares its key), and the
+//! `threads`/`messages` pair whose foreign keys point at each other — the
+//! shape that forces every to-one `rel` field to be boxed, and whose
+//! generated code does not compile without it.
 
 // `pub` throughout the generated files because that is what the generator
 // emits into an application's models crate; this test binary has no external
@@ -31,7 +34,10 @@ use keelson_models::{null, set};
 use keelson_sqlite::{quote, select};
 use keelson_sqlx::sqlite::Pool;
 
-use models::{comments, editable_users, post_authors, post_tags, posts, tags, user_emails, users};
+use models::{
+    comments, editable_users, messages, post_authors, post_tags, posts, tags, threads, user_emails,
+    users,
+};
 
 /// The application's hand-written hooks, outside the generated tree — the
 /// module `[hooks] module = "crate::hooks"` points the delegations at.
@@ -1031,4 +1037,162 @@ async fn a_view_the_engine_writes_through_gets_the_whole_table_surface() {
     // never says.
     let id: i64 = <models::editable_users::EditableUsers as keelson_models::Table>::pk(&made);
     assert_eq!(id, 7);
+}
+
+// ───────────────────── mutually referencing base tables ─────────────────────
+//
+// `threads.first_message_id → messages` and `messages.thread_id → threads`:
+// two to-one relations pointing at each other. Unboxed, `Thread.rel` would
+// hold a `Message` that holds a `Thread`, which is a recursive type of
+// infinite size — the generated code would not compile at all. That these
+// tests build is half the point; the other half is that the relation still
+// loads.
+
+/// A thread whose opening message is `messages` row 1, and a second thread
+/// whose opening message is row 3 — inserted messages-after-threads, because
+/// `threads.first_message_id` is the nullable end of the pair.
+async fn seed_threads(db: &dyn Executor) {
+    for title in ["keel laid", "sea trials"] {
+        threads::table()
+            .insert(threads::Setter {
+                title: set(title),
+                ..Default::default()
+            })
+            .exec(db)
+            .await
+            .unwrap();
+    }
+    for (tid, body) in [(1i64, "first"), (1, "second"), (2, "hello")] {
+        messages::table()
+            .insert(messages::Setter {
+                thread_id: set(tid),
+                body: set(body),
+                ..Default::default()
+            })
+            .exec(db)
+            .await
+            .unwrap();
+    }
+    for (tid, mid) in [(1i64, 1i64), (2, 3)] {
+        threads::table()
+            .update(
+                threads::Setter {
+                    first_message_id: set(mid),
+                    ..Default::default()
+                },
+                threads::id().eq(tid),
+            )
+            .exec(db)
+            .await
+            .unwrap();
+    }
+}
+
+/// Both ends of the mutual pair load, each way, and a boxed field is
+/// constructed and compared as a whole value rather than read through.
+#[tokio::test]
+async fn mutually_referencing_tables_load_both_ways() {
+    let db = db().await;
+    seed_threads(&db).await;
+
+    // Same-query preload, thread → its opening message.
+    let thread = threads::table()
+        .query((threads::preload::first_message(), threads::id().eq(1i64)))
+        .one(&db)
+        .await
+        .unwrap();
+    let opening = thread
+        .rel
+        .first_message
+        .as_deref()
+        .expect("the opening message");
+    assert_eq!(opening.body, "first");
+    assert_eq!(
+        thread.rel.first_message,
+        Some(Box::new(models::messages::Message {
+            id: 1,
+            thread_id: 1,
+            body: "first".to_owned(),
+            rel: models::messages::Rel::default(),
+        })),
+        "a to-one relation field is built with Some(Box::new(…))"
+    );
+
+    // Then-load, the other way: message → its thread.
+    let message = messages::table()
+        .query((messages::then_load::thread(), messages::id().eq(2i64)))
+        .one(&db)
+        .await
+        .unwrap();
+    assert_eq!(
+        message.rel.thread.as_deref().expect("thread").title,
+        "keel laid"
+    );
+
+    // A thread's opening message is not the same as its messages: both
+    // relations exist on the same `Rel`, one boxed and one a `Vec`.
+    let both = threads::table()
+        .query((
+            threads::then_load::first_message(),
+            threads::then_load::messages(),
+            threads::id().eq(1i64),
+        ))
+        .one(&db)
+        .await
+        .unwrap();
+    assert_eq!(both.rel.first_message.as_deref().unwrap().id, 1);
+    assert_eq!(both.rel.messages.len(), 2);
+}
+
+/// The cycle walked as a path: message → thread → that thread's opening
+/// message, three levels and three queries, and the boxing has not changed
+/// how often the shared child is fetched.
+#[tokio::test]
+async fn a_path_around_the_mutual_cycle_costs_one_query_per_level() {
+    let db = Counting::new(db().await);
+    seed_threads(&db).await;
+    db.reset();
+
+    let loaded = messages::table()
+        .query((
+            messages::then_load::thread().then(threads::then_load::first_message()),
+            select::order_by(messages::id()),
+        ))
+        .all(&db)
+        .await
+        .unwrap();
+
+    let sql = db.seen();
+    assert_eq!(
+        sql.len(),
+        3,
+        "the caller's query, the threads, the threads' opening messages: {sql:#?}"
+    );
+    assert_eq!(
+        args_in(&sql[1]),
+        2,
+        "three messages in two distinct threads: the key is deduplicated"
+    );
+    assert_eq!(args_in(&sql[2]), 2, "two threads, two opening messages");
+
+    let openings: Vec<&str> = loaded
+        .iter()
+        .map(|m| {
+            m.rel
+                .thread
+                .as_ref()
+                .expect("thread")
+                .rel
+                .first_message
+                .as_ref()
+                .expect("opening message")
+                .body
+                .as_str()
+        })
+        .collect();
+    assert_eq!(openings, vec!["first", "first", "hello"]);
+    assert_eq!(
+        loaded[0].rel.thread, loaded[1].rel.thread,
+        "the shared thread was loaded once, its opening message already attached"
+    );
 }

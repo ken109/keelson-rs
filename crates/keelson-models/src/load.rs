@@ -295,6 +295,11 @@ where
 
 /// Attach a to-one relation: each parent gets the child whose key matches, or
 /// `None`. Children are cloned only where several parents share one.
+///
+/// The child arrives here unboxed; the generated `attach` closure is what
+/// writes it into the row's `Option<Box<_>>` field (`= c.map(Box::new)`), so
+/// the `Box` is one move per attached parent and changes neither how many
+/// children are fetched nor how many are cloned.
 pub fn attach_to_one<P, C, K>(
     parents: &mut [P],
     children: Vec<C>,

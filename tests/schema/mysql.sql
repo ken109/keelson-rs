@@ -44,6 +44,25 @@ CREATE TABLE post_tags (
     FOREIGN KEY (tag_id) REFERENCES tags (id)
 );
 
+-- The mutually referencing pair — see the note in tests/schema/psql.sql for
+-- what it is for. MySQL resolves a foreign key's target at DDL time too, so the
+-- second constraint is likewise added after both tables exist.
+CREATE TABLE threads (
+    id               INT PRIMARY KEY,
+    title            VARCHAR(255) NOT NULL,
+    first_message_id INT
+);
+
+CREATE TABLE messages (
+    id        INT PRIMARY KEY,
+    thread_id INT NOT NULL,
+    body      TEXT NOT NULL,
+    FOREIGN KEY (thread_id) REFERENCES threads (id)
+);
+
+ALTER TABLE threads ADD CONSTRAINT threads_first_message_id_fk
+    FOREIGN KEY (first_message_id) REFERENCES messages (id);
+
 -- Two views — see the note in tests/schema/psql.sql. MySQL answers the
 -- updatability question with a single `IS_UPDATABLE` flag it computes from the
 -- view body, and it answers it for both of these.

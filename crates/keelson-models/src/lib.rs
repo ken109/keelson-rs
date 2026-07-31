@@ -89,6 +89,20 @@
 //! characters shorter than `related`. The generated mod modules follow the
 //! design vocabulary: `posts::preload::user()`, `posts::then_load::user()`.
 //!
+//! **Relation field shape: `Option<Box<Row>>` to-one, `Vec<Row>` to-many.**
+//! A `Rel` field holds the target's whole row, so two models whose to-one
+//! relations point at each other would be a recursive type of infinite size
+//! — `post.rel.user: Option<User>` next to `user.rel.featured_post:
+//! Option<Post>` does not compile. Every to-one field is therefore boxed,
+//! uniformly, rather than only the ones a schema's cycles happen to need:
+//! a field's type must not depend on the rest of the schema graph, or
+//! adding an unrelated foreign key would silently change it. A to-many
+//! field is a `Vec` and already carries its own indirection. Reading is
+//! unaffected (`post.rel.user.as_ref().unwrap().name` derefs through the
+//! `Box`); building one by hand is `Some(Box::new(row))`. The rejected
+//! alternative and the whole argument are recorded in
+//! `keelson-gen/src/emit/model.rs`.
+//!
 //! **View vs Table.** [`View`] is `SELECT`-only and needs no primary key;
 //! [`Table`] adds insert/update/delete and requires one. The mutations are
 //! bounded on `Table`, so calling `insert` on a view model is a compile

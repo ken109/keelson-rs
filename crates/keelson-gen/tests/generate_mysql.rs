@@ -59,6 +59,21 @@ fn mysql_ir() -> Schema {
                 foreign_keys: vec![fk("post_id", "posts", "id"), fk("user_id", "users", "id")],
                 unique_keys: vec![],
             },
+            // Half of the mutually referencing pair: `messages.thread_id →
+            // threads` and `threads.first_message_id → messages`, which is
+            // what makes the generated to-one `rel` fields a cycle.
+            TableDef {
+                name: "messages".to_owned(),
+                kind: TableKind::Table,
+                columns: vec![
+                    col("id", "int", false, None),
+                    col("thread_id", "int", false, None),
+                    col("body", "text", false, None),
+                ],
+                primary_key: vec!["id".to_owned()],
+                foreign_keys: vec![fk("thread_id", "threads", "id")],
+                unique_keys: vec![],
+            },
             // A view: no key, no foreign keys, and every column reported as
             // MySQL reports it. `IS_UPDATABLE` is the one flag MySQL computes
             // for a whole view, and the `live-docker` lane is what pins these
@@ -112,6 +127,21 @@ fn mysql_ir() -> Schema {
                 primary_key: vec!["id".to_owned()],
                 foreign_keys: vec![],
                 unique_keys: vec![vec!["name".to_owned()]],
+            },
+            // The other half of the pair. `first_message_id` is nullable
+            // because a thread has to be insertable before the message that
+            // opens it exists.
+            TableDef {
+                name: "threads".to_owned(),
+                kind: TableKind::Table,
+                columns: vec![
+                    col("id", "int", false, None),
+                    col("title", "varchar(255)", false, None),
+                    col("first_message_id", "int", true, None),
+                ],
+                primary_key: vec!["id".to_owned()],
+                foreign_keys: vec![fk("first_message_id", "messages", "id")],
+                unique_keys: vec![],
             },
             TableDef {
                 name: "user_emails".to_owned(),

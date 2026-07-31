@@ -188,6 +188,158 @@ pub mod comments {
         }
     }
 }
+/// The `messages` factory.
+pub mod messages {
+    /// The model's uniqueness source: one process-wide sequence.
+    static SEQ: keelson_factory::Sequence = keelson_factory::Sequence::new();
+    /// The `messages` template: one value source per column.
+    #[derive(Debug, Clone, Default)]
+    pub struct MessageTemplate {
+        /// `id`.
+        pub id: keelson_factory::Source<i32>,
+        /// FK `thread_id` → `threads`: auto-created from `threads`'s own template unless a mod overrides it.
+        pub thread: keelson_factory::Parent<Box<super::threads::ThreadTemplate>, i32>,
+        /// `body`.
+        pub body: keelson_factory::Source<String>,
+        /// Has-many `threads` children, created after this row exists, each with `threads.first_message_id` forced to it.
+        pub threads: Vec<super::threads::ThreadTemplate>,
+    }
+    /// The entry point: `factory((id(10), …))`.
+    pub fn factory(mods: impl keelson_core::Mod<MessageTemplate>) -> MessageTemplate {
+        let mut t = MessageTemplate::default();
+        mods.apply(&mut t);
+        t
+    }
+    /// Set `id`.
+    pub fn id(v: i32) -> impl keelson_core::Mod<MessageTemplate> {
+        keelson_core::mod_fn(move |t: &mut MessageTemplate| {
+            t.id = keelson_factory::Source::Value(v)
+        })
+    }
+    /// Draw `id` at random instead of from the sequence — random values are inside the faker's seed, sequence values deliberately are not.
+    pub fn random_id() -> impl keelson_core::Mod<MessageTemplate> {
+        keelson_core::mod_fn(|t: &mut MessageTemplate| {
+            t.id = keelson_factory::Source::from_fn(|f| f.i32_in(1, i32::MAX / 2))
+        })
+    }
+    /// Use this existing `threads` row as the parent.
+    pub fn thread(
+        row: &super::super::threads::Thread,
+    ) -> impl keelson_core::Mod<MessageTemplate> {
+        let pk = row.id;
+        keelson_core::mod_fn(move |t: &mut MessageTemplate| {
+            t.thread = keelson_factory::Parent::Existing(pk);
+        })
+    }
+    /// Use this existing `threads` key as the parent.
+    pub fn thread_id(pk: i32) -> impl keelson_core::Mod<MessageTemplate> {
+        keelson_core::mod_fn(move |t: &mut MessageTemplate| {
+            t.thread = keelson_factory::Parent::Existing(pk);
+        })
+    }
+    /// Create the `threads` parent from this template.
+    pub fn for_thread(
+        tpl: super::threads::ThreadTemplate,
+    ) -> impl keelson_core::Mod<MessageTemplate> {
+        keelson_core::mod_fn(move |t: &mut MessageTemplate| {
+            t.thread = keelson_factory::Parent::Template(Box::new(tpl))
+        })
+    }
+    /// Set `body`.
+    pub fn body(v: impl Into<String>) -> impl keelson_core::Mod<MessageTemplate> {
+        let v = v.into();
+        keelson_core::mod_fn(move |t: &mut MessageTemplate| {
+            t.body = keelson_factory::Source::Value(v)
+        })
+    }
+    /// Queue a new `threads` child for this row.
+    pub fn with_new_thread(
+        tpl: super::threads::ThreadTemplate,
+    ) -> impl keelson_core::Mod<MessageTemplate> {
+        keelson_core::mod_fn(move |t: &mut MessageTemplate| t.threads.push(tpl))
+    }
+    impl MessageTemplate {
+        /// The no-database strategy: the setter `create` would insert. No executor in the signature — that absence is the guarantee.
+        pub fn build(
+            &self,
+            f: &mut keelson_factory::Faker,
+        ) -> super::super::messages::Setter {
+            super::super::messages::Setter {
+                id: self.id.resolve(f, |_| keelson_models::Set::Value(SEQ.next_i32())),
+                thread_id: match &self.thread {
+                    keelson_factory::Parent::Existing(pk) => {
+                        keelson_models::Set::Value(*pk)
+                    }
+                    keelson_factory::Parent::Auto
+                    | keelson_factory::Parent::Template(_) => keelson_models::Set::Unset,
+                },
+                body: self
+                    .body
+                    .resolve(
+                        f,
+                        |f| keelson_models::Set::Value(format!("message-{}", f.alnum(8))),
+                    ),
+            }
+        }
+        /// Create the parent chain (unless overridden), the row itself through the model's own insert path — so hooks fire — and then the queued children. Boxed rather than an `async fn` because factory graphs recurse.
+        pub fn create_with<'a>(
+            &'a self,
+            db: &'a dyn keelson_exec::Executor,
+            f: &'a mut keelson_factory::Faker,
+        ) -> keelson_exec::ExecFuture<
+            'a,
+            Result<super::super::messages::Message, keelson_exec::ExecError>,
+        > {
+            Box::pin(async move {
+                let mut s = self.build(f);
+                match &self.thread {
+                    keelson_factory::Parent::Existing(_) => {}
+                    keelson_factory::Parent::Template(t) => {
+                        s.thread_id = keelson_models::Set::Value(
+                            t.create_with(db, &mut *f).await?.id,
+                        );
+                    }
+                    keelson_factory::Parent::Auto => {
+                        let t = super::threads::ThreadTemplate::default();
+                        s.thread_id = keelson_models::Set::Value(
+                            t.create_with(db, &mut *f).await?.id,
+                        );
+                    }
+                }
+                let row = super::super::messages::table().insert(s).one(db).await?;
+                for c in &self.threads {
+                    let mut child = c.clone();
+                    child.first_message = keelson_factory::OptionalParent::Existing(
+                        row.id,
+                    );
+                    child.create_with(db, &mut *f).await?;
+                }
+                Ok(row)
+            })
+        }
+        /// Create one row (and whatever parents and children the template implies) with a fresh entropy-seeded faker.
+        pub async fn create(
+            &self,
+            db: &dyn keelson_exec::Executor,
+        ) -> Result<super::super::messages::Message, keelson_exec::ExecError> {
+            let mut f = keelson_factory::Faker::from_entropy();
+            self.create_with(db, &mut f).await
+        }
+        /// Create `n` rows; sequences keep the unique columns apart.
+        pub async fn create_many(
+            &self,
+            db: &dyn keelson_exec::Executor,
+            n: usize,
+        ) -> Result<Vec<super::super::messages::Message>, keelson_exec::ExecError> {
+            let mut f = keelson_factory::Faker::from_entropy();
+            let mut out = Vec::with_capacity(n);
+            for _ in 0..n {
+                out.push(self.create_with(db, &mut f).await?);
+            }
+            Ok(out)
+        }
+    }
+}
 /// The `post_tags` factory.
 pub mod post_tags {
     /// The `post_tags` template: one value source per column.
@@ -651,6 +803,153 @@ pub mod tags {
             db: &dyn keelson_exec::Executor,
             n: usize,
         ) -> Result<Vec<super::super::tags::Tag>, keelson_exec::ExecError> {
+            let mut f = keelson_factory::Faker::from_entropy();
+            let mut out = Vec::with_capacity(n);
+            for _ in 0..n {
+                out.push(self.create_with(db, &mut f).await?);
+            }
+            Ok(out)
+        }
+    }
+}
+/// The `threads` factory.
+pub mod threads {
+    /// The model's uniqueness source: one process-wide sequence.
+    static SEQ: keelson_factory::Sequence = keelson_factory::Sequence::new();
+    /// The `threads` template: one value source per column.
+    #[derive(Debug, Clone, Default)]
+    pub struct ThreadTemplate {
+        /// `id`.
+        pub id: keelson_factory::Source<i32>,
+        /// `title`.
+        pub title: keelson_factory::Source<String>,
+        /// Nullable FK `first_message_id` → `messages`: absent (NULL) unless a mod opts in.
+        pub first_message: keelson_factory::OptionalParent<
+            Box<super::messages::MessageTemplate>,
+            i32,
+        >,
+        /// Has-many `messages` children, created after this row exists, each with `messages.thread_id` forced to it.
+        pub messages: Vec<super::messages::MessageTemplate>,
+    }
+    /// The entry point: `factory((id(10), …))`.
+    pub fn factory(mods: impl keelson_core::Mod<ThreadTemplate>) -> ThreadTemplate {
+        let mut t = ThreadTemplate::default();
+        mods.apply(&mut t);
+        t
+    }
+    /// Set `id`.
+    pub fn id(v: i32) -> impl keelson_core::Mod<ThreadTemplate> {
+        keelson_core::mod_fn(move |t: &mut ThreadTemplate| {
+            t.id = keelson_factory::Source::Value(v)
+        })
+    }
+    /// Draw `id` at random instead of from the sequence — random values are inside the faker's seed, sequence values deliberately are not.
+    pub fn random_id() -> impl keelson_core::Mod<ThreadTemplate> {
+        keelson_core::mod_fn(|t: &mut ThreadTemplate| {
+            t.id = keelson_factory::Source::from_fn(|f| f.i32_in(1, i32::MAX / 2))
+        })
+    }
+    /// Set `title`.
+    pub fn title(v: impl Into<String>) -> impl keelson_core::Mod<ThreadTemplate> {
+        let v = v.into();
+        keelson_core::mod_fn(move |t: &mut ThreadTemplate| {
+            t.title = keelson_factory::Source::Value(v)
+        })
+    }
+    /// Use this existing `messages` row as the parent.
+    pub fn first_message(
+        row: &super::super::messages::Message,
+    ) -> impl keelson_core::Mod<ThreadTemplate> {
+        let pk = row.id;
+        keelson_core::mod_fn(move |t: &mut ThreadTemplate| {
+            t.first_message = keelson_factory::OptionalParent::Existing(pk);
+        })
+    }
+    /// Use this existing `messages` key as the parent.
+    pub fn first_message_id(pk: i32) -> impl keelson_core::Mod<ThreadTemplate> {
+        keelson_core::mod_fn(move |t: &mut ThreadTemplate| {
+            t.first_message = keelson_factory::OptionalParent::Existing(pk);
+        })
+    }
+    /// Create the `messages` parent from this template.
+    pub fn for_first_message(
+        tpl: super::messages::MessageTemplate,
+    ) -> impl keelson_core::Mod<ThreadTemplate> {
+        keelson_core::mod_fn(move |t: &mut ThreadTemplate| {
+            t.first_message = keelson_factory::OptionalParent::Template(Box::new(tpl))
+        })
+    }
+    /// Queue a new `messages` child for this row.
+    pub fn with_new_message(
+        tpl: super::messages::MessageTemplate,
+    ) -> impl keelson_core::Mod<ThreadTemplate> {
+        keelson_core::mod_fn(move |t: &mut ThreadTemplate| t.messages.push(tpl))
+    }
+    impl ThreadTemplate {
+        /// The no-database strategy: the setter `create` would insert. No executor in the signature — that absence is the guarantee.
+        pub fn build(
+            &self,
+            f: &mut keelson_factory::Faker,
+        ) -> super::super::threads::Setter {
+            super::super::threads::Setter {
+                id: self.id.resolve(f, |_| keelson_models::Set::Value(SEQ.next_i32())),
+                title: self
+                    .title
+                    .resolve(
+                        f,
+                        |f| keelson_models::Set::Value(format!("thread-{}", f.alnum(8))),
+                    ),
+                first_message_id: match &self.first_message {
+                    keelson_factory::OptionalParent::Existing(pk) => {
+                        keelson_models::Set::Value(*pk)
+                    }
+                    keelson_factory::OptionalParent::Absent
+                    | keelson_factory::OptionalParent::Template(_) => {
+                        keelson_models::Set::Unset
+                    }
+                },
+            }
+        }
+        /// Create the parent chain (unless overridden), the row itself through the model's own insert path — so hooks fire — and then the queued children. Boxed rather than an `async fn` because factory graphs recurse.
+        pub fn create_with<'a>(
+            &'a self,
+            db: &'a dyn keelson_exec::Executor,
+            f: &'a mut keelson_factory::Faker,
+        ) -> keelson_exec::ExecFuture<
+            'a,
+            Result<super::super::threads::Thread, keelson_exec::ExecError>,
+        > {
+            Box::pin(async move {
+                let mut s = self.build(f);
+                if let keelson_factory::OptionalParent::Template(t) = &self.first_message
+                {
+                    s.first_message_id = keelson_models::Set::Value(
+                        t.create_with(db, &mut *f).await?.id,
+                    );
+                }
+                let row = super::super::threads::table().insert(s).one(db).await?;
+                for c in &self.messages {
+                    let mut child = c.clone();
+                    child.thread = keelson_factory::Parent::Existing(row.id);
+                    child.create_with(db, &mut *f).await?;
+                }
+                Ok(row)
+            })
+        }
+        /// Create one row (and whatever parents and children the template implies) with a fresh entropy-seeded faker.
+        pub async fn create(
+            &self,
+            db: &dyn keelson_exec::Executor,
+        ) -> Result<super::super::threads::Thread, keelson_exec::ExecError> {
+            let mut f = keelson_factory::Faker::from_entropy();
+            self.create_with(db, &mut f).await
+        }
+        /// Create `n` rows; sequences keep the unique columns apart.
+        pub async fn create_many(
+            &self,
+            db: &dyn keelson_exec::Executor,
+            n: usize,
+        ) -> Result<Vec<super::super::threads::Thread>, keelson_exec::ExecError> {
             let mut f = keelson_factory::Faker::from_entropy();
             let mut out = Vec::with_capacity(n);
             for _ in 0..n {

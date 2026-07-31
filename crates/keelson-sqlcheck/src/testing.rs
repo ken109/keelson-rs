@@ -25,8 +25,8 @@
 //!
 //! - **Name only the shared schema.** A real engine resolves names, so
 //!   `tests/schema/psql.sql` (`users`, `posts`, `comments`, `tags`,
-//!   `post_tags`, plus the views `user_emails` and `post_authors`) is the
-//!   vocabulary. `SELECT "nope" FROM users` passes the grammar and fails the
+//!   `post_tags`, the mutually referencing `threads` and `messages`, plus the
+//!   views `user_emails` and `post_authors`) is the vocabulary. `SELECT "nope" FROM users` passes the grammar and fails the
 //!   engine.
 //! - **Watch where a placeholder has no type to take.** PostgreSQL resolves a
 //!   placeholder it has nothing else to go on to `text`, so `SELECT $1 FROM users`

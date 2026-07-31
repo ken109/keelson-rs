@@ -2,6 +2,34 @@
 //! column fns, `View`/`Table` impls, hook delegations and the
 //! `preload`/`then_load` mod modules — the shapes the hand-written spec in
 //! `keelson-models/tests/` fixes.
+//!
+//! # The decisions, recorded
+//!
+//! **Every to-one relation field is `Option<Box<Row>>`, uniformly** —
+//! belongs-to, and the `cardinality = "one_to_one"` back-reference alike.
+//! A `Rel` holds the target's whole row, so two models that reference each
+//! other to-one hold each other by value: `ARow.rel.b: Option<BRow>` and
+//! `BRow.rel.a: Option<ARow>` is a recursive type of infinite size, which
+//! is a hard compile error in the *generated* code — nothing a user of this
+//! generator can work around. Two base tables with mutual single-column
+//! foreign keys are enough to produce it. `Box` is the indirection that
+//! breaks the cycle; a to-many field is a `Vec` and already carries its
+//! own.
+//!
+//! The alternative — walking the relation graph, finding its cycles, and
+//! boxing only the edges that close one — was rejected. It makes a
+//! generated field's type a function of the whole schema: adding an
+//! unrelated foreign key somewhere else could flip an existing
+//! `Option<Row>` to `Option<Box<Row>>` and break user code at a distance,
+//! for a reason nothing at the call site explains. The uniform rule costs
+//! one allocation per attached to-one row and fits in one sentence.
+//!
+//! Reading is unaffected — `Box` derefs — but *constructing* one is
+//! `Some(Box::new(row))`. The boxing itself happens at exactly one kind of
+//! place: wherever a to-one `rel` field is written (`= c.map(Box::new)`).
+//! The `<name>_from_preload` decoder keeps returning the plain row, so the
+//! `Box` is never something a caller has to unwrap to get at a decode
+//! result.
 
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -155,9 +183,10 @@ pub(crate) fn model_file(
             let (tmod, trow) = target_names(all, &b.target)?;
             let fk = &m.columns[b.fk_column].db_name;
             let doc = format!(" Belongs-to `{}`, via `{table}.{fk}`.", b.target);
+            // Boxed unconditionally — see the module docs.
             rel_fields.push(quote! {
                 #[doc = #doc]
-                pub #f: Option<super::#tmod::#trow>
+                pub #f: Option<Box<super::#tmod::#trow>>
             });
         }
         for h in &m.has_many {
@@ -165,12 +194,9 @@ pub(crate) fn model_file(
             let (cmod, crow) = target_names(all, &h.child)?;
             // `cardinality = "one_to_one"` makes the back-reference an
             // `Option` rather than a `Vec`; a foreign key always means many.
-            //
-            // The `Box` is not decoration. The child's own belongs-to holds
-            // `Option<ThisRow>`, so a to-one back-reference closes a cycle of
-            // two `Option`s — a recursive type with no indirection, which is
-            // a hard compile error. A `Vec` back-reference carries its own
-            // indirection and needs none.
+            // The to-one arm is boxed for the same reason every to-one field
+            // is (see the module docs); a `Vec` carries its own indirection
+            // and needs none.
             let (kind, ty) = if h.to_one {
                 ("Has-one", quote!(Option<Box<super::#cmod::#crow>>))
             } else {
@@ -907,7 +933,7 @@ fn preload_mod(
                         .apply(q);
                     q.add_mapper_mod(keelson_models::mapper_mod(
                         |row, parent: &mut super::#row| {
-                            parent.rel.#name = #from_fn(row)?;
+                            parent.rel.#name = #from_fn(row)?.map(Box::new);
                             Ok(())
                         },
                     ));
@@ -1008,7 +1034,7 @@ fn then_load_mod(
                             |r| #parent_key,
                             |c| #child_key,
                             |r, c| {
-                                r.rel.#name = c;
+                                r.rel.#name = c.map(Box::new);
                             },
                         );
                     },

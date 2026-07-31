@@ -19,7 +19,7 @@ pub struct PostAuthor {
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Rel {
     /// Belongs-to `users`, via `post_authors.user_id`.
-    pub user: Option<super::users::User>,
+    pub user: Option<Box<super::users::User>>,
     /// Has-one `posts`, via `posts.id`.
     pub posts: Option<Box<super::posts::Post>>,
 }
@@ -96,7 +96,7 @@ pub mod preload {
                 .apply(q);
             q.add_mapper_mod(
                 keelson_models::mapper_mod(|row, parent: &mut super::PostAuthor| {
-                    parent.rel.user = user_from_preload(row)?;
+                    parent.rel.user = user_from_preload(row)?.map(Box::new);
                     Ok(())
                 }),
             );
@@ -140,7 +140,7 @@ pub mod then_load {
                     |r| r.user_id,
                     |c| Some(c.id),
                     |r, c| {
-                        r.rel.user = c;
+                        r.rel.user = c.map(Box::new);
                     },
                 );
             },

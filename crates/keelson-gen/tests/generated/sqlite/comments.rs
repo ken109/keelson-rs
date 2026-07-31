@@ -20,9 +20,9 @@ pub struct Comment {
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Rel {
     /// Belongs-to `posts`, via `comments.post_id`.
-    pub post: Option<super::posts::Post>,
+    pub post: Option<Box<super::posts::Post>>,
     /// Belongs-to `users`, via `comments.user_id`.
-    pub user: Option<super::users::User>,
+    pub user: Option<Box<super::users::User>>,
 }
 impl keelson_exec::FromRow for Comment {
     fn from_row(row: &mut keelson_exec::Row) -> Result<Self, keelson_exec::ExecError> {
@@ -167,7 +167,7 @@ pub mod preload {
                 .apply(q);
             q.add_mapper_mod(
                 keelson_models::mapper_mod(|row, parent: &mut super::Comment| {
-                    parent.rel.post = post_from_preload(row)?;
+                    parent.rel.post = post_from_preload(row)?.map(Box::new);
                     Ok(())
                 }),
             );
@@ -217,7 +217,7 @@ pub mod preload {
                 .apply(q);
             q.add_mapper_mod(
                 keelson_models::mapper_mod(|row, parent: &mut super::Comment| {
-                    parent.rel.user = user_from_preload(row)?;
+                    parent.rel.user = user_from_preload(row)?.map(Box::new);
                     Ok(())
                 }),
             );
@@ -261,7 +261,7 @@ pub mod then_load {
                     |r| r.post_id,
                     |c| c.id,
                     |r, c| {
-                        r.rel.post = c;
+                        r.rel.post = c.map(Box::new);
                     },
                 );
             },
@@ -283,7 +283,7 @@ pub mod then_load {
                     |r| r.user_id,
                     |c| Some(c.id),
                     |r, c| {
-                        r.rel.user = c;
+                        r.rel.user = c.map(Box::new);
                     },
                 );
             },

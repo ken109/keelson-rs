@@ -17,9 +17,9 @@ pub struct PostTag {
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Rel {
     /// Belongs-to `posts`, via `post_tags.post_id`.
-    pub post: Option<super::posts::Post>,
+    pub post: Option<Box<super::posts::Post>>,
     /// Belongs-to `tags`, via `post_tags.tag_id`.
-    pub tag: Option<super::tags::Tag>,
+    pub tag: Option<Box<super::tags::Tag>>,
 }
 impl keelson_exec::FromRow for PostTag {
     fn from_row(row: &mut keelson_exec::Row) -> Result<Self, keelson_exec::ExecError> {
@@ -273,7 +273,7 @@ pub mod preload {
                 .apply(q);
             q.add_mapper_mod(
                 keelson_models::mapper_mod(|row, parent: &mut super::PostTag| {
-                    parent.rel.post = post_from_preload(row)?;
+                    parent.rel.post = post_from_preload(row)?.map(Box::new);
                     Ok(())
                 }),
             );
@@ -319,7 +319,7 @@ pub mod preload {
                 .apply(q);
             q.add_mapper_mod(
                 keelson_models::mapper_mod(|row, parent: &mut super::PostTag| {
-                    parent.rel.tag = tag_from_preload(row)?;
+                    parent.rel.tag = tag_from_preload(row)?.map(Box::new);
                     Ok(())
                 }),
             );
@@ -359,7 +359,7 @@ pub mod then_load {
                     |r| r.post_id,
                     |c| c.id,
                     |r, c| {
-                        r.rel.post = c;
+                        r.rel.post = c.map(Box::new);
                     },
                 );
             },
@@ -381,7 +381,7 @@ pub mod then_load {
                     |r| r.tag_id,
                     |c| c.id,
                     |r, c| {
-                        r.rel.tag = c;
+                        r.rel.tag = c.map(Box::new);
                     },
                 );
             },

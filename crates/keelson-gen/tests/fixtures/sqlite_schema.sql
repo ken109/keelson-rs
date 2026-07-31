@@ -42,6 +42,34 @@ CREATE TABLE post_tags (
     PRIMARY KEY (post_id, tag_id)
 );
 
+-- A cycle of two to-one relations, which is what forces every generated
+-- to-one `rel` field to be boxed: a thread names the message that opened it
+-- and a message names its thread, so `Thread.rel.first_message` and
+-- `Message.rel.thread` refer to each other. Unboxed, that is a recursive type
+-- of infinite size and the generated code does not compile.
+--
+-- SQLite resolves a foreign key's target lazily — the constraint is checked at
+-- DML time, and only when the foreign_keys pragma is on — so the forward
+-- reference to `messages` in the first statement is legal, and no deferred
+-- constraint or ALTER TABLE is needed. PostgreSQL and MySQL both resolve the
+-- target at DDL time and need one of those, which is why their renditions of
+-- this pair in tests/schema/ are spelled differently.
+--
+-- Comments in this file carry neither a statement terminator nor either of the
+-- keywords that bracket a trigger body: one test splits the file on exactly
+-- those before handing the statements to a pool one at a time.
+CREATE TABLE threads (
+    id               INTEGER PRIMARY KEY,
+    title            TEXT NOT NULL,
+    first_message_id INTEGER REFERENCES messages (id)
+);
+
+CREATE TABLE messages (
+    id        INTEGER PRIMARY KEY,
+    thread_id INTEGER NOT NULL REFERENCES threads (id),
+    body      TEXT NOT NULL
+);
+
 CREATE VIEW user_emails AS
     SELECT id, email FROM users;
 

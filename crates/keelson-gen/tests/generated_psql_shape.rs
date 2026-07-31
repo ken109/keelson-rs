@@ -256,7 +256,7 @@ mod live {
     use keelson_models::{null, set};
     use keelson_psql::{Chain as _, arg, quote, select};
 
-    use super::models::{post_authors, posts, user_emails, users};
+    use super::models::{messages, post_authors, posts, threads, user_emails, users};
 
     /// Process-unique positive i32 keys, so runs against a shared or
     /// persistent server never collide.
@@ -529,6 +529,100 @@ mod live {
                     .all(tx)
                     .await?;
                 assert_eq!(rows.len(), 1);
+
+                Err(ExecError::other("deliberate rollback"))
+            })
+            .await;
+        assert_eq!(out.unwrap_err().to_string(), "deliberate rollback");
+    }
+
+    /// The mutually referencing base tables against the real server:
+    /// `threads.first_message_id → messages` and `messages.thread_id →
+    /// threads`, so `Thread.rel.first_message` and `Message.rel.thread`
+    /// refer to each other. That this module compiles at all is the boxing
+    /// rule working; this test is that the relation still loads, both ways
+    /// and around the cycle. Rolled back, so a shared server keeps nothing.
+    #[tokio::test]
+    async fn the_mutually_referencing_pair_loads_against_the_server() {
+        let db = pool().await;
+        let tid = key();
+        let mid = key();
+
+        let out: Result<(), ExecError> = db
+            .within(async |tx| {
+                threads::table()
+                    .insert(threads::Setter {
+                        id: set(tid),
+                        title: set("keel laid"),
+                        ..Default::default()
+                    })
+                    .one(tx)
+                    .await?;
+                messages::table()
+                    .insert(messages::Setter {
+                        id: set(mid),
+                        thread_id: set(tid),
+                        body: set("first"),
+                    })
+                    .one(tx)
+                    .await?;
+                threads::table()
+                    .update(
+                        threads::Setter {
+                            first_message_id: set(mid),
+                            ..Default::default()
+                        },
+                        threads::id().eq(tid),
+                    )
+                    .exec(tx)
+                    .await?;
+
+                // Same-query preload, thread → its opening message.
+                let thread = threads::table()
+                    .query((threads::preload::first_message(), threads::id().eq(tid)))
+                    .one(tx)
+                    .await?;
+                assert_eq!(
+                    thread
+                        .rel
+                        .first_message
+                        .as_deref()
+                        .expect("the opening message")
+                        .body,
+                    "first"
+                );
+
+                // Then-load, the other way: message → its thread.
+                let message = messages::table()
+                    .query((messages::then_load::thread(), messages::id().eq(mid)))
+                    .one(tx)
+                    .await?;
+                assert_eq!(
+                    message.rel.thread.as_deref().expect("the thread").title,
+                    "keel laid"
+                );
+
+                // And once around the cycle as a two-level path.
+                let round = messages::table()
+                    .query((
+                        messages::then_load::thread().then(threads::then_load::first_message()),
+                        messages::id().eq(mid),
+                    ))
+                    .one(tx)
+                    .await?;
+                assert_eq!(
+                    round
+                        .rel
+                        .thread
+                        .as_ref()
+                        .expect("the thread")
+                        .rel
+                        .first_message
+                        .as_ref()
+                        .expect("its opening message")
+                        .id,
+                    mid,
+                );
 
                 Err(ExecError::other("deliberate rollback"))
             })

@@ -283,7 +283,13 @@ mod model {
         #[derive(Debug, Clone, PartialEq, Default)]
         pub struct Rel {
             /// Belongs-to `users`.
-            pub user: Option<super::users::User>,
+            // Boxed because a to-one relation field always is: a `Rel`
+            // holds the target's whole row, so two models that point at
+            // each other to-one are a recursive type of infinite size.
+            // The rule is uniform rather than cycle-detecting, so that a
+            // foreign key added elsewhere can never change this field's
+            // type (keelson-gen/src/emit/model.rs records the choice).
+            pub user: Option<Box<super::users::User>>,
         }
 
         impl FromRow for Post {
@@ -441,7 +447,7 @@ mod model {
                     )
                         .apply(q);
                     q.add_mapper_mod(mapper_mod(|row, post: &mut Post| {
-                        post.rel.user = user_from_preload(row)?;
+                        post.rel.user = user_from_preload(row)?.map(Box::new);
                         Ok(())
                     }));
                 })
@@ -487,7 +493,7 @@ mod model {
                             |p| p.user_id,
                             |u| u.id,
                             |p, u| {
-                                p.rel.user = u;
+                                p.rel.user = u.map(Box::new);
                             },
                         );
                     },

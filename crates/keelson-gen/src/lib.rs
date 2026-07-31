@@ -107,6 +107,18 @@
 //! docs and in `keelson-models/tests/spec_mysql.rs`, which is the
 //! specification this emits.
 //!
+//! **Every to-one relation field is `Option<Box<Row>>`.** A generated `Rel`
+//! holds the target's whole row, so two models that reference each other
+//! to-one hold each other by value — which is a recursive type of infinite
+//! size, a compile error in the emitted code that no user of this generator
+//! could work around. Two base tables with mutual single-column foreign keys
+//! are enough to produce it. Boxing is therefore unconditional rather than
+//! applied only to the edges that close a cycle: a field's type must not be
+//! a function of the whole schema graph, or adding an unrelated foreign key
+//! would change an existing struct and break code at a distance. To-many
+//! fields stay `Vec<Row>`, which carries its own indirection. The argument
+//! is recorded in full in `emit/model.rs`.
+//!
 //! **Factories are opt-in output, not a second generator.** `[output]
 //! factories = true` adds one `factories.rs` — a keelson-factory template
 //! module per writable table, exactly as `keelson-factory/tests/spec_*.rs`

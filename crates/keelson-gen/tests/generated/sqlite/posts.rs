@@ -21,9 +21,9 @@ pub struct Post {
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Rel {
     /// Belongs-to `users`, via `posts.user_id`.
-    pub user: Option<super::users::User>,
+    pub user: Option<Box<super::users::User>>,
     /// Belongs-to `post_authors`, via `posts.id`.
-    pub authorship: Option<super::post_authors::PostAuthor>,
+    pub authorship: Option<Box<super::post_authors::PostAuthor>>,
     /// Has-many `comments`, via `comments.post_id`.
     pub comments: Vec<super::comments::Comment>,
     /// Has-many `post_tags`, via `post_tags.post_id`.
@@ -180,7 +180,7 @@ pub mod preload {
                 .apply(q);
             q.add_mapper_mod(
                 keelson_models::mapper_mod(|row, parent: &mut super::Post| {
-                    parent.rel.user = user_from_preload(row)?;
+                    parent.rel.user = user_from_preload(row)?.map(Box::new);
                     Ok(())
                 }),
             );
@@ -232,7 +232,7 @@ pub mod preload {
                 .apply(q);
             q.add_mapper_mod(
                 keelson_models::mapper_mod(|row, parent: &mut super::Post| {
-                    parent.rel.authorship = authorship_from_preload(row)?;
+                    parent.rel.authorship = authorship_from_preload(row)?.map(Box::new);
                     Ok(())
                 }),
             );
@@ -279,7 +279,7 @@ pub mod then_load {
                     |r| r.user_id,
                     |c| c.id,
                     |r, c| {
-                        r.rel.user = c;
+                        r.rel.user = c.map(Box::new);
                     },
                 );
             },
@@ -304,7 +304,7 @@ pub mod then_load {
                     |r| Some(r.id),
                     |c| c.post_id,
                     |r, c| {
-                        r.rel.authorship = c;
+                        r.rel.authorship = c.map(Box::new);
                     },
                 );
             },

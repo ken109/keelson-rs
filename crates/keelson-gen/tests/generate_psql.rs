@@ -63,6 +63,21 @@ fn psql_ir() -> Schema {
                 foreign_keys: vec![fk("post_id", "posts", "id"), fk("user_id", "users", "id")],
                 unique_keys: vec![],
             },
+            // Half of the mutually referencing pair: `messages.thread_id →
+            // threads` and `threads.first_message_id → messages`, which is
+            // what makes the generated to-one `rel` fields a cycle.
+            TableDef {
+                name: "messages".to_owned(),
+                kind: TableKind::Table,
+                columns: vec![
+                    col("id", "integer", false, None),
+                    col("thread_id", "integer", false, None),
+                    col("body", "text", false, None),
+                ],
+                primary_key: vec!["id".to_owned()],
+                foreign_keys: vec![fk("thread_id", "threads", "id")],
+                unique_keys: vec![],
+            },
             // A view PostgreSQL will *not* write through: two base tables, so
             // it is not auto-updatable, and it carries no INSTEAD OF trigger.
             // Every column is nullable — a view carries no constraints, which
@@ -116,6 +131,21 @@ fn psql_ir() -> Schema {
                 primary_key: vec!["id".to_owned()],
                 foreign_keys: vec![],
                 unique_keys: vec![vec!["name".to_owned()]],
+            },
+            // The other half of the pair. `first_message_id` is nullable
+            // because a thread has to be insertable before the message that
+            // opens it exists.
+            TableDef {
+                name: "threads".to_owned(),
+                kind: TableKind::Table,
+                columns: vec![
+                    col("id", "integer", false, None),
+                    col("title", "text", false, None),
+                    col("first_message_id", "integer", true, None),
+                ],
+                primary_key: vec!["id".to_owned()],
+                foreign_keys: vec![fk("first_message_id", "messages", "id")],
+                unique_keys: vec![],
             },
             // A view PostgreSQL *will* write through: one base table, no
             // aggregate, no set operation — auto-updatable, which is what

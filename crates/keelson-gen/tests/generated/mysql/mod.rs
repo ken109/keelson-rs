@@ -5,10 +5,12 @@
 //! The generated models, one module per table.
 
 pub mod comments;
+pub mod messages;
 pub mod post_authors;
 pub mod post_tags;
 pub mod posts;
 pub mod tags;
+pub mod threads;
 pub mod user_emails;
 pub mod users;
 

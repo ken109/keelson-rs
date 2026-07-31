@@ -35,6 +35,21 @@ CREATE TABLE post_tags (
     PRIMARY KEY (post_id, tag_id)
 );
 
+-- The mutually referencing pair — see the note in tests/schema/psql.sql for
+-- what it is for. SQLite resolves a foreign key's target lazily, so here the
+-- forward reference in the first statement is legal on its own.
+CREATE TABLE threads (
+    id               INTEGER PRIMARY KEY,
+    title            TEXT NOT NULL,
+    first_message_id INTEGER REFERENCES messages (id)
+);
+
+CREATE TABLE messages (
+    id        INTEGER PRIMARY KEY,
+    thread_id INTEGER NOT NULL REFERENCES threads (id),
+    body      TEXT NOT NULL
+);
+
 -- Two views — see the note in tests/schema/psql.sql. SQLite writes through
 -- neither: a view is read-only there unless it carries INSTEAD OF triggers,
 -- and these carry none.

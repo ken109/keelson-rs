@@ -6,10 +6,12 @@
 
 pub mod comments;
 pub mod editable_users;
+pub mod messages;
 pub mod post_authors;
 pub mod post_tags;
 pub mod posts;
 pub mod tags;
+pub mod threads;
 pub mod user_emails;
 pub mod users;
 

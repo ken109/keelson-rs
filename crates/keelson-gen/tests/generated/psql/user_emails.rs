@@ -17,7 +17,7 @@ pub struct UserEmail {
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Rel {
     /// Belongs-to `users`, via `user_emails.id`.
-    pub user: Option<super::users::User>,
+    pub user: Option<Box<super::users::User>>,
 }
 impl keelson_exec::FromRow for UserEmail {
     fn from_row(row: &mut keelson_exec::Row) -> Result<Self, keelson_exec::ExecError> {
@@ -79,7 +79,7 @@ pub mod preload {
                 .apply(q);
             q.add_mapper_mod(
                 keelson_models::mapper_mod(|row, parent: &mut super::UserEmail| {
-                    parent.rel.user = user_from_preload(row)?;
+                    parent.rel.user = user_from_preload(row)?.map(Box::new);
                     Ok(())
                 }),
             );
@@ -123,7 +123,7 @@ pub mod then_load {
                     |r| r.id,
                     |c| Some(c.id),
                     |r, c| {
-                        r.rel.user = c;
+                        r.rel.user = c.map(Box::new);
                     },
                 );
             },

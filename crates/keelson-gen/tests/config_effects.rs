@@ -155,7 +155,7 @@ fn aliases_rename_rust_names_but_never_sql_names() {
     assert!(books.contains(r#"Column::new("books", "title")"#));
     assert!(books.contains(r#"heading: row.take("title")?"#));
     // Relationship alias on the belongs-to; plural alias on the back-ref.
-    assert!(books.contains("pub writer: Option<super::authors::Writer>"));
+    assert!(books.contains("pub writer: Option<Box<super::authors::Writer>>"));
     assert!(books.contains("pub fn writer()"));
     assert!(authors.contains("pub catalogue: Vec<super::books::Book>"));
 }
@@ -187,7 +187,7 @@ fn no_back_referencing_suppresses_the_has_many_side_only() {
     assert!(!authors.contains("Vec<super::books::Book>"));
     assert!(!authors.contains("pub mod then_load"));
     let books = file(&files, "books.rs");
-    assert!(books.contains("pub author: Option<super::authors::Author>"));
+    assert!(books.contains("pub author: Option<Box<super::authors::Author>>"));
     assert!(books.contains("pub mod preload"));
 }
 
@@ -228,7 +228,7 @@ fn manual_relationships_join_what_the_schema_does_not() {
         "#,
     );
     let audits = file(&files, "audits.rs");
-    assert!(audits.contains("pub actor: Option<super::users::User>"));
+    assert!(audits.contains("pub actor: Option<Box<super::users::User>>"));
     assert!(audits.contains("pub fn actor()"));
     // String keys clone; the generated loader keys on the named column.
     assert!(audits.contains("r.actor_name.clone()"));
@@ -423,7 +423,7 @@ fn a_declared_relation_gives_a_view_the_relation_surface() {
     assert!(names.contains("pub fn view()"), "still SELECT-only");
     assert!(!names.contains("impl keelson_models::Table for AuthorNames"));
     assert!(names.contains("pub rel: Rel"), "a view can hold relations");
-    assert!(names.contains("pub author: Option<super::authors::Author>"));
+    assert!(names.contains("pub author: Option<Box<super::authors::Author>>"));
     assert!(names.contains("pub mod preload"));
     assert!(names.contains("pub mod then_load"));
 
@@ -783,7 +783,7 @@ fn a_suppressed_back_reference_leaves_the_view_without_a_rel() {
         "#,
     );
     let books = file(&files, "books.rs");
-    assert!(books.contains("pub revenue: Option<super::sales::Sale>"));
+    assert!(books.contains("pub revenue: Option<Box<super::sales::Sale>>"));
     assert!(books.contains("pub fn revenue()"), "preload and then_load");
 
     let sales = file(&files, "sales.rs");
