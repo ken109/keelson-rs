@@ -1,10 +1,13 @@
-//! **Transactions**: the closure form, savepoints, isolation levels, and the
-//! refusals.
+//! **Transactions**: the closure form, savepoints, units of work that nest,
+//! isolation levels, and the refusals.
 //!
 //!     cargo run -p keelson-examples --example transactions
 //!
-//! Two properties worth knowing up front:
+//! Three properties worth knowing up front:
 //!
+//! - A reusable unit of work takes `&(impl Atomic + ?Sized)` and is atomic
+//!   wherever it is called: a transaction when nothing is open, a savepoint
+//!   when something is. `rename_tag`, at the bottom of this file, is one.
 //! - A `Transaction` carries **no lifetime parameter**. It owns its
 //!   connection, and `commit`/`rollback` consume it -- so it can be stored,
 //!   returned from a function and passed around like any other value.
@@ -13,9 +16,12 @@
 //!   `begin_with` will run, so "what does keelson actually send?" is
 //!   answerable without a packet capture.
 
+// `within`, `begin`, `begin_with` and the query verbs all arrive with the
+// prelude: they are trait methods, and the prelude exists so that a call site
+// does not have to name the trait each one lives on. What is imported by name
+// below is only what is used *as a name* -- the option types and the error.
 use keelson::exec::{
-    Access, Begin as _, BeginExt as _, BeginWith as _, ExecError, Execute as _, Executor, Family,
-    Isolation, SqliteBegin, TxConflict, TxOptions,
+    Access, ExecError, Executor, Family, Isolation, SqliteBegin, TxConflict, TxOptions,
 };
 use keelson::prelude::*;
 use keelson::sqlite::{self, arg, f, insert, quote, select};
@@ -100,6 +106,37 @@ async fn main() -> Result<(), ExecError> {
     assert!(names.contains(&"kept".to_owned()));
     assert!(names.contains(&"also kept".to_owned()));
     assert!(!names.contains(&"discarded".to_owned()));
+
+    // ── a unit of work that does not know where it is ───────────────────
+    //
+    // `within` needs a pool and `savepoint` needs a transaction, so a
+    // *reusable* helper would have to pick one -- and either choice is wrong
+    // somewhere. `atomic` is the third option: a transaction when nothing is
+    // open, a savepoint when something is, same call site either way. See
+    // `rename_tag` at the bottom of this file.
+    //
+    // At the top it *is* the transaction, so its failure rolls back
+    // everything it did.
+    rename_tag(db, "explicit", "renamed").await?;
+    assert!(tag_names(db).await?.contains(&"renamed".to_owned()));
+
+    // Inside one it is a savepoint, so its failure costs its own block and
+    // the caller's transaction lives on to decide.
+    db.within(async |tx| {
+        insert_tag(tx, "outer work").await?;
+        let refused = rename_tag(tx, "no such tag", "never").await;
+        assert!(refused.is_err());
+        // Still usable, still holding "outer work".
+        insert_tag(tx, "after the failed unit").await
+    })
+    .await?;
+    let names = tag_names(db).await?;
+    println!("\n── atomic\n  {names:?}");
+    assert!(names.contains(&"after the failed unit".to_owned()));
+    assert!(!names.contains(&"never".to_owned()));
+    // One audit row, from the rename that succeeded. The failed unit's audit
+    // row went back with it, though its caller's transaction committed.
+    assert_eq!(count_audit(db).await?, 1);
 
     // ── isolation and access mode ───────────────────────────────────────
     //
@@ -212,6 +249,47 @@ async fn main() -> Result<(), ExecError> {
 
     println!("\nok");
     Ok(())
+}
+
+/// A unit of work with two statements in it: it records what it is about to
+/// do, then renames the tag, and it refuses when there was no such tag. Both
+/// statements must land or neither — and *this helper does not know* whether
+/// its caller already opened a transaction. `&(impl Atomic + ?Sized)` is what
+/// lets it not care: a pool, a `&dyn Begin` and a `&Transaction` all satisfy
+/// it. (`?Sized` is what keeps `&dyn Begin` in.)
+async fn rename_tag(db: &(impl Atomic + ?Sized), from: &str, to: &str) -> Result<(), ExecError> {
+    db.atomic(async |tx| {
+        sqlite::insert((
+            insert::into(quote("audit_logs")).columns(["entity", "entity_id", "note"]),
+            insert::values((arg("tag"), arg(0), arg(format!("{from} -> {to}")))),
+        ))
+        .execute(tx)
+        .await?;
+
+        let done = sqlite::update((
+            sqlite::update::table(quote("tags")),
+            sqlite::update::set_col("name").to(arg(to.to_owned())),
+            sqlite::update::where_(quote("name").eq(arg(from.to_owned()))),
+        ))
+        .execute(tx)
+        .await?;
+        if done.rows_affected == 0 {
+            // The audit row above goes with it, at whichever level this
+            // block turned out to be.
+            return Err(ExecError::other(format!("there is no tag named {from}")));
+        }
+        Ok(())
+    })
+    .await
+}
+
+async fn count_audit(db: &dyn Executor) -> Result<i64, ExecError> {
+    sqlite::select((
+        select::columns(f("count", quote("id"))),
+        select::from(quote("audit_logs")),
+    ))
+    .fetch_scalar(db)
+    .await
 }
 
 async fn insert_tag(db: &dyn Executor, name: &str) -> Result<(), ExecError> {

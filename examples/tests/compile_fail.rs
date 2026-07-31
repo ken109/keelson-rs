@@ -17,6 +17,8 @@
 //!   type error rather than a query that silently loads nothing
 //! - a transaction closure cannot commit or roll back the transaction it was
 //!   handed
+//! - `&dyn Executor` cannot open a scope: a unit of work that has to be
+//!   atomic says so in its signature (`&(impl Atomic + ?Sized)`)
 //!
 //! Reading the `.stderr` files is the fastest tour of what the type system is
 //! carrying. Regenerate them after an intentional change with

@@ -814,6 +814,111 @@ pub trait BeginExt: Begin {
 
 impl<B: Begin + ?Sized> BeginExt for B {}
 
+/// **All-or-nothing here, wherever "here" turns out to be**: a transaction
+/// when nothing is open, a savepoint when a transaction already is.
+///
+/// This is the trait a *reusable* unit of work is written against. Without it
+/// a helper has to pick, and both choices are wrong somewhere:
+///
+/// ```text
+/// async fn transfer(db: &dyn Executor) -> …   // composes, but cannot be atomic
+/// async fn transfer(tx: &Transaction) -> …    // atomic, but demands its caller open one
+/// async fn transfer(db: &(impl Atomic + ?Sized)) -> …   // both
+/// ```
+///
+/// The third accepts a pool, a connection, a `&dyn Begin` and a
+/// [`Transaction`], and is atomic in all of them:
+///
+/// ```ignore
+/// async fn transfer(db: &(impl Atomic + ?Sized), from: i64, to: i64) -> Result<(), ExecError> {
+///     db.atomic(async |tx| {
+///         debit(tx, from).await?;
+///         credit(tx, to).await
+///     })
+///     .await
+/// }
+///
+/// transfer(&pool, a, b).await?;                       // BEGIN … COMMIT
+/// pool.within(async |tx| {                            // BEGIN …
+///     transfer(tx, a, b).await?;                      //   SAVEPOINT … RELEASE
+///     audit(tx).await                                 // … COMMIT
+/// })
+/// .await?;
+/// ```
+///
+/// # What "atomic" promises, and what it does not
+///
+/// The *block* is all-or-nothing. What an `Err` discards is not:
+///
+/// - at the top, the block is the transaction, so an error rolls back
+///   everything;
+/// - nested, an error rolls back to the savepoint and **the caller's
+///   transaction survives** — the caller decides whether its own work still
+///   makes sense.
+///
+/// That is the useful reading of a nested unit of work, and it is why this is
+/// not merely a shorthand for "open a transaction if you can".
+///
+/// A **retry loop belongs at the transaction boundary, not here.** Rolling
+/// back to a savepoint does recover a transaction from an error, but a
+/// serialization failure ([`TxConflict`]) will recur against the same
+/// snapshot; only re-running the whole transaction can win. Retry where the
+/// transaction begins.
+///
+/// # The cost, stated
+///
+/// The method is generic, so `Atomic` is **not object-safe**: `&dyn Atomic`
+/// does not exist and the erased currency stays `&dyn Executor`. Take
+/// `&(impl Atomic + ?Sized)` — the `?Sized` is what keeps `&dyn Begin`
+/// acceptable — and pass it on as `&dyn Executor` for everything that is not
+/// a scope.
+///
+/// [`Begin`] is still deliberately *not* implemented by [`Transaction`], so
+/// `begin`/`within` and [`savepoint`](Transaction::savepoint) stay
+/// distinguishable wherever the distinction matters. `atomic` is how a call
+/// site says the other thing on purpose: *I do not care which of the two this
+/// is; I care that it is atomic.*
+///
+/// There is no `atomic_with`. Isolation level and access mode are properties
+/// of the outermost transaction and cannot be changed by a nested scope, so a
+/// nested `atomic_with` could only ignore them — and keelson does not accept
+/// options it would have to ignore. Ask for them where the transaction is
+/// opened: [`BeginWith::begin_with`] or [`BeginWithExt::within_with`].
+pub trait Atomic: Executor {
+    /// Run `f` as one all-or-nothing block, nesting if the receiver is
+    /// already a transaction.
+    fn atomic<T, E, F>(&self, f: F) -> impl std::future::Future<Output = Result<T, E>>
+    where
+        F: AsyncFnOnce(&Transaction) -> Result<T, E>,
+        E: From<ExecError>;
+}
+
+/// Anything a transaction can be begun on: `atomic` *is* [`BeginExt::within`].
+impl<B: Begin + ?Sized> Atomic for B {
+    fn atomic<T, E, F>(&self, f: F) -> impl std::future::Future<Output = Result<T, E>>
+    where
+        F: AsyncFnOnce(&Transaction) -> Result<T, E>,
+        E: From<ExecError>,
+    {
+        self.within(f)
+    }
+}
+
+/// Inside a transaction: `atomic` *is* [`Transaction::savepoint`].
+///
+/// Not an overlapping impl, and not by luck: [`Transaction`] does not
+/// implement [`Begin`], which is the design decision above holding the two
+/// impls apart.
+impl Atomic for Transaction {
+    fn atomic<T, E, F>(&self, f: F) -> impl std::future::Future<Output = Result<T, E>>
+    where
+        F: AsyncFnOnce(&Transaction) -> Result<T, E>,
+        E: From<ExecError>,
+    {
+        self.savepoint(f)
+    }
+}
+
 /// The hook payload the execution layer fixes
 /// [`QueryExtensions`](keelson_core::QueryExtensions)' `Hook` parameter to:
 /// an async function of `&dyn Executor`.
@@ -930,6 +1035,94 @@ mod tests {
         assert!(
             *abandoned.lock().unwrap(),
             "the connection must not be reused"
+        );
+    }
+
+    /// A pool that hands out its one scripted connection: enough to have a
+    /// `Begin` on this side of the driver seam.
+    #[derive(Debug)]
+    struct Handle(StdMutex<Option<Box<dyn RawConnection>>>);
+
+    impl Executor for Handle {
+        fn family(&self) -> Family {
+            Family::Sqlite
+        }
+
+        fn fetch(&self, _: Statement) -> ExecFuture<'_, Result<Vec<Row>, ExecError>> {
+            Box::pin(async { Err(ExecError::other("not the point of this fixture")) })
+        }
+
+        fn execute(&self, _: Statement) -> ExecFuture<'_, Result<ExecResult, ExecError>> {
+            Box::pin(async { Err(ExecError::other("not the point of this fixture")) })
+        }
+    }
+
+    impl Begin for Handle {
+        fn begin(&self) -> ExecFuture<'_, Result<Transaction, ExecError>> {
+            let conn = self.0.lock().unwrap().take();
+            Box::pin(async move {
+                Transaction::begin_on(conn.ok_or_else(|| ExecError::other("checked out twice"))?)
+                    .await
+            })
+        }
+    }
+
+    /// One helper, written once, atomic at both levels — the whole point of
+    /// [`Atomic`].
+    async fn unit_of_work(db: &(impl Atomic + ?Sized), fail: bool) -> Result<(), ExecError> {
+        db.atomic(async |tx| {
+            tx.execute(Statement::new("WORK", vec![])).await?;
+            if fail {
+                return Err(ExecError::other("no"));
+            }
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn one_helper_is_a_transaction_at_the_top_and_a_savepoint_inside_one() {
+        let (conn, log, _) = script();
+        let pool = Handle(StdMutex::new(Some(Box::new(conn))));
+        unit_of_work(&pool, false).await.unwrap();
+        assert_eq!(*log.lock().unwrap(), vec!["BEGIN", "WORK", "COMMIT"]);
+
+        let (conn, log, _) = script();
+        let tx = Transaction::begin_on(Box::new(conn)).await.unwrap();
+        unit_of_work(&tx, false).await.unwrap();
+        tx.commit().await.unwrap();
+        assert_eq!(
+            *log.lock().unwrap(),
+            vec![
+                "BEGIN",
+                "SAVEPOINT keelson_sp_1",
+                "WORK",
+                "RELEASE SAVEPOINT keelson_sp_1",
+                "COMMIT",
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_nested_failure_costs_the_block_and_not_the_callers_transaction() {
+        let (conn, log, _) = script();
+        let tx = Transaction::begin_on(Box::new(conn)).await.unwrap();
+        let err = unit_of_work(&tx, true).await.unwrap_err();
+        assert_eq!(err.to_string(), "no");
+        // The caller's transaction is still usable, and still commits.
+        tx.execute(Statement::new("AFTER", vec![])).await.unwrap();
+        tx.commit().await.unwrap();
+        assert_eq!(
+            *log.lock().unwrap(),
+            vec![
+                "BEGIN",
+                "SAVEPOINT keelson_sp_1",
+                "WORK",
+                "ROLLBACK TO SAVEPOINT keelson_sp_1",
+                "RELEASE SAVEPOINT keelson_sp_1",
+                "AFTER",
+                "COMMIT",
+            ]
         );
     }
 

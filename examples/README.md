@@ -21,7 +21,7 @@ a temporary file that is deleted when they finish.
 | | [`dialects`](dialects.rs) | one upsert, three engines; `MERGE`, `REPLACE`, `INSERT OR REPLACE`; and why MySQL has no `returning` to call |
 | | [`raw_sql`](raw_sql.rs) | writing the SQL yourself: a whole hand-written statement run through the same verbs, fragments inside a built statement, and what a refusal looks like |
 | **Layer 2** | [`execute`](execute.rs) | `fetch_all`/`one`/`optional`/`scalar`/`execute`, `#[derive(FromRow)]`, `&dyn Executor` |
-| | [`transactions`](transactions.rs) | the closure form, savepoints, isolation levels, the refusals, and `TxOptions::plan` |
+| | [`transactions`](transactions.rs) | the closure form, savepoints, `Atomic` units of work, isolation levels, the refusals, and `TxOptions::plan` |
 | | [`streaming`](streaming.rs) | a result set one row at a time, and what holds the connection |
 | | [`errors`](errors.rs) | every failure mode, provoked on purpose and printed |
 | **Layers 3–4** | [`models`](models.rs) | generated models: typed columns, the three-state `Setter`, hooks, a view model |
@@ -40,7 +40,7 @@ a temporary file that is deleted when they finish.
 | `src/queries/` | **generated.** One module per `.sql` file. |
 | `src/hooks.rs` | hand-written hooks the generated models delegate to |
 | `src/lib.rs` | `Sandbox`, the throwaway database the examples share |
-| `tests/compile_fail/` | the other half of the examples: seven mistakes that **do not compile**, each next to the error it must produce |
+| `tests/compile_fail/` | the other half of the examples: eight mistakes that **do not compile**, each next to the error it must produce |
 | `tests/generated_is_fresh.rs` | fails if the generated files no longer match their sources |
 
 ## What does not compile
@@ -58,6 +58,8 @@ safety, stated as a list:
 - a relation load path is typed by the child model, so a wrong path is a type
   error rather than a query that quietly loads nothing
 - a transaction closure cannot end the transaction it was handed
+- `&dyn Executor` cannot open a scope: a unit of work that must be atomic
+  says so in its signature (`&(impl Atomic + ?Sized)`)
 
 Reading the `.stderr` files is the fastest tour of what the type system is
 carrying:

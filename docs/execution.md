@@ -166,6 +166,48 @@ work unchanged at any depth. `Begin` is deliberately *not* implemented by
 `Transaction`: "did I open a transaction or a savepoint?" cannot be confused
 at a call site.
 
+**`Atomic` — the case where the caller *should* not care, added later.**
+Keeping `begin` and `savepoint` distinct costs something the original
+decision did not price: a **reusable** unit of work cannot be written.
+`fn transfer(db: &dyn Executor)` composes everywhere and cannot be atomic;
+`fn transfer(tx: &Transaction)` is atomic and forces every caller to have
+opened a transaction — including callers that only wanted this one thing to
+be all-or-nothing. Django's `atomic()` and SQLAlchemy's `begin_nested` both
+answer this, and keelson had no answer.
+
+`Atomic` is that answer, and it is thin: one method, two impls, no new
+semantics.
+
+```rust
+pub trait Atomic: Executor {
+    fn atomic<T, E, F>(&self, f: F) -> impl Future<Output = Result<T, E>>
+    where F: AsyncFnOnce(&Transaction) -> Result<T, E>, E: From<ExecError>;
+}
+impl<B: Begin + ?Sized> Atomic for B { … self.within(f) }   // a transaction
+impl Atomic for Transaction          { … self.savepoint(f) } // a savepoint
+```
+
+The two impls do not overlap **because of the decision above**: `Transaction`
+does not implement `Begin`, which is exactly what holds them apart. The
+distinction is still there for the call sites that want it — `atomic` is how
+a call site says the other thing on purpose: *I do not care which of the two
+this is, I care that it is atomic.*
+
+Semantics, stated because the asymmetry is the useful part: the **block** is
+all-or-nothing either way, but an `Err` at the top rolls back the whole
+transaction (the block *is* the transaction), while an `Err` nested rolls
+back to the savepoint and leaves the caller's transaction alive to decide.
+Retries stay at the transaction boundary: rolling back to a savepoint
+recovers a transaction from an error, but a serialization failure recurs
+against the same snapshot.
+
+Costs, recorded: the method is generic, so `Atomic` is **not object-safe** —
+the erased currency stays `&dyn Executor` and a scope-taking helper is
+written `&(impl Atomic + ?Sized)` (the `?Sized` keeps `&dyn Begin` in). And
+there is no `atomic_with`: isolation and access mode are properties of the
+outermost transaction, a nested scope could only ignore them, and keelson
+does not accept options it would have to ignore.
+
 **Drop without commit** (designs agreed): the connection is **abandoned** —
 detached from the pool and closed, never returned as reusable — and the
 server discards the open transaction. No async runtime is assumed in `Drop`.
@@ -580,8 +622,9 @@ round-tripped on all three engines and asserted equal everywhere.
 **Plus transaction semantics** (`transactions.rs`): one suite written
 against `&dyn Begin` alone — commit persists, drop-without-commit rolls
 back, explicit rollback discards, savepoints nest and partially roll back,
-`within` commits on `Ok` and rolls back on `Err` — run against all three
-engines, **plus** the deliberately non-generic isolation-level tests (§Q2b),
+`within` commits on `Ok` and rolls back on `Err`, and one `Atomic` helper
+written once is a transaction at the top and a savepoint inside one — run
+against all three engines, **plus** the deliberately non-generic isolation-level tests (§Q2b),
 which are per engine because that is where the engines stop agreeing. And the **full-path suite** (`query_path.rs`): dialect-built
 queries through the `Execute` verbs, `FromRow` structs, `RETURNING` as a
 fetch, column-named decode errors end to end, and the streaming path
@@ -599,7 +642,7 @@ constructs* — the two gates stay separate on purpose.
 | from | kept | deviated |
 |---|---|---|
 | sqlx | `fetch_one/optional/all` verb names; consuming commit; per-connection statement cache; per-db drivers | object-safe `&self` `Executor` (no `'c`, no `&mut`); rows decode via `Value`, one `FromRow` for all backends; `fetch_one`/`fetch_optional` reject extra rows; keelson-exec speaks its own BEGIN/SAVEPOINT over `RawConnection` instead of driver tx machinery; isolation levels an engine would only appear to honour are refused rather than passed through (§Q2b); `Any` driver rejected; streaming opt-in rather than the core contract |
-| SeaORM | shared-ref executor a transaction also implements; closure transaction (`within`, and closure savepoints) | no runtime backend enum — backends are crates, `Family` is metadata; no ActiveValue machinery at this layer |
+| SeaORM | shared-ref executor a transaction also implements; closure transaction (`within`, and closure savepoints) | `Atomic` — one helper that is a transaction at the top and a savepoint inside one (Django's `atomic()`, not SeaORM's); no runtime backend enum — backends are crates, `Family` is metadata; no ActiveValue machinery at this layer |
 | bob (Go) | hooks resolve through the query's own extension points (`QueryExtensions`), run on the caller's executor | hook payloads are typed (`ExecHook`), not runtime type-asserts |
 
 ## What was explicitly deferred, and what reopens each

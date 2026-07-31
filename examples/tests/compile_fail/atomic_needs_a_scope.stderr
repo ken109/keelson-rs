@@ -1,0 +1,16 @@
+error[E0599]: the method `atomic` exists for reference `&dyn Executor`, but its trait bounds were not satisfied
+  --> tests/compile_fail/atomic_needs_a_scope.rs:14:8
+   |
+14 |     db.atomic(async |_tx| Ok::<_, ExecError>(())).await
+   |        ^^^^^^ method cannot be called on `&dyn Executor` due to unsatisfied trait bounds
+   |
+  ::: $WORKSPACE/crates/keelson-exec/src/executor.rs
+   |
+   | pub trait Executor: Send + Sync + fmt::Debug {
+   | -------------------------------------------- doesn't satisfy `dyn Executor: Begin` or `dyn Executor: keelson::prelude::Atomic`
+   |
+   = note: the following trait bounds were not satisfied:
+           `dyn Executor: Begin`
+           which is required by `dyn Executor: keelson::prelude::Atomic`
+           `&dyn Executor: Begin`
+           which is required by `&dyn Executor: keelson::prelude::Atomic`

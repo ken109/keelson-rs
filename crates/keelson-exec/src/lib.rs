@@ -16,6 +16,8 @@
 //!   consumes itself on commit/rollback; savepoints are closures.
 //!   [`BeginWith`] adds isolation levels and access modes ([`TxOptions`]),
 //!   refusing per engine anything that engine would only appear to honour.
+//!   [`Atomic`] is the one a *reusable* unit of work takes: a transaction at
+//!   the top, a savepoint inside one, and the same call site either way.
 //! - [`Row`] and [`FromRow`] — rows decoded once, at the driver seam, into
 //!   [`Value`](keelson_core::Value)s; every decode error names its column.
 //! - [`RawConnection`] — the seam a backend implements per driver; this crate
@@ -57,7 +59,7 @@ pub use executor::{
 };
 pub use row::{Column, FromRow, Row};
 pub use transaction::{
-    Access, Begin, BeginExt, BeginWith, BeginWithExt, ExecHook, ExecLoader, Isolation,
+    Access, Atomic, Begin, BeginExt, BeginWith, BeginWithExt, ExecHook, ExecLoader, Isolation,
     RawConnection, SqliteBegin, Transaction, TxConflict, TxConflictError, TxOptions,
 };
 

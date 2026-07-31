@@ -15,8 +15,8 @@ use std::sync::atomic::{AtomicI64, Ordering};
 
 use keelson_core::Value;
 use keelson_exec::{
-    Begin, BeginExt as _, BeginWith as _, ExecError, ExecResult, Executor, Family, Isolation,
-    SqliteBegin, Statement, TxConflict, TxOptions,
+    Atomic, Begin, BeginExt as _, BeginWith as _, ExecError, ExecResult, Executor, Family,
+    Isolation, SqliteBegin, Statement, TxConflict, TxOptions,
 };
 
 fn next_key() -> i64 {
@@ -134,6 +134,48 @@ async fn tx_suite(db: &dyn Begin) {
         .unwrap_err();
     assert_eq!(err.to_string(), "boom");
     assert!(!present(db, k_failed).await);
+
+    // `atomic`: one helper, written once, atomic wherever it is called. At
+    // the top it *is* the transaction; inside one it is a savepoint, so its
+    // failure costs its own block and nothing the caller did.
+    async fn unit(db: &(impl Atomic + ?Sized), k: i64, fail: bool) -> Result<(), ExecError> {
+        db.atomic(async |tx| {
+            insert(tx, k).await?;
+            if fail {
+                return Err(ExecError::other("the unit of work refused"));
+            }
+            Ok(())
+        })
+        .await
+    }
+
+    let k_top = next_key();
+    unit(db, k_top, false).await.unwrap();
+    assert!(present(db, k_top).await, "at the top, Ok commits");
+
+    let k_top_lost = next_key();
+    assert!(unit(db, k_top_lost, true).await.is_err());
+    assert!(
+        !present(db, k_top_lost).await,
+        "at the top, the block is the transaction"
+    );
+
+    let k_caller = next_key();
+    let k_nested = next_key();
+    let k_nested_lost = next_key();
+    let tx = db.begin().await.unwrap();
+    insert(&tx, k_caller).await.unwrap();
+    unit(&tx, k_nested, false).await.unwrap();
+    assert!(unit(&tx, k_nested_lost, true).await.is_err());
+    // The caller's transaction survived a failed unit of work and decides for
+    // itself: here it commits.
+    tx.commit().await.unwrap();
+    assert!(present(db, k_caller).await);
+    assert!(present(db, k_nested).await);
+    assert!(
+        !present(db, k_nested_lost).await,
+        "a nested failure costs only its own block"
+    );
 
     // A function generic over "anywhere I can run queries" accepts pool and
     // transaction alike — the &dyn Executor currency.

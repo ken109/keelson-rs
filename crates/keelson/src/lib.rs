@@ -110,7 +110,10 @@ pub mod prelude {
     pub use keelson_core::{Mod, Query, QueryExtensions};
 
     #[cfg(feature = "exec")]
-    pub use keelson_exec::{Begin, BeginExt, BeginWith, BeginWithExt, Execute, Executor, FromRow};
+    pub use keelson_exec::{
+        Atomic, Begin, BeginExt, BeginWith, BeginWithExt, Execute, Executor, FromRow,
+        StreamExecutor,
+    };
 
     #[cfg(feature = "models")]
     pub use keelson_models::{Table, View};
