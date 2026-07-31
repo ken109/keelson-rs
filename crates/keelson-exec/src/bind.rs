@@ -14,8 +14,24 @@ use keelson_core::{FromValue, ToValue};
 /// `const _: () = keelson_exec::assert_bind::<UserId>();` — so a non-binding
 /// override fails to compile in one line naming the type, not in an
 /// inference swamp.
+///
+/// The message that line produces is keelson's own, not the compiler's default
+/// walk through the blanket impl: `do_not_recommend` stops rustc from
+/// re-reporting the failure as two unsatisfied supertrait bounds, and
+/// `on_unimplemented` says the useful thing instead. That is worth an attribute
+/// on two counts — the default said `ToValue is not implemented` twice, with a
+/// list of unrelated types that happened to implement it, and the list's
+/// contents drift with the compiler version (which is a failing UI test on the
+/// next release, for no change in this crate).
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` cannot be a keelson column type",
+    label = "not a column type",
+    note = "a column type binds in and reads back out: it must implement both `ToValue` and `FromValue`",
+    note = "for a newtype over one that already binds, `#[derive(Bind)]` (feature `macros`) or `bind_newtype!(Name(inner))` writes both impls"
+)]
 pub trait Bind: ToValue + FromValue + Send + 'static {}
 
+#[diagnostic::do_not_recommend]
 impl<T: ToValue + FromValue + Send + 'static> Bind for T {}
 
 /// Assert at compile time that `T` can bind as a column.

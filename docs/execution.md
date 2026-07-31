@@ -458,6 +458,19 @@ the type, not in an inference swamp. Because the contract is defined against
 `Value` rather than any driver, an override binds on every backend or on
 none — backend-count-invariant, which was B's stated goal too.
 
+**The message that line prints is keelson's, not rustc's default.** A blanket
+umbrella has a cost the design did not price in: the compiler reports the
+failure through the impl, so `IpAddr` produced *two* errors — `ToValue` is not
+implemented, `FromValue` is not implemented — each trailing a list of eight
+unrelated types that do. `#[diagnostic::do_not_recommend]` on the blanket impl
+stops that walk, and `#[diagnostic::on_unimplemented]` on the trait says the
+useful thing instead: this is not a column type, here is what a column type
+must do, here is the macro that writes it. The second reason to do this is
+mechanical rather than editorial — the list of eight is rendered by the
+compiler, its contents change between releases, and the UI test pinning it duly
+failed on a toolchain bump with nothing in this repo having changed. Both
+attributes are stable well below the MSRV (1.78 and 1.85).
+
 **Rejected: B's separate `IntoArg`/`FromColumn` pair.** B's three arguments,
 answered: (1) *ownership direction* — `ToValue` consumes where codegen binds
 from `&self`; but the generated `self.col.clone().to_value()` costs exactly
