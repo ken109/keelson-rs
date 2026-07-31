@@ -218,9 +218,19 @@ is exactly why the API pushes toward the closure form:
 { … })` on any `Begin` (pools, connections), commit on `Ok`, rollback on
 `Err`. The closure receives `&Transaction` and so cannot commit or consume
 it; neither a dropped transaction nor a forgotten commit is expressible.
-Limitation, recorded: the future `within` returns is not provably `Send`
-(naming `AsyncFnOnce::CallOnceFuture` to bound it is unstable); explicit
-`begin`/`commit` covers the multi-threaded-executor case that needs `Send`.
+Limitation, recorded — and narrower than it first reads. The future `within`
+returns **is** `Send` whenever the compiler can see the concrete types: a
+plain `async fn` that calls it, a usecase generic in its repository, an axum
+handler registered at a concrete instantiation, `tokio::spawn` of any of
+those. Auto-trait inference reaches through monomorphisation. What cannot be
+done is *promising* it in the abstract — a trait method declared
+`-> impl Future<…> + Send` may not call `within`/`savepoint`/`atomic`,
+because naming `AsyncFnOnce::CallOnceFuture` to bound the closure's future is
+unstable. So: keep the `Send`-requiring boundary (the spawn, the framework's
+handler bound) at a concrete site, which in a layered application is the
+composition root anyway; if you genuinely need a generic `Send` promise, the
+scope-taking method moves out of the trait, or explicit `begin`/`commit`
+covers it. `examples/repositories.rs` works through the whole question.
 
 **What Layer 2 hooks require** (asked explicitly; both designs converged):
 (a) `Transaction: Executor` — satisfied; (b) `&self` methods so one
