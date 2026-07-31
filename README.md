@@ -252,8 +252,9 @@ keelson-gen --config keelson.toml --url "$DATABASE_URL"
 ## Examples
 
 [`examples/`](https://github.com/ken109/keelson-rs/tree/main/examples) holds
-thirteen runnable programs, one topic each — from a first `SELECT` to
-generated models, relation loading, factories and `.sql` files. They need no
+fourteen runnable programs, one topic each — from a first `SELECT` to
+generated models, relation loading, factories, `.sql` files, and the layering
+question of who owns the transaction. They need no
 server (SQLite in a temporary file) and each asserts its own output, so CI
 runs them:
 

@@ -28,6 +28,7 @@ a temporary file that is deleted when they finish.
 | | [`relations`](relations.rs) | preload (one `LEFT JOIN`) vs then-load (one keyed query per level), and chaining levels |
 | | [`factories`](factories.rs) | test data: auto-created parent chains, sequences, the seedable faker |
 | | [`sql_files`](sql_files.rs) | `.sql` files compiled to typed Rust, and the two faces each query has |
+| **Putting it together** | [`repositories`](repositories.rs) | the layering question: a repository called standalone and inside a usecase's transaction, who owns the boundary, and the pool-in-a-field trap |
 
 ## What is in this directory
 
@@ -40,7 +41,7 @@ a temporary file that is deleted when they finish.
 | `src/queries/` | **generated.** One module per `.sql` file. |
 | `src/hooks.rs` | hand-written hooks the generated models delegate to |
 | `src/lib.rs` | `Sandbox`, the throwaway database the examples share |
-| `tests/compile_fail/` | the other half of the examples: eight mistakes that **do not compile**, each next to the error it must produce |
+| `tests/compile_fail/` | the other half of the examples: nine mistakes that **do not compile**, each next to the error it must produce |
 | `tests/generated_is_fresh.rs` | fails if the generated files no longer match their sources |
 
 ## What does not compile
@@ -60,6 +61,8 @@ safety, stated as a list:
 - a transaction closure cannot end the transaction it was handed
 - `&dyn Executor` cannot open a scope: a unit of work that must be atomic
   says so in its signature (`&(impl Atomic + ?Sized)`)
+- and a trait method that takes a scope has no vtable, so a repository port
+  is `&dyn Executor` or it is not a trait object — pick one, deliberately
 
 Reading the `.stderr` files is the fastest tour of what the type system is
 carrying:

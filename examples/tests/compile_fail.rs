@@ -19,6 +19,9 @@
 //!   handed
 //! - `&dyn Executor` cannot open a scope: a unit of work that has to be
 //!   atomic says so in its signature (`&(impl Atomic + ?Sized)`)
+//! - and a trait method that takes a scope has no vtable, so a repository
+//!   port is `&dyn Executor` or it is not a trait object — the trade
+//!   `examples/repositories.rs` makes on purpose
 //!
 //! Reading the `.stderr` files is the fastest tour of what the type system is
 //! carrying. Regenerate them after an intentional change with

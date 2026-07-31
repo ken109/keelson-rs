@@ -1,0 +1,18 @@
+error[E0038]: the trait `UserRepository` is not dyn compatible
+  --> tests/compile_fail/repository_behind_dyn.rs:22:19
+   |
+22 | fn wire(repo: Arc<dyn UserRepository>) {
+   |                   ^^^^^^^^^^^^^^^^^^ `UserRepository` is not dyn compatible
+   |
+note: for a trait to be dyn compatible it needs to allow building a vtable
+      for more information, visit <https://doc.rust-lang.org/reference/items/traits.html#dyn-compatibility>
+  --> tests/compile_fail/repository_behind_dyn.rs:15:8
+   |
+14 | trait UserRepository: Send + Sync {
+   |       -------------- this trait is not dyn compatible...
+15 |     fn deactivate(
+   |        ^^^^^^^^^^ ...because method `deactivate` has generic type parameters
+...
+19 |     ) -> impl Future<Output = Result<(), ExecError>>;
+   |          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ ...because method `deactivate` references an `impl Trait` type in its return type
+   = help: consider moving `deactivate` to another trait
