@@ -292,6 +292,18 @@ fn params_struct(a: &Analysis, params_ty: &Ident) -> Result<TokenStream> {
         .then(|| quote!(#[allow(clippy::clone_on_copy)]));
 
     let doc_text = format!(" Parameters of `{name}`.");
+    // A parameterless query's `new()` takes no arguments, which clippy's
+    // `new_without_default` (on by default, and denied in plenty of builds)
+    // asks for a `Default` beside. The struct has no fields in that case, so
+    // deriving it is both trivially correct and the smallest answer. With
+    // fields it is deliberately *not* derived: a parameter type need not
+    // implement `Default`, and an all-zeroes parameter set is not a
+    // meaningful value anyway.
+    let derives = if arg_types.is_empty() {
+        quote!(#[derive(Debug, Clone, PartialEq, Default)])
+    } else {
+        quote!(#[derive(Debug, Clone, PartialEq)])
+    };
     let from_impl = match arg_types.as_slice() {
         // A query with no placeholders is still called with *something*; `()`
         // is what reads best at the call site.
@@ -323,7 +335,7 @@ fn params_struct(a: &Analysis, params_ty: &Ident) -> Result<TokenStream> {
 
     Ok(quote! {
         #[doc = #doc_text]
-        #[derive(Debug, Clone, PartialEq)]
+        #derives
         pub struct #params_ty {
             #(#fields)*
         }
@@ -335,8 +347,12 @@ fn params_struct(a: &Analysis, params_ty: &Ident) -> Result<TokenStream> {
             }
 
             /// The bound arguments, in placeholder order.
+            ///
+            /// Public deliberately: a query with no placeholders never calls
+            /// this, and a *private* method nothing calls is a `dead_code`
+            /// warning in a generated file the application cannot edit.
             #clone_allow
-            fn args(&self) -> Vec<keelson_core::Value> {
+            pub fn args(&self) -> Vec<keelson_core::Value> {
                 vec![#(#to_values),*]
             }
         }
@@ -582,6 +598,13 @@ fn query_struct(
         #[derive(Debug, Clone)]
         pub struct #query_ty {
             params: #params_ty,
+        }
+
+        impl #query_ty {
+            /// The parameters this query was built with.
+            pub fn params(&self) -> &#params_ty {
+                &self.params
+            }
         }
 
         impl keelson_core::Expression for #query_ty {

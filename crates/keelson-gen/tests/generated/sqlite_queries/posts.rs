@@ -26,7 +26,11 @@ impl PostsForUserParams {
         }
     }
     /// The bound arguments, in placeholder order.
-    fn args(&self) -> Vec<keelson_core::Value> {
+    ///
+    /// Public deliberately: a query with no placeholders never calls
+    /// this, and a *private* method nothing calls is a `dead_code`
+    /// warning in a generated file the application cannot edit.
+    pub fn args(&self) -> Vec<keelson_core::Value> {
         vec![
             keelson_core::ToValue::to_value(self.user_id),
             keelson_core::ToValue::to_value(self.limit)
@@ -69,6 +73,12 @@ Placeholders are re-bound through the writer, so the statement composes as a sub
 #[derive(Debug, Clone)]
 pub struct PostsForUserQuery {
     params: PostsForUserParams,
+}
+impl PostsForUserQuery {
+    /// The parameters this query was built with.
+    pub fn params(&self) -> &PostsForUserParams {
+        &self.params
+    }
 }
 impl keelson_core::Expression for PostsForUserQuery {
     fn write_sql(&self, w: &mut keelson_core::SqlWriter<'_>) {
@@ -185,7 +195,11 @@ impl CommentsWithAuthorParams {
         }
     }
     /// The bound arguments, in placeholder order.
-    fn args(&self) -> Vec<keelson_core::Value> {
+    ///
+    /// Public deliberately: a query with no placeholders never calls
+    /// this, and a *private* method nothing calls is a `dead_code`
+    /// warning in a generated file the application cannot edit.
+    pub fn args(&self) -> Vec<keelson_core::Value> {
         vec![keelson_core::ToValue::to_value(self.post_id)]
     }
 }
@@ -243,6 +257,12 @@ Placeholders are re-bound through the writer, so the statement composes as a sub
 #[derive(Debug, Clone)]
 pub struct CommentsWithAuthorQuery {
     params: CommentsWithAuthorParams,
+}
+impl CommentsWithAuthorQuery {
+    /// The parameters this query was built with.
+    pub fn params(&self) -> &CommentsWithAuthorParams {
+        &self.params
+    }
 }
 impl keelson_core::Expression for CommentsWithAuthorQuery {
     fn write_sql(&self, w: &mut keelson_core::SqlWriter<'_>) {
@@ -334,7 +354,7 @@ pub fn comments_with_author_mod(
     })
 }
 /// Parameters of `user_stats`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct UserStatsParams {}
 impl UserStatsParams {
     /// The parameters in placeholder order.
@@ -342,7 +362,11 @@ impl UserStatsParams {
         UserStatsParams {}
     }
     /// The bound arguments, in placeholder order.
-    fn args(&self) -> Vec<keelson_core::Value> {
+    ///
+    /// Public deliberately: a query with no placeholders never calls
+    /// this, and a *private* method nothing calls is a `dead_code`
+    /// warning in a generated file the application cannot edit.
+    pub fn args(&self) -> Vec<keelson_core::Value> {
         vec![]
     }
 }
@@ -385,6 +409,12 @@ Placeholders are re-bound through the writer, so the statement composes as a sub
 #[derive(Debug, Clone)]
 pub struct UserStatsQuery {
     params: UserStatsParams,
+}
+impl UserStatsQuery {
+    /// The parameters this query was built with.
+    pub fn params(&self) -> &UserStatsParams {
+        &self.params
+    }
 }
 impl keelson_core::Expression for UserStatsQuery {
     fn write_sql(&self, w: &mut keelson_core::SqlWriter<'_>) {
@@ -490,7 +520,11 @@ impl PostFlagsParams {
         PostFlagsParams { views }
     }
     /// The bound arguments, in placeholder order.
-    fn args(&self) -> Vec<keelson_core::Value> {
+    ///
+    /// Public deliberately: a query with no placeholders never calls
+    /// this, and a *private* method nothing calls is a `dead_code`
+    /// warning in a generated file the application cannot edit.
+    pub fn args(&self) -> Vec<keelson_core::Value> {
         vec![keelson_core::ToValue::to_value(self.views)]
     }
 }
@@ -536,6 +570,12 @@ Placeholders are re-bound through the writer, so the statement composes as a sub
 #[derive(Debug, Clone)]
 pub struct PostFlagsQuery {
     params: PostFlagsParams,
+}
+impl PostFlagsQuery {
+    /// The parameters this query was built with.
+    pub fn params(&self) -> &PostFlagsParams {
+        &self.params
+    }
 }
 impl keelson_core::Expression for PostFlagsQuery {
     fn write_sql(&self, w: &mut keelson_core::SqlWriter<'_>) {
@@ -611,7 +651,7 @@ pub fn post_flags_mod(
     })
 }
 /// Parameters of `posts_with_tags`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct PostsWithTagsParams {}
 impl PostsWithTagsParams {
     /// The parameters in placeholder order.
@@ -619,7 +659,11 @@ impl PostsWithTagsParams {
         PostsWithTagsParams {}
     }
     /// The bound arguments, in placeholder order.
-    fn args(&self) -> Vec<keelson_core::Value> {
+    ///
+    /// Public deliberately: a query with no placeholders never calls
+    /// this, and a *private* method nothing calls is a `dead_code`
+    /// warning in a generated file the application cannot edit.
+    pub fn args(&self) -> Vec<keelson_core::Value> {
         vec![]
     }
 }
@@ -667,6 +711,12 @@ Placeholders are re-bound through the writer, so the statement composes as a sub
 #[derive(Debug, Clone)]
 pub struct PostsWithTagsQuery {
     params: PostsWithTagsParams,
+}
+impl PostsWithTagsQuery {
+    /// The parameters this query was built with.
+    pub fn params(&self) -> &PostsWithTagsParams {
+        &self.params
+    }
 }
 impl keelson_core::Expression for PostsWithTagsQuery {
     fn write_sql(&self, w: &mut keelson_core::SqlWriter<'_>) {
@@ -769,7 +819,11 @@ impl UserByIdParams {
         UserByIdParams { id }
     }
     /// The bound arguments, in placeholder order.
-    fn args(&self) -> Vec<keelson_core::Value> {
+    ///
+    /// Public deliberately: a query with no placeholders never calls
+    /// this, and a *private* method nothing calls is a `dead_code`
+    /// warning in a generated file the application cannot edit.
+    pub fn args(&self) -> Vec<keelson_core::Value> {
         vec![keelson_core::ToValue::to_value(self.id)]
     }
 }
@@ -812,6 +866,12 @@ Placeholders are re-bound through the writer, so the statement composes as a sub
 #[derive(Debug, Clone)]
 pub struct UserByIdQuery {
     params: UserByIdParams,
+}
+impl UserByIdQuery {
+    /// The parameters this query was built with.
+    pub fn params(&self) -> &UserByIdParams {
+        &self.params
+    }
 }
 impl keelson_core::Expression for UserByIdQuery {
     fn write_sql(&self, w: &mut keelson_core::SqlWriter<'_>) {
@@ -899,7 +959,11 @@ impl AnnotatedParams {
         AnnotatedParams { title_pattern }
     }
     /// The bound arguments, in placeholder order.
-    fn args(&self) -> Vec<keelson_core::Value> {
+    ///
+    /// Public deliberately: a query with no placeholders never calls
+    /// this, and a *private* method nothing calls is a `dead_code`
+    /// warning in a generated file the application cannot edit.
+    pub fn args(&self) -> Vec<keelson_core::Value> {
         vec![keelson_core::ToValue::to_value(self.title_pattern.clone())]
     }
 }
@@ -930,6 +994,12 @@ Placeholders are re-bound through the writer, so the statement composes as a sub
 #[derive(Debug, Clone)]
 pub struct AnnotatedQuery {
     params: AnnotatedParams,
+}
+impl AnnotatedQuery {
+    /// The parameters this query was built with.
+    pub fn params(&self) -> &AnnotatedParams {
+        &self.params
+    }
 }
 impl keelson_core::Expression for AnnotatedQuery {
     fn write_sql(&self, w: &mut keelson_core::SqlWriter<'_>) {
@@ -1017,7 +1087,7 @@ pub fn annotated_mod(
     })
 }
 /// Parameters of `titles_union`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct TitlesUnionParams {}
 impl TitlesUnionParams {
     /// The parameters in placeholder order.
@@ -1025,7 +1095,11 @@ impl TitlesUnionParams {
         TitlesUnionParams {}
     }
     /// The bound arguments, in placeholder order.
-    fn args(&self) -> Vec<keelson_core::Value> {
+    ///
+    /// Public deliberately: a query with no placeholders never calls
+    /// this, and a *private* method nothing calls is a `dead_code`
+    /// warning in a generated file the application cannot edit.
+    pub fn args(&self) -> Vec<keelson_core::Value> {
         vec![]
     }
 }
@@ -1053,6 +1127,12 @@ Placeholders are re-bound through the writer, so the statement composes as a sub
 #[derive(Debug, Clone)]
 pub struct TitlesUnionQuery {
     params: TitlesUnionParams,
+}
+impl TitlesUnionQuery {
+    /// The parameters this query was built with.
+    pub fn params(&self) -> &TitlesUnionParams {
+        &self.params
+    }
 }
 impl keelson_core::Expression for TitlesUnionQuery {
     fn write_sql(&self, w: &mut keelson_core::SqlWriter<'_>) {
@@ -1106,7 +1186,11 @@ impl UserByEmailParams {
         UserByEmailParams { email }
     }
     /// The bound arguments, in placeholder order.
-    fn args(&self) -> Vec<keelson_core::Value> {
+    ///
+    /// Public deliberately: a query with no placeholders never calls
+    /// this, and a *private* method nothing calls is a `dead_code`
+    /// warning in a generated file the application cannot edit.
+    pub fn args(&self) -> Vec<keelson_core::Value> {
         vec![keelson_core::ToValue::to_value(self.email.clone())]
     }
 }
@@ -1137,6 +1221,12 @@ Placeholders are re-bound through the writer, so the statement composes as a sub
 #[derive(Debug, Clone)]
 pub struct UserByEmailQuery {
     params: UserByEmailParams,
+}
+impl UserByEmailQuery {
+    /// The parameters this query was built with.
+    pub fn params(&self) -> &UserByEmailParams {
+        &self.params
+    }
 }
 impl keelson_core::Expression for UserByEmailQuery {
     fn write_sql(&self, w: &mut keelson_core::SqlWriter<'_>) {
@@ -1224,7 +1314,11 @@ impl BumpViewsParams {
         BumpViewsParams { id }
     }
     /// The bound arguments, in placeholder order.
-    fn args(&self) -> Vec<keelson_core::Value> {
+    ///
+    /// Public deliberately: a query with no placeholders never calls
+    /// this, and a *private* method nothing calls is a `dead_code`
+    /// warning in a generated file the application cannot edit.
+    pub fn args(&self) -> Vec<keelson_core::Value> {
         vec![keelson_core::ToValue::to_value(self.id)]
     }
 }
@@ -1239,6 +1333,12 @@ Placeholders are re-bound through the writer, so the statement composes as a sub
 #[derive(Debug, Clone)]
 pub struct BumpViewsQuery {
     params: BumpViewsParams,
+}
+impl BumpViewsQuery {
+    /// The parameters this query was built with.
+    pub fn params(&self) -> &BumpViewsParams {
+        &self.params
+    }
 }
 impl keelson_core::Expression for BumpViewsQuery {
     fn write_sql(&self, w: &mut keelson_core::SqlWriter<'_>) {
@@ -1292,7 +1392,11 @@ impl HotOrRecentParams {
         HotOrRecentParams { views }
     }
     /// The bound arguments, in placeholder order.
-    fn args(&self) -> Vec<keelson_core::Value> {
+    ///
+    /// Public deliberately: a query with no placeholders never calls
+    /// this, and a *private* method nothing calls is a `dead_code`
+    /// warning in a generated file the application cannot edit.
+    pub fn args(&self) -> Vec<keelson_core::Value> {
         vec![keelson_core::ToValue::to_value(self.views)]
     }
 }
@@ -1323,6 +1427,12 @@ Placeholders are re-bound through the writer, so the statement composes as a sub
 #[derive(Debug, Clone)]
 pub struct HotOrRecentQuery {
     params: HotOrRecentParams,
+}
+impl HotOrRecentQuery {
+    /// The parameters this query was built with.
+    pub fn params(&self) -> &HotOrRecentParams {
+        &self.params
+    }
 }
 impl keelson_core::Expression for HotOrRecentQuery {
     fn write_sql(&self, w: &mut keelson_core::SqlWriter<'_>) {
