@@ -1,0 +1,17 @@
+error: unclosed `{` in the SQL. Write `{{` for a literal opening brace
+ --> tests/compile_fail/sql_braces.rs:8:18
+  |
+8 |     let _ = sql!("SELECT * FROM t WHERE a = {x AND b = 2");
+  |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: unmatched `}` in the SQL. Write `}}` for a literal closing brace
+ --> tests/compile_fail/sql_braces.rs:9:18
+  |
+9 |     let _ = sql!("SELECT * FROM t WHERE a = 1} AND b = 2");
+  |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: an empty `{}` has nothing to bind. Name the value: `{user_id}`
+  --> tests/compile_fail/sql_braces.rs:10:18
+   |
+10 |     let _ = sql!("SELECT * FROM t WHERE a = {}");
+   |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

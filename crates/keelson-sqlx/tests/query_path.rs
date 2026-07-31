@@ -245,3 +245,60 @@ async fn hand_written_statements_take_the_same_path() {
     assert_eq!(found.len(), 1);
     assert_eq!(found[0].name, "grace");
 }
+
+/// `sql!` is `raw_query` with the values written where they bind. Same query,
+/// same path — what changes is which mistakes are expressible.
+#[tokio::test]
+async fn the_sql_macro_binds_at_the_hole() {
+    use keelson_sqlite::sql;
+
+    let db = pool().await;
+    keelson_sqlite::insert((
+        insert::into("people").columns(["id", "name", "nickname"]),
+        insert::values((arg(1i64), arg("ada"), arg("countess"))),
+        insert::values((arg(2i64), arg("grace"), arg("amazing"))),
+    ))
+    .execute(&db)
+    .await
+    .unwrap();
+
+    let min = 2i64;
+    let who: Person = sql!("SELECT id, name, nickname FROM people WHERE id >= {min}")
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    assert_eq!(who.name, "grace");
+
+    // Any expression, not just a name -- and holes bind left to right, so the
+    // order cannot be got wrong the way two `.bind` calls can.
+    let (sql, args) = sql!("SELECT * FROM people WHERE id > {min - 1} AND name <> {\"nobody\"}")
+        .build()
+        .unwrap();
+    assert_eq!(sql, "SELECT * FROM people WHERE id > ?1 AND name <> ?2");
+    assert_eq!(
+        args,
+        vec![
+            keelson_sqlite::Value::I64(1),
+            keelson_sqlite::Value::Text("nobody".to_owned())
+        ]
+    );
+
+    // The hazard the macro removes: a `?` the author typed is text, not a
+    // hole. Through `raw_query` this string would need `\?` written by hand,
+    // and forgetting it is silent when the counts happen to line up.
+    let found: Vec<Person> =
+        sql!("SELECT id, name, nickname FROM people WHERE nickname <> 'what?' AND id = {min}")
+            .fetch_all(&db)
+            .await
+            .unwrap();
+    assert_eq!(found.len(), 1);
+
+    // `{x:sql}` splices an expression instead of binding a value -- the `IN`
+    // list case, where one hole becomes several placeholders.
+    let ids = keelson_sqlite::args([1i64, 2]);
+    let names: Vec<String> = sql!("SELECT name FROM people WHERE id IN ({ids:sql}) ORDER BY name")
+        .fetch_scalars(&db)
+        .await
+        .unwrap();
+    assert_eq!(names, vec!["ada".to_owned(), "grace".to_owned()]);
+}

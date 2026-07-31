@@ -22,4 +22,8 @@ fn every_rejection_names_the_offending_span_and_says_what_to_do() {
     t.compile_fail("tests/compile_fail/from_row_shape.rs");
     t.compile_fail("tests/compile_fail/from_row_options.rs");
     t.compile_fail("tests/compile_fail/from_row_duplicate_column.rs");
+    // sql!
+    t.compile_fail("tests/compile_fail/sql_braces.rs");
+    t.compile_fail("tests/compile_fail/sql_arguments.rs");
+    t.compile_fail("tests/compile_fail/sql_hole_does_not_bind.rs");
 }

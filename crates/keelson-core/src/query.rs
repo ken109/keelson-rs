@@ -122,7 +122,12 @@ pub trait QueryExtensions<Hook, Loader, MapperMod>: Query {
 /// a sub-select in a built statement like any other query.
 ///
 /// Construct one from the dialect it is written in: `psql::raw_query(…)`,
-/// `mysql::raw_query(…)`, `sqlite::raw_query(…)`.
+/// `mysql::raw_query(…)`, `sqlite::raw_query(…)` — or, when the SQL is a
+/// literal, through that dialect's `sql!` (feature `macros`), which writes the
+/// values at the holes they bind to and is the form to reach for first. This
+/// one is what `sql!` expands to, and what SQL arriving at run time — from a
+/// file, a migration runner — has to use, since a macro can only read a
+/// literal.
 ///
 /// **Placeholders are `?`, on every dialect,** and are rewritten into that
 /// dialect's own syntax as the statement renders — `$1` on PostgreSQL, `?1` on

@@ -101,6 +101,11 @@ pub use value::{CustomValue, FromValue, ToValue, Value, from_value_array};
 /// namespaces, so importing both is fine.
 #[cfg(feature = "macros")]
 pub use keelson_macros::{Bind, FromRow};
+
+/// The scanner each dialect's `sql!` forwards to. Not called directly.
+#[cfg(feature = "macros")]
+#[doc(hidden)]
+pub use keelson_macros::sql_with as __sql_with;
 pub use writer::{DynExpr, ExprFn, Expression, SqlWriter, build, build_from, dyn_expr, expr_fn};
 
 /// Stand-in dialects for tests. See [`dialect::testing`].

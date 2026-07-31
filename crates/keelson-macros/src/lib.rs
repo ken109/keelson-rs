@@ -232,6 +232,7 @@
 mod attr;
 mod bind;
 mod from_row;
+mod sql;
 
 use proc_macro::TokenStream;
 use syn::{DeriveInput, parse_macro_input};
@@ -274,6 +275,26 @@ pub fn derive_bind(input: TokenStream) -> TokenStream {
 pub fn derive_from_row(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     from_row::derive(input)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+/// The scanner behind each dialect's `sql!`. Not called directly: the dialect
+/// crate's `sql!` forwards to it with its own `raw_query` as the first
+/// argument, which is what makes `keelson_sqlite::sql!("…")` know its dialect.
+///
+/// ```text
+/// sql_with!(keelson_sqlite::raw_query, "SELECT … WHERE id = {user_id}")
+/// //  =>   keelson_sqlite::raw_query("SELECT … WHERE id = ?").bind(user_id)
+/// ```
+///
+/// See the `sql` module's documentation for the grammar and for what the
+/// rewriting is worth.
+#[doc(hidden)]
+#[proc_macro]
+pub fn sql_with(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as sql::Input);
+    sql::expand(input)
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
 }

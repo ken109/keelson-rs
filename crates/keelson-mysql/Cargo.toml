@@ -12,6 +12,11 @@ keywords = ["sql", "mysql", "mariadb", "query-builder", "database"]
 categories = ["database"]
 
 [features]
+# `sql!` — a hand-written statement whose values are written at the hole they
+# bind to. Off by default, like every other feature here: it is the only thing
+# in this crate that costs a proc-macro toolchain, and `raw_query` is the same
+# statement without one.
+macros = ["keelson-core/macros"]
 # Adds the containerised MySQL 8.4 engine to the test judge. `cargo test` on its
 # own runs only the `sqlparser` grammar tier, which for MySQL is advisory: it
 # accepts PostgreSQL-only syntax and rejects valid multi-table `UPDATE a, b SET`.

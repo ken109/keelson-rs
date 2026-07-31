@@ -74,8 +74,8 @@ supports but the DSL does not is reached through `sql_query`/`sql_function`
 escape hatches, and complex query composition is where its type errors get
 hard. keelson takes the opposite position on that trade: a raw `&str` is a
 first-class expression *everywhere* an expression is accepted, a whole
-hand-written statement (`sqlite::raw_query(…)`) is an ordinary query with the
-same verbs and the same row mapping, and the type
+hand-written statement (`sqlite::sql!("… WHERE age >= {min}")`) is an ordinary
+query with the same verbs and the same row mapping, and the type
 system is spent on the model layer (typed columns, typed setters) rather than
 on proving whole statements. If you want the compiler to reject a malformed
 query at all costs, use diesel.
@@ -233,7 +233,7 @@ equally supported and is what generated code does.
 | `sqlx-psql`, `sqlx-mysql`, `sqlx-sqlite` | `keelson-sqlx` + `exec` + the matching dialect | Layer 2 with a driver |
 | `models` | `keelson-models` (+ `exec`) | Layer 3 |
 | `factory` | `keelson-factory` (+ `models`) | test data |
-| `macros` | `#[derive(Bind)]`, `#[derive(FromRow)]` | row mapping, column type overrides |
+| `macros` | `#[derive(Bind)]`, `#[derive(FromRow)]`, each dialect's `sql!` | row mapping, column type overrides, hand-written statements |
 | `chrono`, `uuid`, `decimal`, `json` | the matching `Value` variant, wired through the backend | typed columns beyond the scalars |
 | `tracing` | per-statement spans in the execution funnel | observability |
 

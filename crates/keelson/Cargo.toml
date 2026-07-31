@@ -44,8 +44,15 @@ sqlx-sqlite = ["exec", "sqlite", "dep:keelson-sqlx", "keelson-sqlx/sqlite"]
 # --- Layers 3 and 4 --------------------------------------------------------
 models = ["exec", "dep:keelson-models"]
 factory = ["models", "dep:keelson-factory"]
-# The derives. keelson-core re-exports them; this feature is that feature.
-macros = ["keelson-core/macros"]
+# The derives, plus each enabled dialect's `sql!`. keelson-core re-exports the
+# derives; the `dep?/feature` weak form is what keeps naming this feature from
+# dragging a dialect in — it only reaches a dialect that is already on.
+macros = [
+    "keelson-core/macros",
+    "keelson-psql?/macros",
+    "keelson-mysql?/macros",
+    "keelson-sqlite?/macros",
+]
 
 # --- Mapped types ----------------------------------------------------------
 # Each turns on the keelson-core `Value` variant and, *if a backend is already

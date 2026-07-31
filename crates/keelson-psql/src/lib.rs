@@ -202,6 +202,57 @@ pub fn raw_query(sql: impl Into<Cow<'static, str>>) -> RawQuery<Psql> {
     RawQuery::new(Psql, sql)
 }
 
+/// [`raw_query`], with the values written where they bind (feature `macros`).
+///
+/// ```
+/// # use keelson_psql::{sql, Query as _};
+/// let min_age = 21;
+/// let q = sql!("SELECT id, name FROM users WHERE age >= {min_age}");
+/// let (text, args) = q.build()?;
+/// assert_eq!(text, "SELECT id, name FROM users WHERE age >= $1");
+/// assert_eq!(args, vec![keelson_psql::Value::I32(21)]);
+/// # Ok::<_, keelson_psql::Error>(())
+/// ```
+///
+/// It expands to exactly that call — `raw_query("…").bind(min_age)` — so
+/// nothing is hidden and the result composes like any other query. What it
+/// buys is two mistakes that stop being expressible:
+///
+/// - **Binds cannot be transposed.** `raw_query(…).bind(a).bind(b)` with `a`
+///   and `b` the wrong way round type-checks and runs; here the value is
+///   written at the hole.
+/// - **A question mark you typed stays a question mark.** The `?` rewriting
+///   does not track quoting, so `WHERE note = 'what\?'` would otherwise hold a
+///   hole, and a statement whose argument count happened to match would be
+///   silently wrong. The macro escapes every `?` it did not generate.
+///
+/// The grammar is `format!`'s, and the analogy is exact except in one place
+/// that matters: **`{x}` binds, it never interpolates.** No hole can put text
+/// into the SQL. Where you do want to splice SQL — an `IN` list, a sub-query
+/// — say so with `{x:sql}`, which takes an expression rather than a value:
+///
+/// ```
+/// # use keelson_psql::{args, sql, Query as _};
+/// let ids = args([1, 2, 3]);
+/// let (text, _) = sql!("SELECT * FROM users WHERE id IN ({ids:sql})").build()?;
+/// assert!(text.contains("IN ("));
+/// # Ok::<_, keelson_psql::Error>(())
+/// ```
+///
+/// `{{` and `}}` are literal braces. Values are still bound, not typed: for
+/// SQL the schema checks, use a generated model or a `.sql` file.
+#[cfg(feature = "macros")]
+#[macro_export]
+macro_rules! sql {
+    ($($tt:tt)*) => {
+        $crate::__sql_with!($crate::raw_query, $($tt)*)
+    };
+}
+
+#[cfg(feature = "macros")]
+#[doc(hidden)]
+pub use keelson_core::__sql_with;
+
 /// Raw SQL, verbatim. `?` is left alone — see [`template`].
 ///
 /// The progressive-enhancement entry point: a hand-written fragment goes anywhere a

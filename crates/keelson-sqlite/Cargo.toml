@@ -12,6 +12,11 @@ keywords = ["sql", "sqlite", "query-builder", "database"]
 categories = ["database"]
 
 [features]
+# `sql!` — a hand-written statement whose values are written at the hole they
+# bind to. Off by default, like every other feature here: it is the only thing
+# in this crate that costs a proc-macro toolchain, and `raw_query` is the same
+# statement without one.
+macros = ["keelson-core/macros"]
 # Adds the containerised server engines to the test judge. SQLite itself is a
 # library, so `cargo test` already runs both the lemon-rs grammar tier *and* a
 # real SQLite through keelson-sqlcheck's `live`; this feature only exists so the

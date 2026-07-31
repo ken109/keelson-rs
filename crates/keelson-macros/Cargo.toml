@@ -42,7 +42,7 @@ syn = { workspace = true, default-features = false, features = [
 # keelson-core already uses for keelson-sqlcheck.
 keelson-core = { path = "../keelson-core", features = ["macros", "uuid"] }
 keelson-exec = { path = "../keelson-exec" }
-keelson-sqlite = { path = "../keelson-sqlite" }
+keelson-sqlite = { path = "../keelson-sqlite", features = ["macros"] }
 keelson-sqlx = { path = "../keelson-sqlx", features = ["sqlite", "uuid"] }
 uuid.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

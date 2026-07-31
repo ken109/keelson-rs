@@ -101,6 +101,22 @@ that would be published.
 Every published crate carries `description`, `license`, `repository` and
 `authors`; the first three are what crates.io rejects an upload for.
 
+**Run it twice locally and the second run can lie.** Verification builds each
+tarball as a *registry* dependency, and cargo treats a registry package as
+immutable: the build fingerprint is keyed on name and version, and this
+workspace's version never moves off `0.0.0`. So a second `cargo package` after
+a source change can link the first run's artifacts and fail on a symbol that is
+plainly there — or, worse, pass on one that is not. The fix is a clean target
+directory:
+
+```sh
+CARGO_TARGET_DIR=$(mktemp -d) cargo package --workspace --exclude keelson-sqlcheck --exclude keelson-examples --allow-dirty
+```
+
+CI is unaffected — a fresh runner has nothing to reuse — and so is the real
+publish, where each release carries a new version. This is a local-loop trap
+only, and it goes away the moment versions start moving.
+
 ## One README, one LICENSE, eleven packages
 
 `README.md` and `LICENSE` exist once, at the repository root, and every

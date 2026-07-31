@@ -72,7 +72,9 @@ A template's `?` holes are rewritten by a single byte scan, and `\?` is how a
 question mark survives it — needed for PostgreSQL's `?`, `?|` and `?&` jsonb
 operators, and for any `?` inside a string literal. The scan does not track
 quoting (neither does `bob`), so a `?` between single quotes *is* a hole; when the
-argument counts happen to match, the corruption is silent. Write `\?`.
+argument counts happen to match, the corruption is silent. Write `\?` — or use a
+dialect's `sql!`, which escapes every `?` it did not itself generate and so makes
+the hazard unreachable for SQL written as a literal.
 
 Three consequences, all deliberate:
 

@@ -1,0 +1,5 @@
+error: `sql!` takes one string literal. Values go in `{…}` holes inside it, not as further arguments
+ --> tests/compile_fail/sql_arguments.rs:9:50
+  |
+9 |     let _ = sql!("SELECT * FROM t WHERE a = {}", x);
+  |                                                  ^

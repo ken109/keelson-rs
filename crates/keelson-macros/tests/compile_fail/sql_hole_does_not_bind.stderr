@@ -1,0 +1,29 @@
+error[E0277]: the trait bound `Unbindable: keelson_core::value::ToValue` is not satisfied
+  --> tests/compile_fail/sql_hole_does_not_bind.rs:10:18
+   |
+10 |     let _ = sql!("SELECT * FROM t WHERE a = {Unbindable}");
+   |             -----^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^-
+   |             |    |
+   |             |    unsatisfied trait bound
+   |             required by a bound introduced by this call
+   |
+help: the trait `keelson_core::value::ToValue` is not implemented for `Unbindable`
+  --> tests/compile_fail/sql_hole_does_not_bind.rs:7:1
+   |
+ 7 | struct Unbindable;
+   | ^^^^^^^^^^^^^^^^^
+   = help: the following other types implement trait `keelson_core::value::ToValue`:
+             &String
+             &[u8]
+             &str
+             ()
+             Arc<T>
+             Cow<'_, str>
+             Option<T>
+             String
+           and $N others
+note: required by a bound in `RawQuery::<D>::bind`
+  --> $WORKSPACE/crates/keelson-core/src/query.rs
+   |
+   |     pub fn bind(mut self, value: impl ToValue) -> Self {
+   |                                       ^^^^^^^ required by this bound in `RawQuery::<D>::bind`

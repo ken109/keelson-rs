@@ -58,7 +58,7 @@ keelson-sqlx = { path = ".", features = ["sqlite", "chrono", "uuid", "decimal", 
 keelson-sqlcheck = { path = "../keelson-sqlcheck" }
 keelson-psql = { path = "../keelson-psql" }
 keelson-mysql = { path = "../keelson-mysql" }
-keelson-sqlite = { path = "../keelson-sqlite" }
+keelson-sqlite = { path = "../keelson-sqlite", features = ["macros"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
 [package.metadata.docs.rs]
