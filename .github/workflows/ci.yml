@@ -154,6 +154,20 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+      # This is the job that runs out of room: the whole workspace, plus the
+      # live-docker feature's client stack (tokio-postgres, mysql, rusqlite,
+      # testcontainers), plus two engine images. When the disk fills, rust-lld
+      # dies with SIGBUS mid-link and reports itself as an LLVM crash — so the
+      # symptom names the wrong culprit entirely. The runner ships ~25 GB of
+      # preinstalled toolchains this repo never touches; deleting them costs
+      # seconds. The `df` lines stay so the next capacity problem is one line
+      # of log rather than another crash to decode.
+      - name: Free disk space
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          df -h /
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       # Pull the engine images up front so image download time is visible as
