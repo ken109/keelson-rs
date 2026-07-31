@@ -779,6 +779,33 @@ impl<B: BeginWith + ?Sized> BeginWithExt for B {}
 /// The closure receives `&Transaction` and so *cannot* commit or consume it —
 /// `within` owns the outcome. Neither a dropped transaction nor a forgotten
 /// commit is expressible here, which is why this is the recommended shape.
+///
+/// # `within` or [`Atomic::atomic`]
+///
+/// On a pool they are the same call: `atomic` for a [`Begin`] *is* `within`.
+/// What differs is what the receiver may be, which is to say what the code
+/// claims:
+///
+/// - `within` takes a [`Begin`] and nothing else — **a transaction begins
+///   here**. Handing it a [`Transaction`] does not compile.
+/// - `atomic` takes either — *I do not care which of the two this is, I care
+///   that it is atomic.*
+///
+/// The weaker claim is not the safer default. Anything whose correctness
+/// depends on where the transaction *ends* needs `within`:
+///
+/// - **A retry loop.** Re-running a savepoint cannot clear a serialization
+///   failure — the snapshot is unchanged, so the conflict recurs. A retry
+///   written against `atomic` would spin when its caller happened to be
+///   inside a transaction; written against `within`, that call does not
+///   compile.
+/// - **Isolation and access mode**, which are properties of the outermost
+///   transaction and so are only reachable through [`BeginWith::begin_with`]
+///   and [`BeginWithExt::within_with`].
+///
+/// Rule of thumb: `within` when the extent of the transaction is part of what
+/// the code is saying, `atomic` for a reusable unit of work that only needs
+/// its own block to be all-or-nothing.
 pub trait BeginExt: Begin {
     /// Run `f` inside a fresh transaction.
     ///

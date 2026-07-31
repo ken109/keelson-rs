@@ -216,6 +216,12 @@ async fn main() -> Result<(), ExecError> {
     // Serialisation failures and deadlocks are classified per engine, so a
     // retry loop can be written once. Nothing here conflicts -- this is the
     // shape, not a demonstration of contention.
+    //
+    // Note `within` and not `atomic`: a retry is only correct at the
+    // *transaction* boundary. Re-running a savepoint cannot clear a
+    // serialization failure, because the snapshot it conflicts with has not
+    // moved. `within` refuses a `&Transaction` receiver, so this loop cannot
+    // be handed one by mistake.
     let mut attempts = 0;
     loop {
         attempts += 1;
