@@ -20,7 +20,9 @@ keelson is the toolkit half of what people usually call an ORM. It builds SQL,
 runs it, and maps rows back — and it generates as much of that as it can read
 from your database. What it deliberately does not do is hide SQL from you: a
 generated model query and a raw `&str` fragment go into the same call, in the
-same tuple, because the query builder was designed so that they could.
+same tuple, because the query builder was designed so that they could — and a
+whole statement you wrote yourself runs through the same verbs as one keelson
+built.
 
 The design is strongly inspired by [bob](https://github.com/stephenafamo/bob),
 a SQL access toolkit for Go, and departs from it throughout wherever Rust wants
@@ -71,7 +73,9 @@ The trade is that queries live inside diesel's type system, so SQL a dialect
 supports but the DSL does not is reached through `sql_query`/`sql_function`
 escape hatches, and complex query composition is where its type errors get
 hard. keelson takes the opposite position on that trade: a raw `&str` is a
-first-class expression *everywhere* an expression is accepted, and the type
+first-class expression *everywhere* an expression is accepted, a whole
+hand-written statement (`sqlite::raw_query(…)`) is an ordinary query with the
+same verbs and the same row mapping, and the type
 system is spent on the model layer (typed columns, typed setters) rather than
 on proving whole statements. If you want the compiler to reject a malformed
 query at all costs, use diesel.

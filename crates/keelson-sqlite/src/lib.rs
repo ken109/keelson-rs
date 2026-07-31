@@ -108,7 +108,7 @@ pub use statement::{
 // The core vocabulary a caller needs in order to use any of the above, re-exported
 // so that a program building SQLite queries needs one dependency and one `use`.
 pub use keelson_core::expr::{CaseBuilder, Chain, Expr, IntoExpr, IntoExprList, IntoIdent, RawArg};
-pub use keelson_core::{Error, Mod, Query, QueryType, Result, Value};
+pub use keelson_core::{Error, Mod, Query, QueryType, RawQuery, Result, Value};
 
 use std::borrow::Cow;
 
@@ -153,6 +153,30 @@ pub fn delete(mods: impl Mod<DeleteQuery>) -> DeleteQuery {
 // ---------------------------------------------------------------------------
 // Expression starters
 // ---------------------------------------------------------------------------
+
+/// A whole statement, written by hand, as a runnable query.
+///
+/// [`raw`] is a *fragment* an expression accepts; this is a *statement* nothing
+/// built. It is an ordinary [`Query`], so the execution layer's verbs work on
+/// it — `fetch_all::<T>()` maps hand-written SQLite onto a struct exactly as
+/// it maps a built one — and it nests as a sub-select in a built statement.
+///
+/// Placeholders are `?` and are rewritten to `?1` as it renders; `\?` is a
+/// literal question mark. Values are bound with [`RawQuery::bind`] and never
+/// reach the SQL text.
+///
+/// ```
+/// use keelson_sqlite::{raw_query, Query as _};
+///
+/// let q = raw_query("SELECT id, name FROM users WHERE age >= ?").bind(21);
+/// let (sql, args) = q.build()?;
+/// assert_eq!(sql, "SELECT id, name FROM users WHERE age >= ?1");
+/// assert_eq!(args, vec![keelson_sqlite::Value::I32(21)]);
+/// # Ok::<_, keelson_sqlite::Error>(())
+/// ```
+pub fn raw_query(sql: impl Into<Cow<'static, str>>) -> RawQuery<Sqlite> {
+    RawQuery::new(Sqlite, sql)
+}
 
 /// Raw SQL, verbatim. `?` is left alone — see [`template`].
 ///

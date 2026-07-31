@@ -177,3 +177,71 @@ async fn streaming_hands_rows_back_incrementally() {
         .unwrap();
     assert_eq!(rows[0].take_at::<i64>(0).unwrap(), 100);
 }
+
+/// A statement keelson did not build gets the same verbs as one it did: the
+/// point of `RawQuery` being an ordinary `Query` rather than a second API.
+#[tokio::test]
+async fn hand_written_statements_take_the_same_path() {
+    let db = pool().await;
+    keelson_sqlite::insert((
+        insert::into("people").columns(["id", "name", "nickname"]),
+        insert::values((arg(1i64), arg("ada"), arg("countess"))),
+        insert::values((arg(2i64), arg("grace"), keelson_sqlite::raw("NULL"))),
+    ))
+    .execute(&db)
+    .await
+    .unwrap();
+
+    // `?` is rewritten to SQLite's `?1`; the value never reaches the text.
+    let q = keelson_sqlite::raw_query(
+        "SELECT id, name, nickname FROM people WHERE id >= ? ORDER BY id",
+    )
+    .bind(1i64);
+    assert_eq!(
+        q.build().unwrap().0,
+        "SELECT id, name, nickname FROM people WHERE id >= ?1 ORDER BY id"
+    );
+
+    // Every verb, unchanged — including mapping onto a struct.
+    let all: Vec<Person> = q.fetch_all(&db).await.unwrap();
+    assert_eq!(all.len(), 2);
+    assert_eq!(all[1].nickname, None, "a NULL still decodes as None");
+
+    let name: String = keelson_sqlite::raw_query("SELECT name FROM people WHERE id = ?")
+        .bind(2i64)
+        .fetch_scalar(&db)
+        .await
+        .unwrap();
+    assert_eq!(name, "grace");
+
+    let done = keelson_sqlite::raw_query("UPDATE people SET nickname = ? WHERE id = ?")
+        .bind("amazing")
+        .bind(2i64)
+        .kind(keelson_sqlite::QueryType::Update)
+        .execute(&db)
+        .await
+        .unwrap();
+    assert_eq!(done.rows_affected, 1);
+
+    // And it composes the other way: a hand-written statement spliced into a
+    // built one, renumbered by the outer writer.
+    let built = keelson_sqlite::select((
+        select::columns((quote("id"), quote("name"), quote("nickname"))),
+        select::from(quote("people")),
+        select::where_(quote("id").in_(keelson_sqlite::query(
+            keelson_sqlite::raw_query("SELECT id FROM people WHERE nickname = ?").bind("amazing"),
+        ))),
+    ));
+    let (sql, args) = built.build().unwrap();
+    assert_eq!(
+        sql,
+        concat!(
+            r#"SELECT "id", "name", "nickname" FROM "people" "#,
+            r#"WHERE ("id" IN (SELECT id FROM people WHERE nickname = ?1))"#
+        )
+    );
+    assert_eq!(args.len(), 1);
+    let found: Vec<Person> = built.fetch_all(&db).await.unwrap();
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].name, "grace");
+}

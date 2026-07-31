@@ -86,7 +86,7 @@ mod writer;
 pub use dialect::Dialect;
 pub use error::{Error, Result};
 pub use mods::{BuildMod, Mod, ModFn, mod_fn};
-pub use query::{Query, QueryExtensions, QueryType};
+pub use query::{Query, QueryExtensions, QueryType, RawQuery};
 pub use value::{CustomValue, FromValue, ToValue, Value, from_value_array};
 
 /// The derive macros, re-exported behind the `macros` feature.

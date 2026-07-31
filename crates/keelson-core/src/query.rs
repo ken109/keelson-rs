@@ -1,8 +1,10 @@
+use std::borrow::Cow;
 use std::fmt;
 
 use crate::dialect::Dialect;
 use crate::error::Result;
-use crate::value::Value;
+use crate::expr::{IntoExpr, RawArg};
+use crate::value::{ToValue, Value};
 use crate::writer::{Expression, build, build_from};
 
 /// Which statement a query renders.
@@ -110,12 +112,143 @@ pub trait QueryExtensions<Hook, Loader, MapperMod>: Query {
     }
 }
 
+/// A whole statement, written by hand.
+///
+/// The builder's counterpart to [`raw`](crate::expr::raw): that one is a
+/// *fragment* an expression accepts, this one is a *statement* nothing built
+/// it. It is an ordinary [`Query`], so the execution layer's verbs apply
+/// unchanged — `fetch_all::<T>()` maps hand-written SQL onto a struct exactly
+/// as it maps a built statement — and it is an [`Expression`], so it nests as
+/// a sub-select in a built statement like any other query.
+///
+/// Construct one from the dialect it is written in: `psql::raw_query(…)`,
+/// `mysql::raw_query(…)`, `sqlite::raw_query(…)`.
+///
+/// **Placeholders are `?`, on every dialect,** and are rewritten into that
+/// dialect's own syntax as the statement renders — `$1` on PostgreSQL, `?1` on
+/// SQLite, `?` on MySQL. Write `\?` for a literal question mark. The rule is
+/// [`template`](crate::expr::template)'s, for the same reason: a hand-written
+/// statement should not have to be respelled to move between engines, and a
+/// value still never reaches the SQL text. A `?` count that disagrees with the
+/// bound arguments is an error from [`build`](Query::build), not a silently
+/// misbound statement.
+///
+/// keelson does not parse what you hand it. Everything the builder guarantees
+/// — that the SQL is grammatical for the engine, that identifiers are quoted —
+/// is yours here; what you keep is the binding, the placeholder rewriting, the
+/// row mapping, the transaction, and the tracing span.
+///
+/// # Why this is untyped, and stays untyped
+///
+/// The row type is whatever you name in `fetch_all::<T>()`, and nothing checks
+/// it against the schema. That is the escape hatch's job description, not a
+/// gap waiting to be filled.
+///
+/// **The rejected alternative:** a proc macro that types the row and the
+/// parameters at the call site, by running keelson-gen's own inference against
+/// a committed schema snapshot at compile time. It would work — the analysis
+/// is already a library, and the snapshot would need no database at build
+/// time, which is more than sqlx's `query!` manages. It was rejected because
+/// it adds **no guarantee keelson does not already offer**: the same analysis,
+/// against the same schema, producing the same types, is Layer 4
+/// (`keelson-gen`'s `.sql` files). The only difference is where the SQL lives.
+/// Paying a build-time SQL parser (libpg_query, in C, for PostgreSQL), a new
+/// artifact to keep fresh, and a second answer to "typed hand-written SQL"
+/// buys locality and nothing else.
+///
+/// So the line is: **typed** SQL goes in a `.sql` file (Layer 4) or comes from
+/// a generated model (Layer 3), and both are typed because they were derived
+/// from the schema. **Untyped** SQL is this, and its counterpart for
+/// fragments. Wanting the compiler to reject a malformed query outright is a
+/// real want, and [diesel](https://diesel.rs) is the library that serves it.
+#[derive(Debug, Clone)]
+pub struct RawQuery<D> {
+    sql: Cow<'static, str>,
+    args: Vec<RawArg>,
+    dialect: D,
+    query_type: QueryType,
+}
+
+impl<D> RawQuery<D> {
+    /// The statement, in `dialect`'s SQL. Dialect crates wrap this as
+    /// `raw_query`, which is how a caller should reach it.
+    pub fn new(dialect: D, sql: impl Into<Cow<'static, str>>) -> Self {
+        RawQuery {
+            sql: sql.into(),
+            args: Vec::new(),
+            dialect,
+            query_type: QueryType::Unknown,
+        }
+    }
+
+    /// Bind a value to the next `?`.
+    #[must_use]
+    pub fn bind(mut self, value: impl ToValue) -> Self {
+        self.args.push(RawArg::value(value));
+        self
+    }
+
+    /// Bind every value in `values`, in order — one `?` each.
+    #[must_use]
+    pub fn bind_all<V: ToValue>(mut self, values: impl IntoIterator<Item = V>) -> Self {
+        self.args.extend(values.into_iter().map(RawArg::value));
+        self
+    }
+
+    /// Splice an expression into the next `?` instead of binding a value.
+    ///
+    /// This is what makes `WHERE id IN (?)` work: the expression consumes as
+    /// many placeholder positions as it binds arguments, and the counter keeps
+    /// going from there. A quoted identifier, a sub-query and a built
+    /// statement all go in this way.
+    #[must_use]
+    pub fn bind_expr(mut self, expression: impl IntoExpr) -> Self {
+        self.args.push(RawArg::expr(expression));
+        self
+    }
+
+    /// Declare which statement this is.
+    ///
+    /// It feeds the tracing span and nothing else — the execution layer never
+    /// polices it against the SQL. The default is
+    /// [`QueryType::Unknown`], which is the honest answer for text keelson has
+    /// not read: guessing from the leading keyword would be wrong for
+    /// `WITH … INSERT`, and keelson does not guess.
+    #[must_use]
+    pub fn kind(mut self, query_type: QueryType) -> Self {
+        self.query_type = query_type;
+        self
+    }
+}
+
+impl<D: fmt::Debug + Send + Sync> Expression for RawQuery<D> {
+    fn write_sql(&self, w: &mut crate::writer::SqlWriter<'_>) {
+        crate::expr::template(self.sql.clone(), self.args.iter().cloned()).write_sql(w);
+    }
+}
+
+impl<D: Dialect> Query for RawQuery<D> {
+    fn query_type(&self) -> QueryType {
+        self.query_type
+    }
+
+    fn dialect(&self) -> &dyn Dialect {
+        &self.dialect
+    }
+}
+
+// No hooks, no loaders, no mapper mods: a statement keelson did not build has
+// nothing hung on it. The empty impl is what makes the execution layer's verbs
+// available at all.
+impl<D: Dialect, H, L, M> QueryExtensions<H, L, M> for RawQuery<D> {}
+
 #[cfg(test)]
 mod tests {
     use keelson_sqlcheck::testing::assert_stmt_sql;
 
     use super::*;
     use crate::dialect::testing::Numbered;
+    use crate::error::Error;
     use crate::writer::SqlWriter;
 
     #[test]
@@ -236,5 +369,108 @@ mod tests {
         assert!(q.hooks().is_empty());
         assert!(q.loaders().is_empty());
         assert!(q.mapper_mods().is_empty());
+    }
+
+    // ── RawQuery: a whole statement nobody built ──────────────────────────
+    //
+    // Judged like any other statement: what a caller hands in is what the
+    // engine has to accept, and `?` rewriting is the only thing keelson does
+    // to it.
+
+    #[test]
+    fn a_hand_written_statement_binds_and_rewrites_its_placeholders() {
+        let q = RawQuery::new(Numbered, "SELECT * FROM \"users\" WHERE \"age\" >= ?")
+            .bind(21)
+            .kind(QueryType::Select);
+        let (sql, args) = q.build().unwrap();
+        assert_stmt_sql(&sql, r#"SELECT * FROM "users" WHERE "age" >= $1"#);
+        assert_eq!(args, vec![Value::I32(21)]);
+        assert_eq!(q.query_type(), QueryType::Select);
+    }
+
+    #[test]
+    fn the_statement_kind_is_unknown_until_it_is_declared() {
+        // keelson has not read the text, so it does not claim to know. Guessing
+        // from the leading keyword would be wrong for `WITH … INSERT`.
+        let q = RawQuery::new(Numbered, "SELECT 1");
+        assert_eq!(q.query_type(), QueryType::Unknown);
+    }
+
+    #[test]
+    fn binding_more_than_the_placeholders_is_an_error_not_a_misbound_statement() {
+        let q = RawQuery::new(Numbered, "SELECT * FROM \"users\" WHERE \"age\" >= ?")
+            .bind(21)
+            .bind(22);
+        let err = q.build().unwrap_err();
+        assert!(matches!(err, Error::RawArgCount { .. }), "{err}");
+    }
+
+    #[test]
+    fn an_expression_can_be_spliced_where_a_value_would_go() {
+        // The `IN (?)` case: the spliced expression consumes as many
+        // placeholder positions as it binds, and the counter carries on.
+        let q = RawQuery::new(
+            Numbered,
+            "SELECT * FROM \"users\" WHERE \"id\" IN (?) AND \"age\" >= ?",
+        )
+        .bind_expr(crate::expr::args([1, 2, 3]))
+        .bind(21);
+        let (sql, args) = q.build().unwrap();
+        assert_stmt_sql(
+            &sql,
+            r#"SELECT * FROM "users" WHERE "id" IN ($1, $2, $3) AND "age" >= $4"#,
+        );
+        assert_eq!(
+            args,
+            vec![Value::I32(1), Value::I32(2), Value::I32(3), Value::I32(21)]
+        );
+    }
+
+    #[test]
+    fn a_hand_written_statement_nests_in_a_built_one() {
+        // It is an `Expression`, so it goes anywhere a query goes — and the
+        // outer writer renumbers it, exactly as for a built sub-select.
+        let (sql, args) = build(
+            &Numbered,
+            &Select {
+                table: "users",
+                min_age: 21,
+            }
+            .wrapped_around(
+                RawQuery::new(Numbered, "SELECT \"id\" FROM \"posts\" WHERE \"views\" > ?")
+                    .bind(100),
+            ),
+        )
+        .unwrap();
+        assert_stmt_sql(
+            &sql,
+            concat!(
+                r#"SELECT * FROM "users" WHERE "age" >= $1 AND "id" IN "#,
+                r#"(SELECT "id" FROM "posts" WHERE "views" > $2)"#
+            ),
+        );
+        assert_eq!(args, vec![Value::I32(21), Value::I32(100)]);
+    }
+
+    /// `Select`, with a sub-query hung on its `WHERE` — just enough to prove
+    /// the nesting, without a second statement type.
+    #[derive(Debug)]
+    struct Wrapped(Select, RawQuery<Numbered>);
+
+    impl Select {
+        fn wrapped_around(self, inner: RawQuery<Numbered>) -> Wrapped {
+            Wrapped(self, inner)
+        }
+    }
+
+    impl Expression for Wrapped {
+        fn write_sql(&self, w: &mut SqlWriter<'_>) {
+            self.0.write_sql(w);
+            w.push_str(" AND ");
+            w.push_quoted(&["id"]);
+            w.push_str(" IN (");
+            self.1.write_sql(w);
+            w.push_str(")");
+        }
     }
 }

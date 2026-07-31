@@ -62,7 +62,9 @@ pub use keelson_factory as factory;
 // from the dialect module, which re-exports this vocabulary in turn.
 // ---------------------------------------------------------------------------
 
-pub use keelson_core::{Error, Expression, Mod, Query, QueryType, Result, ToValue, Value};
+pub use keelson_core::{
+    Error, Expression, Mod, Query, QueryType, RawQuery, Result, ToValue, Value,
+};
 
 /// `#[derive(Bind)]` — a newtype over a bindable type becomes bindable
 /// (feature `macros`).

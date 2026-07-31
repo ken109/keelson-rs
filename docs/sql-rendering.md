@@ -84,6 +84,10 @@ Three consequences, all deliberate:
   `Dialect::write_quoted` decision, and `literal` is documented as being for SQL
   the program itself wrote. Text from outside belongs in `expr::arg`, which binds.
 - `expr::raw` never scans at all, so a `?` in it is always literal.
+- A whole hand-written statement (`RawQuery`, reached as the dialect's
+  `raw_query`) is a template, not a raw: its `?` are rewritten by this same
+  scan. A statement a caller typed is exactly where a bound value belongs,
+  and rewriting is what lets the same text move between engines.
 
 ## MySQL's statement modifiers are written in grammar order, not call order
 
