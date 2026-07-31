@@ -7,8 +7,8 @@
 //! There are three ways to hand keelson SQL you wrote, and they are for
 //! different situations:
 //!
-//! 1. **`raw_query(…)`** — a whole statement, right here, run now. What this
-//!    example is mostly about.
+//! 1. **`sql!(…)`** (or `raw_query(…)`) — a whole statement, right here, run
+//!    now. What this example is mostly about.
 //! 2. **A raw fragment inside a built statement** — `raw`, `template`, or a
 //!    bare `&str` where an expression is expected. For when the *statement* is
 //!    keelson's and one *piece* of it is yours.
@@ -45,10 +45,13 @@ async fn main() -> Result<(), ExecError> {
     // (see `joins_and_ctes.rs`) — but if you would rather write the SQL, this
     // is what that looks like, and nothing about the rest of the API changes.
     //
-    // `?` is the placeholder on every dialect and is rewritten as the
-    // statement renders: `?1` here, `$1` on PostgreSQL, `?` on MySQL. The
-    // value is bound, never interpolated.
-    let q = sqlite::raw_query(
+    // Values go in `{…}` holes, and they are **bound** — a hole can never put
+    // text into the SQL. Under it this is `raw_query("… >= ?").bind(min_views)`
+    // with the `?` rewritten per dialect (`?1` here, `$1` on PostgreSQL); the
+    // macro exists so the value is written where it binds instead of in a
+    // separate positional call.
+    let min_views = 50;
+    let q = sqlite::sql!(
         r#"
         WITH ranked AS (
             SELECT p.id, p.title, p.user_id, p.views,
@@ -58,11 +61,10 @@ async fn main() -> Result<(), ExecError> {
         SELECT u.name AS author, r.title, r.views
         FROM ranked r
         JOIN users u ON u.id = r.user_id
-        WHERE r.rank = 1 AND r.views >= ?
+        WHERE r.rank = 1 AND r.views >= {min_views}
         ORDER BY r.views DESC
-        "#,
-    )
-    .bind(50);
+        "#
+    );
 
     // It is an ordinary query, so `fetch_all::<T>()` maps it onto a struct
     // exactly as it would a built one.
@@ -75,18 +77,34 @@ async fn main() -> Result<(), ExecError> {
     assert_eq!(top[0].author, "Grace");
 
     // And it builds like one: inspect the SQL and the arguments before it runs.
-    let (_, args) = q.build()?;
+    let (text, args) = q.build()?;
     assert_eq!(args, vec![Value::I32(50)], "the 50 is bound, not inlined");
+    assert!(text.contains(">= ?1"), "the hole became a placeholder");
+
+    // Two mistakes the macro makes unrepresentable, and both are silent
+    // otherwise:
+    //
+    // - **Transposed binds.** `raw_query(…).bind(a).bind(b)` with `a` and `b`
+    //   the wrong way round type-checks and runs; only the answers are wrong.
+    // - **A question mark you typed.** The `?` rewriting does not track
+    //   quoting, so `'what?'` would hold a hole — and when the argument count
+    //   happens to match, the statement is quietly corrupt. The macro escapes
+    //   every `?` it did not generate.
+    let (text, args) =
+        sqlite::sql!("SELECT id FROM posts WHERE title <> 'why?' AND views > {min_views}")
+            .build()?;
+    show("a question mark that stays a question mark", &text, &args);
+    assert!(text.contains("'why?'"));
+    assert_eq!(args.len(), 1, "the '?' in the literal bound nothing");
 
     // ── every verb, unchanged ───────────────────────────────────────────
-    let count: i64 = sqlite::raw_query("SELECT count(*) FROM posts WHERE status = ?")
-        .bind("published")
+    let status = "published";
+    let count: i64 = sqlite::sql!("SELECT count(*) FROM posts WHERE status = {status}")
         .fetch_scalar(db)
         .await?;
 
-    let done = sqlite::raw_query("UPDATE posts SET views = views + ? WHERE user_id = ?")
-        .bind(10)
-        .bind(1)
+    let (bump, author) = (10, 1);
+    let done = sqlite::sql!("UPDATE posts SET views = views + {bump} WHERE user_id = {author}")
         // Only ever read by the tracing span. The default is `Unknown`:
         // keelson has not read the text, and guessing from the leading
         // keyword would be wrong for `WITH … INSERT`.
@@ -103,19 +121,31 @@ async fn main() -> Result<(), ExecError> {
 
     // Including things the builder has no vocabulary for at all -- keelson is
     // DML-only, so DDL and pragmas are exactly this.
-    sqlite::raw_query("PRAGMA foreign_keys = ON")
-        .execute(db)
+    sqlite::sql!("PRAGMA foreign_keys = ON").execute(db).await?;
+
+    // ── when the SQL is not a literal ───────────────────────────────────
+    //
+    // A macro can only read a string literal, so SQL that arrives at run time
+    // — from a file, a migration runner, an admin console — takes the
+    // function, and binds positionally. Same type, same verbs.
+    let from_somewhere_else = String::from("SELECT count(*) FROM comments WHERE post_id = ?");
+    let comments: i64 = sqlite::raw_query(from_somewhere_else)
+        .bind(1)
+        .fetch_scalar(db)
         .await?;
+    println!("  {comments} comments on post 1");
+    assert_eq!(comments, 2);
 
     // ── binding a list ──────────────────────────────────────────────────
     //
-    // `bind_expr` splices an expression where a value would go, and it
-    // consumes as many placeholder positions as it binds. That is what makes
-    // `IN (?)` expand instead of binding one opaque blob.
-    let ids = vec![1i64, 2, 3];
-    let q = sqlite::raw_query("SELECT title FROM posts WHERE id IN (?) AND views > ? ORDER BY id")
-        .bind_expr(sqlite::args(ids))
-        .bind(100);
+    // A hole binds one value. `{x:sql}` is the other kind: it splices an
+    // expression, which consumes as many placeholder positions as it binds.
+    // That is what makes `IN (…)` expand instead of binding one opaque blob.
+    let ids = sqlite::args([1i64, 2, 3]);
+    let floor = 100;
+    let q = sqlite::sql!(
+        "SELECT title FROM posts WHERE id IN ({ids:sql}) AND views > {floor} ORDER BY id"
+    );
     let (sql, args) = q.build()?;
     show("a list, expanded", &sql, &args);
     assert!(sql.contains("IN (?1, ?2, ?3) AND views > ?4"));
