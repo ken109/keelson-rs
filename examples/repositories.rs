@@ -16,7 +16,7 @@
 //!   changes if you do need one.
 //! - **The usecase owns the boundary**, with `within`. That is the layer that
 //!   knows what "all or nothing" means for the business operation.
-//! - **A multi-statement unit of work takes `&(impl Atomic + ?Sized)`** and is
+//! - **A multi-statement unit of work takes `impl Atomic`** and is
 //!   atomic wherever it is called: a transaction standalone, a savepoint
 //!   inside the usecase. A one-statement CRUD method needs no such thing —
 //!   one statement is already all-or-nothing in every engine.
@@ -62,16 +62,11 @@ trait UserStore {
     /// A unit of work rather than a statement: it writes an audit row *and*
     /// deactivates, and it must not half-apply.
     ///
-    /// Taking `&(impl Atomic + ?Sized)` instead of `&dyn Executor` is what
+    /// Taking `impl Atomic` instead of `&dyn Executor` is what
     /// makes it atomic wherever it is called. That is a generic parameter, so
     /// this is also the method a trait-object port could not have — see the
     /// appendix.
-    async fn deactivate(
-        &self,
-        db: &(impl Atomic + ?Sized),
-        id: i64,
-        reason: &str,
-    ) -> Result<(), ExecError>;
+    async fn deactivate(&self, db: impl Atomic, id: i64, reason: &str) -> Result<(), ExecError>;
 }
 
 // ── the adapter ─────────────────────────────────────────────────────────
@@ -110,12 +105,7 @@ impl UserStore for SqlUserRepository {
         .await
     }
 
-    async fn deactivate(
-        &self,
-        db: &(impl Atomic + ?Sized),
-        id: i64,
-        reason: &str,
-    ) -> Result<(), ExecError> {
+    async fn deactivate(&self, db: impl Atomic, id: i64, reason: &str) -> Result<(), ExecError> {
         db.atomic(async |tx| {
             // Written first on purpose: when the update below finds nothing,
             // this row has to go back too, and the example asserts that it
@@ -344,7 +334,7 @@ async fn main() -> Result<(), ExecError> {
 /// for the duration of one call.
 ///
 /// What cannot come along at all is `deactivate`. A method taking
-/// `&(impl Atomic + ?Sized)` is generic, and a generic method has no vtable
+/// `impl Atomic` is generic, and a generic method has no vtable
 /// either — boxing the future does not help. A unit of work that needs a
 /// scope lives outside a `dyn` port, as a free function taking the scope.
 /// `tests/compile_fail/repository_behind_dyn.rs` pins the error you get for

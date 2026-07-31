@@ -18,7 +18,7 @@
 //! - a transaction closure cannot commit or roll back the transaction it was
 //!   handed
 //! - `&dyn Executor` cannot open a scope: a unit of work that has to be
-//!   atomic says so in its signature (`&(impl Atomic + ?Sized)`)
+//!   atomic says so in its signature (`impl Atomic`)
 //! - and a trait method that takes a scope has no vtable, so a repository
 //!   port is `&dyn Executor` or it is not a trait object — the trade
 //!   `examples/repositories.rs` makes on purpose

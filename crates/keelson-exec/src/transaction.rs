@@ -850,14 +850,14 @@ impl<B: Begin + ?Sized> BeginExt for B {}
 /// ```text
 /// async fn transfer(db: &dyn Executor) -> …   // composes, but cannot be atomic
 /// async fn transfer(tx: &Transaction) -> …    // atomic, but demands its caller open one
-/// async fn transfer(db: &(impl Atomic + ?Sized)) -> …   // both
+/// async fn transfer(db: impl Atomic) -> …     // both
 /// ```
 ///
 /// The third accepts a pool, a connection, a `&dyn Begin` and a
 /// [`Transaction`], and is atomic in all of them:
 ///
 /// ```ignore
-/// async fn transfer(db: &(impl Atomic + ?Sized), from: i64, to: i64) -> Result<(), ExecError> {
+/// async fn transfer(db: impl Atomic, from: i64, to: i64) -> Result<(), ExecError> {
 ///     db.atomic(async |tx| {
 ///         debit(tx, from).await?;
 ///         credit(tx, to).await
@@ -892,13 +892,27 @@ impl<B: Begin + ?Sized> BeginExt for B {}
 /// snapshot; only re-running the whole transaction can win. Retry where the
 /// transaction begins.
 ///
+/// # How to spell the parameter
+///
+/// `db: impl Atomic`, by value and with no bound beyond the trait. Every
+/// receiver you would want is accepted, because `Atomic` follows [`Executor`]
+/// in being implemented for handles as well as values:
+///
+/// ```text
+/// f(&pool)      f(pool)      f(Arc::clone(&pool))      f(&dyn Begin)      f(tx)
+/// ```
+///
+/// The last is the `&Transaction` a scope closure hands you, which is what
+/// makes these functions nest into each other. Writing `&impl Atomic` instead
+/// would *reject* `&dyn Begin` (a trait object is not `Sized`), so the bare
+/// form is the wider one as well as the shorter one.
+///
 /// # The cost, stated
 ///
 /// The method is generic, so `Atomic` is **not object-safe**: `&dyn Atomic`
-/// does not exist and the erased currency stays `&dyn Executor`. Take
-/// `&(impl Atomic + ?Sized)` — the `?Sized` is what keeps `&dyn Begin`
-/// acceptable — and pass it on as `&dyn Executor` for everything that is not
-/// a scope.
+/// does not exist and the erased currency stays `&dyn Executor`, which a
+/// scope parameter is passed on as for everything that is not itself a
+/// scope.
 ///
 /// [`Begin`] is still deliberately *not* implemented by [`Transaction`], so
 /// `begin`/`within` and [`savepoint`](Transaction::savepoint) stay
@@ -943,6 +957,23 @@ impl Atomic for Transaction {
         E: From<ExecError>,
     {
         self.savepoint(f)
+    }
+}
+
+/// A *reference* to a transaction — what makes the bare `impl Atomic`
+/// parameter form work, since that is the type a scope closure hands you.
+///
+/// [`Executor`] is implemented for `&E` and `Arc<E>` for the same reason: a
+/// caller should not have to know whether what it holds is the value or a
+/// handle to it. Coherent with the blanket impl for the same reason
+/// [`Transaction`]'s own impl is — `&Transaction` is not [`Begin`] either.
+impl Atomic for &Transaction {
+    fn atomic<T, E, F>(&self, f: F) -> impl std::future::Future<Output = Result<T, E>>
+    where
+        F: AsyncFnOnce(&Transaction) -> Result<T, E>,
+        E: From<ExecError>,
+    {
+        (**self).savepoint(f)
     }
 }
 
@@ -1096,7 +1127,7 @@ mod tests {
 
     /// One helper, written once, atomic at both levels — the whole point of
     /// [`Atomic`].
-    async fn unit_of_work(db: &(impl Atomic + ?Sized), fail: bool) -> Result<(), ExecError> {
+    async fn unit_of_work(db: impl Atomic, fail: bool) -> Result<(), ExecError> {
         db.atomic(async |tx| {
             tx.execute(Statement::new("WORK", vec![])).await?;
             if fail {
@@ -1414,6 +1445,24 @@ mod tests {
         assert!(e.to_string().contains("40001"), "{e}");
         assert!(std::error::Error::source(&e).is_some());
         assert_eq!(TxConflict::of(&ExecError::RowNotFound), None);
+    }
+
+    #[test]
+    fn every_way_of_holding_a_scope_is_atomic() {
+        // Checked at compile time: this is what lets a unit of work say
+        // `db: impl Atomic` and mean "a pool or a transaction, however you
+        // happen to be holding it".
+        fn takes(_: impl Atomic) {}
+        fn prove(pool: Handle, shared: Arc<Handle>, erased: &dyn Begin, tx: &Transaction) {
+            takes(&pool);
+            takes(shared);
+            takes(erased);
+            // The one a scope closure hands you, and the reason `&Transaction`
+            // has an impl of its own.
+            takes(tx);
+            takes(pool);
+        }
+        let _ = prove;
     }
 
     #[test]

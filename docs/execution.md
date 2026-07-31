@@ -201,9 +201,16 @@ Retries stay at the transaction boundary: rolling back to a savepoint
 recovers a transaction from an error, but a serialization failure recurs
 against the same snapshot.
 
+The parameter is spelled `db: impl Atomic`, by value and with no further
+bound. `Atomic` follows `Executor` in being implemented for handles as well
+as values — `&Pool`, `Pool`, `Arc<Pool>`, `&dyn Begin` and `&Transaction` all
+satisfy it — so the shortest spelling is also the widest: `&impl Atomic`
+would reject `&dyn Begin`, which is not `Sized`. The `&Transaction` impl
+exists for exactly this, and is coherent for the same reason the owned one
+is.
+
 Costs, recorded: the method is generic, so `Atomic` is **not object-safe** —
-the erased currency stays `&dyn Executor` and a scope-taking helper is
-written `&(impl Atomic + ?Sized)` (the `?Sized` keeps `&dyn Begin` in). And
+the erased currency stays `&dyn Executor`. And
 there is no `atomic_with`: isolation and access mode are properties of the
 outermost transaction, a nested scope could only ignore them, and keelson
 does not accept options it would have to ignore.

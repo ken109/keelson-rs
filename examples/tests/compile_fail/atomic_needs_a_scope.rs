@@ -3,7 +3,7 @@
 //! already open, so it can be neither `within` nor `savepoint`.
 //!
 //! A unit of work that has to be atomic says so in its signature instead —
-//! `&(impl Atomic + ?Sized)`, which a pool, a `&dyn Begin` and a
+//! `impl Atomic`, which a pool, a `&dyn Begin` and a
 //! `&Transaction` all satisfy, and which can still be passed on as
 //! `&dyn Executor` to everything that is not a scope.
 

@@ -5,7 +5,7 @@
 //!
 //! Three properties worth knowing up front:
 //!
-//! - A reusable unit of work takes `&(impl Atomic + ?Sized)` and is atomic
+//! - A reusable unit of work takes `impl Atomic` and is atomic
 //!   wherever it is called: a transaction when nothing is open, a savepoint
 //!   when something is. `rename_tag`, at the bottom of this file, is one.
 //! - A `Transaction` carries **no lifetime parameter**. It owns its
@@ -260,10 +260,10 @@ async fn main() -> Result<(), ExecError> {
 /// A unit of work with two statements in it: it records what it is about to
 /// do, then renames the tag, and it refuses when there was no such tag. Both
 /// statements must land or neither — and *this helper does not know* whether
-/// its caller already opened a transaction. `&(impl Atomic + ?Sized)` is what
+/// its caller already opened a transaction. `impl Atomic` is what
 /// lets it not care: a pool, a `&dyn Begin` and a `&Transaction` all satisfy
 /// it. (`?Sized` is what keeps `&dyn Begin` in.)
-async fn rename_tag(db: &(impl Atomic + ?Sized), from: &str, to: &str) -> Result<(), ExecError> {
+async fn rename_tag(db: impl Atomic, from: &str, to: &str) -> Result<(), ExecError> {
     db.atomic(async |tx| {
         sqlite::insert((
             insert::into(quote("audit_logs")).columns(["entity", "entity_id", "note"]),

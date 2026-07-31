@@ -138,7 +138,7 @@ async fn tx_suite(db: &dyn Begin) {
     // `atomic`: one helper, written once, atomic wherever it is called. At
     // the top it *is* the transaction; inside one it is a savepoint, so its
     // failure costs its own block and nothing the caller did.
-    async fn unit(db: &(impl Atomic + ?Sized), k: i64, fail: bool) -> Result<(), ExecError> {
+    async fn unit(db: impl Atomic, k: i64, fail: bool) -> Result<(), ExecError> {
         db.atomic(async |tx| {
             insert(tx, k).await?;
             if fail {

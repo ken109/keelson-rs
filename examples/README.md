@@ -60,7 +60,7 @@ safety, stated as a list:
   error rather than a query that quietly loads nothing
 - a transaction closure cannot end the transaction it was handed
 - `&dyn Executor` cannot open a scope: a unit of work that must be atomic
-  says so in its signature (`&(impl Atomic + ?Sized)`)
+  says so in its signature (`impl Atomic`)
 - and a trait method that takes a scope has no vtable, so a repository port
   is `&dyn Executor` or it is not a trait object — pick one, deliberately
 
