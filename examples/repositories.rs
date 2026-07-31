@@ -20,16 +20,17 @@
 //!   inside the usecase. That is what `atomic` is for, and it is *not* what a
 //!   one-statement CRUD method needs.
 //!
-//! `tests/compile_fail/repository_behind_dyn.rs` is the other half of this
-//! file: it pins what happens if a repository trait takes `impl Atomic`
-//! instead — the trait stops being object-safe and `Arc<dyn …>` no longer
-//! compiles.
+//! The last two points pull against each other, so the file shows the fork
+//! both ways: `UserRepository` keeps `Arc<dyn …>` and pays for it in boxed
+//! futures and one named lifetime, while `UserStore` gives `dyn` up and is
+//! plain `async fn` — no boxing, no lifetime, and a scope allowed in the
+//! signature, because a trait with a generic method has no vtable to build.
+//! `tests/compile_fail/repository_behind_dyn.rs` pins the error you get for
+//! trying to have both.
 
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
 
-use keelson::exec::{ExecError, Executor};
+use keelson::exec::{ExecError, ExecFuture, Executor};
 use keelson::models::set;
 use keelson::prelude::*;
 use keelson::sqlite::{arg, f, insert, quote, select};
@@ -37,21 +38,57 @@ use keelson::sqlx::sqlite::Pool;
 use keelson_examples::Sandbox;
 use keelson_examples::models::users;
 
-/// What a repository method returns. A boxed future rather than `async fn`,
-/// because that is what keeps the trait object-safe — the same reason
-/// keelson's own hook payloads are boxed.
-type Fut<'a, T> = Pin<Box<dyn Future<Output = Result<T, ExecError>> + Send + 'a>>;
+/// What a repository method returns: `Result<T, ExecError>`, in the boxed
+/// future keelson's own hook payloads use. `ExecFuture<'a, T>` is
+/// `Pin<Box<dyn Future<Output = T> + Send + 'a>>` and nothing more.
+type Fut<'a, T> = ExecFuture<'a, Result<T, ExecError>>;
 
 // ── the port ────────────────────────────────────────────────────────────
 //
 // Note what is *not* here: a pool, a connection, a transaction. The executor
 // arrives per call, which is the whole reason the same method can run inside
 // a caller's transaction.
+//
+// The boxed future, and with it the `'a`, are the price of `Arc<dyn …>`:
+// `async fn` in a trait returns an anonymous future type, which has no
+// vtable. `'a` is one lifetime, and it is the *same* borrow throughout --
+// `self` and the executor, for the duration of one call. If your application
+// does not need trait objects, none of this is necessary: `UserStore` below
+// is the same idea in plain `async fn`, naming no lifetime at all.
 
 trait UserRepository: Send + Sync {
     fn find<'a>(&'a self, db: &'a dyn Executor, id: i64) -> Fut<'a, users::User>;
 
     fn set_email<'a>(&'a self, db: &'a dyn Executor, id: i64, email: &'a str) -> Fut<'a, ()>;
+}
+
+/// **The same port with `dyn` given up.** `async fn` in a trait has been
+/// stable since Rust 1.75; what it is not is dyn-compatible. Trade the
+/// `Arc<dyn …>` away and the ceremony goes with it — no boxing, no
+/// `Pin<Box<…>>`, no lifetime to name, and the body of each method is
+/// unchanged.
+///
+/// What you *gain* is the second method: a scope can appear in the signature,
+/// because there is no vtable to build. The unit of work moves into the port
+/// instead of living beside it, and it is still atomic wherever it is called.
+///
+/// What you give up, beyond `Arc<dyn …>`: every holder of this port is
+/// generic in it (`struct RetireUser<S: UserStore>`), a heterogeneous
+/// collection of repositories is not expressible, and a test double is a
+/// second type parameter rather than a second `Arc`. One more caveat worth
+/// knowing: `async fn` in a trait does not promise a `Send` future, so a
+/// usecase that gets `tokio::spawn`ed needs `#[trait_variant::make(Send)]` or
+/// a hand-written `-> impl Future<…> + Send`.
+trait UserStore {
+    async fn count_active(&self, db: &dyn Executor) -> Result<i64, ExecError>;
+
+    /// The method `UserRepository` could not have.
+    async fn deactivate(
+        &self,
+        db: &(impl Atomic + ?Sized),
+        id: i64,
+        reason: &str,
+    ) -> Result<(), ExecError>;
 }
 
 // ── the adapter ─────────────────────────────────────────────────────────
@@ -80,6 +117,47 @@ impl UserRepository for SqlUserRepository {
             }
             Ok(())
         })
+    }
+}
+
+impl UserStore for SqlUserRepository {
+    async fn count_active(&self, db: &dyn Executor) -> Result<i64, ExecError> {
+        keelson::sqlite::select((
+            select::columns(f("count", quote("id"))),
+            select::from(quote("users")),
+            select::where_(quote("is_active").eq(arg(true))),
+        ))
+        .fetch_scalar(db)
+        .await
+    }
+
+    async fn deactivate(
+        &self,
+        db: &(impl Atomic + ?Sized),
+        id: i64,
+        reason: &str,
+    ) -> Result<(), ExecError> {
+        // The same unit of work as below, now inside the port.
+        deactivate_user(db, id, reason).await
+    }
+}
+
+/// A usecase over the dyn-free port: generic in its repository rather than
+/// holding an `Arc<dyn …>`. This is where the trade is actually paid — the
+/// type parameter propagates to everything that constructs one.
+struct RetireUser<S: UserStore> {
+    users: S,
+}
+
+impl<S: UserStore> RetireUser<S> {
+    async fn run(&self, db: &Pool, id: i64) -> Result<i64, ExecError> {
+        db.within(async |tx| {
+            // A savepoint, because the port took a scope and the usecase
+            // handed it a transaction.
+            self.users.deactivate(tx, id, "retired by request").await?;
+            self.users.count_active(tx).await
+        })
+        .await
     }
 }
 
@@ -229,7 +307,23 @@ async fn main() -> Result<(), ExecError> {
     assert_eq!(grace.email.as_deref(), Some("grace@hopper.example"));
     assert!(!grace.is_active);
 
-    // ── 4. the trap: a repository that captured the pool ────────────────
+    // ── 4. the same application with `dyn` given up ─────────────────────
+    //
+    // `UserStore` is the port written as plain `async fn`: no boxed future,
+    // no `Pin<Box<…>>`, no lifetime named anywhere. In exchange it is not a
+    // trait object, so `RetireUser` is generic in it — and *because* there is
+    // no vtable, the port can take a scope, which is how the unit of work
+    // moved inside it.
+    let retire = RetireUser {
+        users: SqlUserRepository,
+    };
+    let still_active = retire.run(db, 1).await?;
+    println!("── dyn given up\n  {still_active} users still active");
+    assert!(!repo.find(db, 1).await?.is_active);
+    // Ada, Grace and Kid are all deactivated by now.
+    assert_eq!(still_active, 0);
+
+    // ── 5. the trap: a repository that captured the pool ────────────────
     //
     // This is the shape to avoid, and it fails quietly rather than loudly.
     // `PoolBound` holds a `Pool`, so every call checks out *its own*
