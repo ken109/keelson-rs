@@ -1,0 +1,13 @@
+error[E0599]: the method `delete` exists for struct `keelson_models::table::ModelTable<PostAuthors>`, but its trait bounds were not satisfied
+  --> tests/compile_fail/write_through_a_view.rs:10:34
+   |
+10 |     let _ = post_authors::view().delete(());
+   |                                  ^^^^^^ method cannot be called on `keelson_models::table::ModelTable<PostAuthors>` due to unsatisfied trait bounds
+   |
+  ::: src/models/post_authors.rs
+   |
+   | pub struct PostAuthors;
+   | ---------------------- doesn't satisfy `PostAuthors: keelson_models::model::Table`
+   |
+   = note: the following trait bounds were not satisfied:
+           `PostAuthors: keelson_models::model::Table`

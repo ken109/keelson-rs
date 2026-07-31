@@ -1,0 +1,5 @@
+error[E0425]: cannot find function `nickname` in module `users`
+ --> tests/compile_fail/no_such_column.rs:8:41
+  |
+8 |     let _ = users::table().query(users::nickname().eq("countess"));
+  |                                         ^^^^^^^^ not found in `users`

@@ -19,7 +19,7 @@ a temporary file that is deleted when they finish.
 | | [`dynamic_queries`](dynamic_queries.rs) | the filter that is only sometimes applied — `Option<M>`, `Vec<M>` and `()` are all mods, so composition needs no string assembly |
 | | [`joins_and_ctes`](joins_and_ctes.rs) | joins, aggregates, CTEs (recursive included), sub-queries, window functions, `DISTINCT ON` |
 | | [`dialects`](dialects.rs) | one upsert, three engines; `MERGE`, `REPLACE`, `INSERT OR REPLACE`; and why MySQL has no `returning` to call |
-| | [`raw_sql`](raw_sql.rs) | hand-written SQL as a first-class expression, with bound arguments — and what a refusal looks like |
+| | [`raw_sql`](raw_sql.rs) | writing the SQL yourself: a whole hand-written statement run through the same verbs, fragments inside a built statement, and what a refusal looks like |
 | **Layer 2** | [`execute`](execute.rs) | `fetch_all`/`one`/`optional`/`scalar`/`execute`, `#[derive(FromRow)]`, `&dyn Executor` |
 | | [`transactions`](transactions.rs) | the closure form, savepoints, isolation levels, the refusals, and `TxOptions::plan` |
 | | [`streaming`](streaming.rs) | a result set one row at a time, and what holds the connection |
@@ -40,7 +40,36 @@ a temporary file that is deleted when they finish.
 | `src/queries/` | **generated.** One module per `.sql` file. |
 | `src/hooks.rs` | hand-written hooks the generated models delegate to |
 | `src/lib.rs` | `Sandbox`, the throwaway database the examples share |
+| `tests/compile_fail/` | the other half of the examples: seven mistakes that **do not compile**, each next to the error it must produce |
 | `tests/generated_is_fresh.rs` | fails if the generated files no longer match their sources |
+
+## What does not compile
+
+`examples/*.rs` show what keelson does; `tests/compile_fail/` shows what it
+refuses, as programs that must fail to build. They are keelson's compile-time
+safety, stated as a list:
+
+- a typed column will not compare against the wrong Rust type, and neither
+  will a `Setter` field
+- a column the schema does not have is not a function you can call
+- a `SELECT`-only view model has no write surface at all
+- an engine that cannot do something is missing the method, not failing later
+  (MySQL and `RETURNING`)
+- a relation load path is typed by the child model, so a wrong path is a type
+  error rather than a query that quietly loads nothing
+- a transaction closure cannot end the transaction it was handed
+
+Reading the `.stderr` files is the fastest tour of what the type system is
+carrying:
+
+```sh
+cargo test -p keelson-examples --test compile_fail
+```
+
+What is *deliberately* not on that list is hand-written SQL. `raw_query` and
+raw fragments are typed by what you name, not by the schema — that is the
+escape hatch's job description. Typed SQL comes from the schema, through a
+generated model or a `.sql` file.
 
 ## Regenerating
 

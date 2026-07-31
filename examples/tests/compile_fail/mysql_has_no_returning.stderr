@@ -1,0 +1,5 @@
+error[E0425]: cannot find function `returning` in module `insert`
+  --> tests/compile_fail/mysql_has_no_returning.rs:11:17
+   |
+11 |         insert::returning(quote("id")),
+   |                 ^^^^^^^^^ not found in `insert`

@@ -1,0 +1,13 @@
+error[E0507]: cannot move out of `*tx` which is behind a shared reference
+  --> tests/compile_fail/commit_inside_within.rs:15:13
+   |
+15 |             tx.commit().await?;
+   |             ^^ -------- `*tx` moved due to this method call
+   |             |
+   |             move occurs because `*tx` has type `Transaction`, which does not implement the `Copy` trait
+   |
+note: `Transaction::commit` takes ownership of the receiver `self`, which moves `*tx`
+  --> $WORKSPACE/crates/keelson-exec/src/transaction.rs
+   |
+   |     pub async fn commit(self) -> Result<(), ExecError> {
+   |                         ^^^^

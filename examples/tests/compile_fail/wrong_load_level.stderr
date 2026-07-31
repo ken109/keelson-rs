@@ -1,0 +1,13 @@
+error[E0271]: type mismatch resolving `<Users as View>::Row == Post`
+ --> tests/compile_fail/wrong_load_level.rs:9:44
+  |
+9 |     let _ = users::then_load::posts().then(users::then_load::posts());
+  |                                       ---- ^^^^^^^^^^^^^^^^^^^^^^^^^ expected `Post`, found `User`
+  |                                       |
+  |                                       required by a bound introduced by this call
+  |
+note: required by a bound in `keelson_models::load::ThenLoad::<P, C, K>::then`
+ --> $WORKSPACE/crates/keelson-models/src/load.rs
+  |
+  |     pub fn then(mut self, deeper: impl IntoLoader<C::Row>) -> Self {
+  |                                        ^^^^^^^^^^^^^^^^^^ required by this bound in `ThenLoad::<P, C, K>::then`

@@ -1,0 +1,22 @@
+error[E0277]: the trait bound `i64: From<&str>` is not satisfied
+ --> tests/compile_fail/wrong_column_type.rs:9:51
+  |
+9 |     let _ = users::table().query(users::age().gte("twenty-one"));
+  |                                               --- ^^^^^^^^^^^^ the trait `From<&str>` is not implemented for `i64`
+  |                                               |
+  |                                               required by a bound introduced by this call
+  |
+  = help: `i64` implements trait `From<T>`:
+            From<bool>
+            From<i16>
+            From<i32>
+            From<i8>
+            From<u16>
+            From<u32>
+            From<u8>
+  = note: required for `&str` to implement `Into<i64>`
+note: required by a bound in `keelson_models::column::Column::<T>::gte`
+ --> $WORKSPACE/crates/keelson-models/src/column.rs
+  |
+  |     pub fn gte(self, value: impl Into<T>) -> Filter {
+  |                                  ^^^^^^^ required by this bound in `Column::<T>::gte`

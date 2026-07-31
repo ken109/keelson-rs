@@ -48,6 +48,12 @@ tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 keelson-gen.workspace = true
 rusqlite.workspace = true
 
+# The self-dependency the rest of the workspace uses: `tests/compile_fail/*.rs`
+# are standalone programs trybuild compiles, and they need this crate's models
+# and `Sandbox` by name.
+keelson-examples = { path = "." }
+trybuild.workspace = true
+
 # ---------------------------------------------------------------------------
 # The examples, in reading order. Each is standalone: nothing below depends on
 # having read the one above, and `cargo run --example <name>` is the whole
