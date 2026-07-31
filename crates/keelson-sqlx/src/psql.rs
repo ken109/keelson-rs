@@ -1,7 +1,5 @@
 //! The PostgreSQL driver: [`Pool`] implements
-//! [`Executor`](keelson_exec::Executor), [`Begin`](keelson_exec::Begin),
-//! [`BeginWith`](keelson_exec::BeginWith) and
-//! [`StreamExecutor`](keelson_exec::StreamExecutor).
+//! [`Executor`], [`Begin`], [`BeginWith`] and [`StreamExecutor`].
 
 use std::sync::Arc;
 

@@ -1,7 +1,5 @@
 //! The MySQL driver: [`Pool`] implements
-//! [`Executor`](keelson_exec::Executor), [`Begin`](keelson_exec::Begin),
-//! [`BeginWith`](keelson_exec::BeginWith) and
-//! [`StreamExecutor`](keelson_exec::StreamExecutor).
+//! [`Executor`], [`Begin`], [`BeginWith`] and [`StreamExecutor`].
 //!
 //! [`Pool::connect`] pins `time_zone = '+00:00'` on **every** connection it
 //! establishes — the `docs/type-mappings.md` requirement that makes

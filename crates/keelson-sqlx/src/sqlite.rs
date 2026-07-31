@@ -1,7 +1,5 @@
 //! The SQLite driver: [`Pool`] implements
-//! [`Executor`](keelson_exec::Executor), [`Begin`](keelson_exec::Begin),
-//! [`BeginWith`](keelson_exec::BeginWith) and
-//! [`StreamExecutor`](keelson_exec::StreamExecutor).
+//! [`Executor`], [`Begin`], [`BeginWith`] and [`StreamExecutor`].
 //!
 //! SQLite has no native storage class for the mapped types, so every one of
 //! them binds as its pinned text form from `docs/type-mappings.md`, rendered
