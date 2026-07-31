@@ -325,13 +325,20 @@ mod sqlite_engine {
 #[cfg(feature = "live-docker")]
 mod live_engines {
     use super::*;
-    use std::sync::Mutex as StdMutex;
+    use tokio::sync::Mutex as DdlMutex;
 
     /// Run `ddl` exactly once per process, serialised across parallel tests
     /// (each test is its own runtime, so pools cannot be shared — but the
     /// server is).
-    async fn ensure_ddl(db: &dyn Executor, done: &StdMutex<bool>, ddl: &str) {
-        let mut done = done.lock().unwrap();
+    ///
+    /// The guard is deliberately held across the `await`: releasing it first
+    /// would let a second test see `!done` and run the DDL again. That is what
+    /// makes this an async mutex rather than `std`'s — a `std` guard held
+    /// across an await is the shape that deadlocks as soon as two tasks on one
+    /// runtime contend for it, which is a property of the code rather than of
+    /// today's one-runtime-per-test arrangement.
+    async fn ensure_ddl(db: &dyn Executor, done: &DdlMutex<bool>, ddl: &str) {
+        let mut done = done.lock().await;
         if !*done {
             db.execute(Statement::new(ddl, vec![])).await.unwrap();
             *done = true;
@@ -341,7 +348,7 @@ mod live_engines {
     /// A fresh pool per test (sqlx pools are runtime-bound); the container
     /// and its URL are shared through keelson-sqlcheck.
     pub(crate) async fn psql_pool() -> keelson_sqlx::psql::Pool {
-        static DDL_DONE: StdMutex<bool> = StdMutex::new(false);
+        static DDL_DONE: DdlMutex<bool> = DdlMutex::const_new(false);
         // Container startup is blocking (sqlcheck's SyncRunner).
         let url = tokio::task::spawn_blocking(|| keelson_sqlcheck::live::psql_url().to_owned())
             .await
@@ -365,7 +372,7 @@ mod live_engines {
     }
 
     pub(crate) async fn mysql_pool() -> keelson_sqlx::mysql::Pool {
-        static DDL_DONE: StdMutex<bool> = StdMutex::new(false);
+        static DDL_DONE: DdlMutex<bool> = DdlMutex::const_new(false);
         let url = tokio::task::spawn_blocking(|| keelson_sqlcheck::live::mysql_url().to_owned())
             .await
             .unwrap();
