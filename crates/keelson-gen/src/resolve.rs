@@ -358,6 +358,22 @@ fn resolve_table(t: &TableDef, config: &Config) -> Result<Model> {
         .and_then(|a| a.singular.clone())
         .unwrap_or_else(|| crate::names::singular(&t.name, &config.inflections));
 
+    // A table whose name is already singular (`audit_log`, `media`, `access`)
+    // singularises to itself, and the marker and the row struct would then be
+    // the same identifier in the same module — code that does not compile.
+    // Refused here, by name, rather than emitted: the generator's contract is
+    // that what it writes builds, and the fix is one config line.
+    let marker = crate::names::pascal(&t.name);
+    let row = crate::names::pascal(&singular);
+    if marker == row {
+        return Err(GenError::Config(format!(
+            "`{name}` singularises to itself, so the model marker and the row struct would both \
+             be `{marker}` in one module. Name the row struct with `[aliases.{name}] singular = \
+             \"…\"`, or, if `{name}` is an irregular plural, map it in `[inflections]`.",
+            name = t.name,
+        )));
+    }
+
     // Columns unique on their own: a single-column UNIQUE key, or a
     // single-column primary key.
     let single_unique: BTreeSet<&str> = t
@@ -459,8 +475,8 @@ fn resolve_table(t: &TableDef, config: &Config) -> Result<Model> {
 
     Ok(Model {
         table: t.name.clone(),
-        marker: crate::names::pascal(&t.name),
-        row: crate::names::pascal(&singular),
+        marker,
+        row,
         kind: t.kind,
         writable,
         columns,

@@ -177,6 +177,36 @@ fn inflections_fix_irregular_plurals() {
     assert!(file(&files, "people.rs").contains("pub struct Person {"));
 }
 
+/// A table whose name is already singular would give the marker and the row
+/// struct the same identifier in one module. That is refused with the config
+/// line that fixes it — the alternative is emitting a file that does not
+/// compile, which the generator must never do.
+#[test]
+fn a_name_that_singularises_to_itself_is_refused_by_name() {
+    let schema = Schema {
+        tables: vec![table(
+            "audit_log",
+            vec![col("id", "INTEGER", false), col("note", "TEXT", false)],
+            &["id"],
+            vec![],
+        )],
+    };
+    let config = Config::from_toml("dialect = \"sqlite\"").unwrap();
+    let err = keelson_gen::generate_from_schema(&schema, &config).unwrap_err();
+    let msg = err.to_string();
+    assert!(msg.contains("AuditLog"), "{msg}");
+    assert!(msg.contains("[aliases.audit_log] singular"), "{msg}");
+
+    // And the named fix works.
+    let files = generate(
+        &schema,
+        "dialect = \"sqlite\"\n[aliases.audit_log]\nsingular = \"audit_entry\"",
+    );
+    let audit = file(&files, "audit_log.rs");
+    assert!(audit.contains("pub struct AuditLog;"), "{audit}");
+    assert!(audit.contains("pub struct AuditEntry {"), "{audit}");
+}
+
 #[test]
 fn no_back_referencing_suppresses_the_has_many_side_only() {
     let files = generate(
@@ -352,10 +382,10 @@ fn past_sixteen_columns_the_projection_falls_back_to_a_vec() {
         cols.push(col(&format!("c{i:02}"), "TEXT", true));
     }
     let schema = Schema {
-        tables: vec![table("wide", cols, &["id"], vec![])],
+        tables: vec![table("wides", cols, &["id"], vec![])],
     };
     let files = generate(&schema, "dialect = \"sqlite\"");
-    let wide = file(&files, "wide.rs");
+    let wide = file(&files, "wides.rs");
     assert!(wide.contains("fn all_columns() -> Vec<keelson_core::expr::Expr>"));
     assert!(wide.contains("all.push(id().expr());"));
     assert!(wide.contains("all.push(c16().expr());"));
