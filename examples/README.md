@@ -1,6 +1,6 @@
 # keelson examples
 
-Thirteen runnable programs, one topic each. Every one of them asserts its own
+Fourteen runnable programs, one topic each. Every one of them asserts its own
 output, so they are also a test suite — `./scripts/run-examples.sh` runs the
 lot, and CI does too.
 
