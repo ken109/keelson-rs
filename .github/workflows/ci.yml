@@ -1,6 +1,14 @@
 # keelson CI — the same three gates the repo enforces locally, wired into Actions.
 #
 # Job layout (all parallel):
+#   version       the workspace speaks one version, in the manifest, in every
+#                 intra-workspace dependency and in the CHANGELOG. Seconds, no
+#                 toolchain. It runs on ordinary pushes and not only at release
+#                 time on purpose: the bump lands as a normal commit, so a
+#                 half-applied one is catchable before a tag exists — which
+#                 matters because crates.io uploads cannot be taken back.
+#                 `release.yml` calls this same workflow and additionally passes
+#                 the tag, which turns the check into "and it equals the tag".
 #   fast          build + test + clippy(-D warnings) + fmt on stable, plus the
 #                 examples, which assert their own output. The grammar judges and
 #                 real SQLite run here already: rusqlite is bundled and
@@ -62,6 +70,15 @@ on:
     # Weekly full run (all jobs), Monday 03:17 UTC: catches floating docker-tag
     # and stable-toolchain drift while the repo is quiet.
     - cron: "17 3 * * 1"
+  # `release.yml` reuses these gates rather than restating them: publishing is
+  # irreversible, so it must clear at least the bar a merge does — and one
+  # definition of "correct" is easier to keep true than two.
+  workflow_call:
+    inputs:
+      expected-version:
+        type: string
+        default: ""
+        description: "Release tag's version. When set, the version job also asserts the manifest equals it."
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -71,6 +88,17 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  version:
+    name: version consistency
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      # No toolchain step: the script parses the manifests and shells out to
+      # `cargo metadata --locked`, which the runner's preinstalled cargo does
+      # without building anything.
+      - run: ./scripts/check-version-consistency.sh "${{ inputs.expected-version }}"
+
   fast:
     name: build / test / clippy / fmt (stable)
     runs-on: ubuntu-latest

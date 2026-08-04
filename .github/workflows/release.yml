@@ -1,0 +1,194 @@
+# Publish the workspace to crates.io when a GitHub Release is published.
+#
+# The eleven publishable crates share one version and depend on each other by
+# version, so they are one release and one upload — `cargo publish --workspace`
+# resolves the order and waits for the index between tiers. See
+# docs/publishing.md for the crate graph and the order it computes.
+#
+# Shape, and why:
+#
+#   tag      strips the `v` from the release tag and refuses anything that is
+#            not a semver version. Seconds, and it runs before the gates so a
+#            typo does not cost forty minutes.
+#   gates    calls ci.yml — the whole thing, engine tier included — with the
+#            tag's version, which turns its `version` job into "the manifest
+#            agrees with the tag". ci.yml already says engine acceptance must
+#            gate a *merge*; an upload that can never be taken back does not get
+#            a lower bar. Reusing the workflow rather than restating the steps
+#            keeps one definition of correct.
+#   publish  the only job with `id-token: write`, and the only one bound to the
+#            `crates-io` environment. Trusted Publishing exchanges GitHub's OIDC
+#            token for a crates.io token that is scoped to this workflow in this
+#            environment and revoked when the job ends, so no long-lived
+#            registry token exists in this repository to leak.
+#   summary  reports what is actually on crates.io and docs.rs afterwards,
+#            passing or failing. It is the recovery instrument: see below.
+#
+# **Partial publishes need a human.** Measured on cargo 1.97.1: a
+# `cargo publish --workspace` that fails partway — a 429 from crates.io's
+# new-crate rate limit is the way this really happens — stops and leaves the
+# rest unpublished, and re-running is *not* safe, because cargo does not skip
+# versions that are already on the registry. It re-uploads them and crates.io
+# rejects each with "already uploaded". So this workflow does not retry, and
+# re-running it will not fix a partial publish. The `summary` job runs on
+# failure precisely so the state is legible: it prints which crates landed and
+# the exact `cargo publish -p <crate>` lines to finish the rest by hand.
+
+name: Release
+
+on:
+  release:
+    types: [published]
+
+# Never cancel a run that might be mid-upload: a cancelled publish is exactly
+# the partial state described above.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  tag:
+    name: read the tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.read.outputs.version }}
+    steps:
+      - name: Strip the v and check it is a version
+        id: read
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          version="${TAG#v}"
+          # Pre-release tags (v0.2.0-rc.1) are allowed: this crate is pre-1.0 and
+          # the API is expected to move, so a release candidate is a real need.
+          if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "::error::tag '$TAG' is not a version — expected vMAJOR.MINOR.PATCH[-prerelease]"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "releasing $version (from tag $TAG)"
+
+  gates:
+    name: gates
+    needs: tag
+    uses: ./.github/workflows/ci.yml
+    with:
+      expected-version: ${{ needs.tag.outputs.version }}
+
+  publish:
+    name: cargo publish --workspace
+    needs: [tag, gates]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment:
+      name: crates-io
+      url: https://crates.io/crates/keelson
+    permissions:
+      contents: read
+      # Required for Trusted Publishing: lets the job ask GitHub for the signed
+      # OIDC token that crates.io exchanges for a short-lived registry token.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Authenticate with crates.io (Trusted Publishing)
+        id: auth
+        uses: rust-lang/crates-io-auth-action@v1
+
+      # --locked so the release resolves exactly what the gates built. The
+      # publish=false members (keelson-sqlcheck, keelson-examples) are skipped by
+      # cargo itself; docs/publishing.md explains why each is unpublishable.
+      - name: Publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: cargo publish --workspace --locked
+
+  summary:
+    name: report what landed
+    needs: [tag, publish]
+    if: always() && needs.tag.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check crates.io and docs.rs, and write the summary
+        env:
+          VERSION: ${{ needs.tag.outputs.version }}
+          PUBLISH_RESULT: ${{ needs.publish.result }}
+        run: |
+          UA="keelson-release (github.com/ken109/keelson-rs)"
+
+          # Take the crate list from cargo, not from a list in this file, so it
+          # cannot drift as crates are added or become publish = false.
+          # `publish is None` is cargo's "no restriction"; publish = false shows
+          # up as an empty list, which is how sqlcheck and examples drop out.
+          CRATES=()
+          while IFS= read -r name; do CRATES+=("$name"); done < <(
+            cargo metadata --no-deps --format-version 1 \
+              | python3 -c 'import json,sys; [print(p["name"]) for p in sorted(json.load(sys.stdin)["packages"], key=lambda p: p["name"]) if p.get("publish") is None]'
+          )
+
+          echo "## keelson $VERSION" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| crate | crates.io | docs.rs |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|---|" >> "$GITHUB_STEP_SUMMARY"
+
+          missing=()
+          for c in "${CRATES[@]}"; do
+            if curl -sf --max-time 20 -A "$UA" "https://crates.io/api/v1/crates/$c/$VERSION" -o /dev/null; then
+              on_registry="published"
+            else
+              on_registry="**missing**"
+              missing+=("$c")
+            fi
+
+            # docs.rs builds asynchronously and is often still queued when this
+            # runs. Report that honestly rather than calling it a failure.
+            code=$(curl -sL --max-time 25 -A "$UA" -o /tmp/d.html -w '%{http_code}' "https://docs.rs/$c/$VERSION/" || echo 000)
+            if [ "$code" = "200" ] && ! grep -qi "failed to build" /tmp/d.html; then
+              docs="built"
+            elif [ "$code" = "200" ]; then
+              docs="**build failed**"
+            else
+              docs="queued"
+            fi
+
+            echo "| \`$c\` | $on_registry | $docs |" >> "$GITHUB_STEP_SUMMARY"
+          done
+
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "${#missing[@]}" -eq 0 ]; then
+            echo "All ${#CRATES[@]} crates are on crates.io." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          # The partial-publish case. Re-running this workflow will not help —
+          # cargo re-uploads what is already there and crates.io rejects it — so
+          # hand over the exact commands instead of a retry button.
+          {
+            echo "### ${#missing[@]} crate(s) did not publish"
+            echo ""
+            echo "Re-running this workflow will **not** fix it: \`cargo publish --workspace\`"
+            echo "does not skip versions already on the registry. Finish from a clean"
+            echo "checkout of the tag, in this order:"
+            echo ""
+            echo '```sh'
+            for c in "${missing[@]}"; do echo "cargo publish -p $c --locked"; done
+            echo '```'
+            echo ""
+            echo "crates.io rate-limits *new* crate names to roughly one per ten minutes"
+            echo "after a burst; a 429 here is expected to need waiting, not fixing."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$PUBLISH_RESULT" = "success" ]; then
+            echo "::error::publish reported success but ${#missing[@]} crate(s) are not on crates.io"
+          fi
+          exit 1

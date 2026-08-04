@@ -154,25 +154,54 @@ application would actually write. CI runs it on every pull request.
 ## Cutting a release
 
 `0.1.0` was the first, published on 2026-08-04; all eleven names were
-unregistered until that upload claimed them.
+unregistered until that upload claimed them. Everything since is done by
+`.github/workflows/release.yml`, which fires when a GitHub Release is
+published. The human part is two commands and a paragraph:
 
-1. **Bump the version.** One version for the whole workspace — the crates are
-   released together and depend on each other by version — set in
-   `[workspace.package]` **and** in the `version` of each
-   `[workspace.dependencies]` entry, which is the requirement the packaged
-   manifests carry. `keelson-sqlcheck` is the one entry with no version, and
-   stays that way.
-2. **Write the `CHANGELOG.md` entry** for the new version.
-3. **Verify the packages** with the clean-target command above. It builds every
-   tarball in isolation, which is the only check that catches a missing file or
-   missing registry metadata.
-4. **`cargo publish`, in the order above**, one crate at a time, waiting for the
-   index to catch up between steps. A crate cannot be published until
-   everything it depends on is live.
-5. **Check docs.rs after the upload.** Each crate declares what docs.rs should
-   build it with (`[package.metadata.docs.rs]`); local `cargo doc --no-deps`
-   exercises that declaration, but only the real docs.rs build proves it.
+```sh
+cargo set-version --workspace 0.2.0   # [workspace.package] + all ten deps + Cargo.lock
+$EDITOR CHANGELOG.md                  # add `## [0.2.0]`
+```
 
-Note that crates.io uploads are permanent: `cargo yank` withdraws a version
-from *new* dependency resolution, but never deletes it, and a version number
-can never be reused.
+Commit both and push to `main`. `./scripts/check-version-consistency.sh` runs
+on that push and fails if the version is half-applied, if `keelson-sqlcheck`
+grew a version it must not have, if the CHANGELOG has no section for it, or if
+`Cargo.lock` is stale — so a bad bump is caught while it is still a commit and
+not yet a tag.
+
+Then publish a GitHub Release with the tag `v0.2.0`. The workflow:
+
+1. reads the version out of the tag and refuses anything that is not semver;
+2. runs **all** of `ci.yml` at that tag — engine tier included — with the tag's
+   version, so the version check becomes "and the manifest agrees with the tag".
+   Publishing is irreversible, so it does not get a lower bar than a merge;
+3. exchanges GitHub's OIDC token for a short-lived crates.io token
+   (Trusted Publishing, scoped to this workflow in the `crates-io` environment)
+   and runs `cargo publish --workspace --locked`;
+4. reports every crate's state on crates.io and docs.rs into the job summary.
+
+Two things that follow from the registry rather than from choice:
+
+**Uploads are permanent.** `cargo yank` withdraws a version from *new*
+dependency resolution but never deletes it, and a version number can never be
+reused.
+
+**A partial publish needs a human.** Measured on cargo 1.97.1:
+`cargo publish --workspace` stops where it fails and leaves the rest
+unpublished, and re-running it is *not* a fix — cargo does not skip versions
+already on the registry, so it re-uploads them and crates.io rejects each one.
+The realistic cause is crates.io's rate limit; it is severe for *new* crate
+names (a burst of about five, then roughly one per ten minutes, which is what
+the first release spent an hour on) and mild for new versions of existing
+crates. The `summary` job exists for this: it lists what landed and prints the
+`cargo publish -p <crate> --locked` lines to finish the rest by hand, in
+dependency order.
+
+### Trusted Publishing
+
+No registry token exists in this repository. Each of the eleven crates has a
+trusted publisher configured at
+`https://crates.io/crates/<name>/settings/new-trusted-publisher`, naming the
+repository `ken109/keelson-rs`, the workflow `release.yml`, and the environment
+`crates-io`. Adding a crate to the workspace means adding one there too, or its
+first publish will fail authentication.
