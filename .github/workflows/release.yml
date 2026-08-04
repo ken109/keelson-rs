@@ -39,6 +39,12 @@ name: Release
 on:
   release:
     types: [published]
+  # Rehearsal. Runs everything a real release runs — including the OIDC exchange
+  # with crates.io, which is the part that no local check can reach — but stops
+  # at `--dry-run` and uploads nothing. A dispatch can never publish: a publish
+  # has to correspond to a Release, and this is the only way to prove the
+  # trusted-publishing setup without spending a version to find out.
+  workflow_dispatch:
 
 # Never cancel a run that might be mid-upload: a cancelled publish is exactly
 # the partial state described above.
@@ -57,20 +63,30 @@ jobs:
     outputs:
       version: ${{ steps.read.outputs.version }}
     steps:
+      - uses: actions/checkout@v4
       - name: Strip the v and check it is a version
         id: read
         env:
           TAG: ${{ github.event.release.tag_name }}
+          EVENT: ${{ github.event_name }}
         run: |
-          version="${TAG#v}"
-          # Pre-release tags (v0.2.0-rc.1) are allowed: this crate is pre-1.0 and
-          # the API is expected to move, so a release candidate is a real need.
-          if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
-            echo "::error::tag '$TAG' is not a version — expected vMAJOR.MINOR.PATCH[-prerelease]"
-            exit 1
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            # A rehearsal has no tag, so the manifest is the only version there
+            # is — which makes the gates' version check trivially true, and that
+            # is fine: the point of a rehearsal is the handshake, not the tag.
+            version=$(python3 -c "import tomllib,pathlib; print(tomllib.loads(pathlib.Path('Cargo.toml').read_text())['workspace']['package']['version'])")
+            echo "rehearsal for $version (from the manifest) — nothing will be uploaded"
+          else
+            version="${TAG#v}"
+            # Pre-release tags (v0.2.0-rc.1) are allowed: this crate is pre-1.0 and
+            # the API is expected to move, so a release candidate is a real need.
+            if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+              echo "::error::tag '$TAG' is not a version — expected vMAJOR.MINOR.PATCH[-prerelease]"
+              exit 1
+            fi
+            echo "releasing $version (from tag $TAG)"
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "releasing $version (from tag $TAG)"
 
   gates:
     name: gates
@@ -107,12 +123,22 @@ jobs:
       - name: Publish
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
-        run: cargo publish --workspace --locked
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            echo "rehearsal: the crates.io token was issued, so the trusted publisher"
+            echo "for this repository / workflow / environment matched. Stopping short"
+            echo "of the upload."
+            cargo publish --workspace --locked --dry-run
+          else
+            cargo publish --workspace --locked
+          fi
 
   summary:
     name: report what landed
     needs: [tag, publish]
-    if: always() && needs.tag.result == 'success'
+    # Nothing was uploaded in a rehearsal, so there is no landing to report.
+    if: always() && needs.tag.result == 'success' && github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
