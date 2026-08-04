@@ -205,3 +205,19 @@ trusted publisher configured at
 repository `ken109/keelson-rs`, the workflow `release.yml`, and the environment
 `crates-io`. Adding a crate to the workspace means adding one there too, or its
 first publish will fail authentication.
+
+Nothing local can check that: crates.io refuses to show the configuration to a
+publish token. So `release.yml` also answers to `workflow_dispatch`, which runs
+the entire path — gates, the OIDC exchange, packaging — and stops at
+`--dry-run`. Run it after changing anything about the setup:
+
+```sh
+gh workflow run release.yml
+```
+
+A token in the log (`Retrieved token successfully`) proves the
+repository/workflow/environment triple matches. It does **not** prove all
+eleven crates carry it: the token is issued when *any* configuration matches,
+and it is scoped to the crates that do. A crate whose configuration is missing
+or mistyped fails at its own upload during a real release, and the `summary`
+job names it.
