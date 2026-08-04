@@ -3,10 +3,13 @@ resolver = "3"
 # `examples` is a member so the runnable examples are built and linted by the
 # same `cargo clippy --workspace --all-targets` gate as the crates. It is
 # `publish = false`, so `cargo package --workspace` skips it.
-members = ["crates/*", "examples"]
+# `tests/facade-consumer` depends on the `keelson` facade and nothing else,
+# which is the one dependency shape no other member has — and the one the
+# README advertises. It is `publish = false`.
+members = ["crates/*", "examples", "tests/facade-consumer"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 rust-version = "1.90"
 license = "MIT"
@@ -19,17 +22,17 @@ authors = ["Kensuke Kubo"]
 # drops the path. The one exception is keelson-sqlcheck — `publish = false`, and
 # used only as a dev-dependency, which cargo strips from a packaged manifest
 # when (and only when) it has no version to keep.
-keelson-core = { path = "crates/keelson-core", version = "0.1.0" }
-keelson-exec = { path = "crates/keelson-exec", version = "0.1.0" }
-keelson-factory = { path = "crates/keelson-factory", version = "0.1.0" }
-keelson-gen = { path = "crates/keelson-gen", version = "0.1.0" }
-keelson-macros = { path = "crates/keelson-macros", version = "0.1.0" }
-keelson-models = { path = "crates/keelson-models", version = "0.1.0" }
+keelson-core = { path = "crates/keelson-core", version = "0.1.1" }
+keelson-exec = { path = "crates/keelson-exec", version = "0.1.1" }
+keelson-factory = { path = "crates/keelson-factory", version = "0.1.1" }
+keelson-gen = { path = "crates/keelson-gen", version = "0.1.1" }
+keelson-macros = { path = "crates/keelson-macros", version = "0.1.1" }
+keelson-models = { path = "crates/keelson-models", version = "0.1.1" }
 keelson-sqlcheck = { path = "crates/keelson-sqlcheck" }
-keelson-sqlx = { path = "crates/keelson-sqlx", version = "0.1.0" }
-keelson-mysql = { path = "crates/keelson-mysql", version = "0.1.0" }
-keelson-psql = { path = "crates/keelson-psql", version = "0.1.0" }
-keelson-sqlite = { path = "crates/keelson-sqlite", version = "0.1.0" }
+keelson-sqlx = { path = "crates/keelson-sqlx", version = "0.1.1" }
+keelson-mysql = { path = "crates/keelson-mysql", version = "0.1.1" }
+keelson-psql = { path = "crates/keelson-psql", version = "0.1.1" }
+keelson-sqlite = { path = "crates/keelson-sqlite", version = "0.1.1" }
 
 pg_query = "6"
 proptest = "1"
@@ -51,6 +54,9 @@ serde_json = "1"
 # keelson-gen's emission pipeline (build TokenStreams with quote, format with
 # prettyplease) and its TOML configuration. `syn` needs `full` because
 # prettyplease prints whole files, and generated bodies contain closures.
+# Resolves the caller's name for a crate, so the derives can point at
+# `keelson-exec` directly or at `keelson::exec` through the facade.
+proc-macro-crate = "3"
 proc-macro2 = "1"
 quote = "1"
 syn = { version = "2", default-features = false, features = ["full", "parsing", "printing", "clone-impls", "proc-macro"] }

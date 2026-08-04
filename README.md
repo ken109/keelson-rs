@@ -7,7 +7,7 @@ files turned into typed code. Four layers, adopted one at a time or all at once.
 > **Maturity: pre-1.0, and honest about it.** keelson is new. The four layers
 > are implemented and heavily tested against real PostgreSQL, MySQL and SQLite,
 > but nothing here has run in production yet and the API *will* change. `0.1.0`
-> is the first release. Read the [Stability](#stability) section before
+> was the first release. Read the [Stability](#stability) section before
 > depending on it.
 
 - **License:** MIT
@@ -219,7 +219,7 @@ feature:
 
 ```toml
 [dependencies]
-keelson = { version = "0.1.0", features = ["sqlx-psql", "models", "macros"] }
+keelson = { version = "0.1.1", features = ["sqlx-psql", "models", "macros"] }
 ```
 
 `keelson` is a facade: it re-exports the individual crates and nothing else, so
@@ -287,8 +287,8 @@ owning.
 
 ## Stability
 
-- **Version 0.1.0, the first release.** Published to crates.io; nothing has run
-  in production yet.
+- **Version 0.1.1.** Published to crates.io; nothing has run in production
+  yet.
 - **The API will change.** Layer 1's shape is the most settled; Layer 3 and
   Layer 4's generated surfaces are the most likely to move. Pin exactly, read
   the diff of regenerated files.

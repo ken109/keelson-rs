@@ -140,7 +140,7 @@ jobs:
       # `cargo package --workspace` would otherwise package anyway; see
       # docs/publishing.md.
       - name: package the publishable set
-        run: cargo package --workspace --exclude keelson-sqlcheck --exclude keelson-examples --allow-dirty
+        run: cargo package --workspace --exclude keelson-sqlcheck --exclude keelson-examples --exclude keelson-facade-consumer --allow-dirty
 
   coverage-gate:
     name: sqlcheck coverage gate (Tier D)

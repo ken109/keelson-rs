@@ -8,6 +8,32 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 — with the pre-1.0 caveat that a `0.x` minor bump is allowed to break.
 
+## [0.1.1] — 2026-08-05
+
+### Fixed
+
+- **`#[derive(FromRow)]` and `#[derive(Bind)]` now compile for a crate that
+  depends only on the `keelson` facade.** Both expanded to `::keelson_exec` and
+  `::keelson_core`, which do not resolve when those crates are transitive — so
+  the one-line dependency the README advertises, together with the derives that
+  same README demonstrates, did not build. The derives now resolve the path
+  from the caller's own manifest (`proc-macro-crate`): `::keelson_exec` for a
+  crate that depends on it directly, `::keelson::exec` for one that took the
+  facade, and the caller's own name for a renamed dependency.
+
+  If you worked around this by adding `keelson-core` or `keelson-exec` to your
+  `Cargo.toml`, you can drop them again — though keeping them is harmless, and
+  generated code still names them directly on purpose.
+
+### Added
+
+- `tests/facade-consumer`, an unpublished workspace member that depends on
+  `keelson` and nothing else. Every other compilation context here has the
+  inner crates for reasons of its own — dev-dependencies in the macro crate,
+  generated code in the examples crate, the package's own dependencies in an
+  integration test — so none of them could see the bug above. This one is the
+  seat a new reader sits in, and it is now part of `cargo test --workspace`.
+
 ## [0.1.0] — 2026-08-04
 
 The first release. Everything below already existed and was tested; this
@@ -60,4 +86,5 @@ version is the point at which it became installable.
   container runtime, and reads the repository's `tests/schema/` through
   `include_str!`.
 
+[0.1.1]: https://github.com/ken109/keelson-rs/releases/tag/v0.1.1
 [0.1.0]: https://github.com/ken109/keelson-rs/releases/tag/v0.1.0

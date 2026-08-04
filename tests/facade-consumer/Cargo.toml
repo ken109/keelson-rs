@@ -1,0 +1,34 @@
+[package]
+name = "keelson-facade-consumer"
+description = "Compiles what the README tells a new user to write, from a package that depends on the facade and nothing else. Not published."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+# The whole point of this package is the shortness of this list. `keelson` and
+# nothing else — the dependency line the README advertises. The inner crates
+# are transitive here, so they are *not* in the extern prelude, and anything
+# the derives emit as `::keelson_exec::…` fails to resolve.
+#
+# Every other compilation context in this workspace has the inner crates for
+# its own reasons: keelson-macros takes them as dev-dependencies to test the
+# derives against the real traits, the examples crate takes them because
+# generated code names them directly, and an integration test inside the facade
+# gets the facade's own dependencies. So none of them can catch this, and
+# 0.1.0 shipped with both derives broken for exactly this dependency line.
+[dependencies]
+keelson = { path = "../../crates/keelson", features = [
+    "sqlx-sqlite",
+    "models",
+    "macros",
+] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true

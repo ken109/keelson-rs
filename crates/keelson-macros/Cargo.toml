@@ -15,6 +15,7 @@ categories = ["database"]
 proc-macro = true
 
 [dependencies]
+proc-macro-crate.workspace = true
 proc-macro2.workspace = true
 quote.workspace = true
 # `derive` (the input shapes) plus `parsing`/`printing` (parse the item, print

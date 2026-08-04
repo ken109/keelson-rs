@@ -1,12 +1,13 @@
 # Publishing
 
 What the workspace looks like from crates.io's side: which crates ship, in what
-order they can be published, how packaging is verified, and what is still
-missing before a first release.
+order they can be published, how packaging is verified, and how a release is
+cut.
 
 ## The crates
 
-Eleven crates ship; one does not.
+Eleven crates ship. Three members do not: `keelson-sqlcheck`,
+`keelson-examples`, and `keelson-facade-consumer`.
 
 | crate | ships | what a user gets from it |
 | --- | --- | --- |
@@ -28,6 +29,15 @@ output, it depends on three parsers and a container runtime, and it reads the
 shared schema from the repository's `tests/schema/` directory through
 `include_str!` — paths that only resolve inside a checkout. It is a
 dev-dependency of eight crates and of nothing a user builds.
+
+`keelson-facade-consumer` (`tests/facade-consumer`) is unpublished for a
+different reason: it is a *reader*, not a library. It depends on `keelson` and
+nothing else, which is the dependency line the README advertises and the one
+shape no other member has — the macro crate takes the inner crates as
+dev-dependencies, the examples crate takes them because generated code names
+them directly, and even an integration test inside the facade inherits the
+facade's own dependencies. 0.1.0 shipped with both derives unusable from that
+seat because nothing here sat in it.
 
 ## Dependency order
 
@@ -82,7 +92,7 @@ dependencies carry `version` beside `path`, which `cargo package` requires.
 ## Verifying a package before publishing
 
 ```sh
-cargo package --workspace --exclude keelson-sqlcheck --exclude keelson-examples --allow-dirty
+cargo package --workspace --exclude keelson-sqlcheck --exclude keelson-examples --exclude keelson-facade-consumer --allow-dirty
 ```
 
 This packages each crate into `target/package/*.crate` and then *builds* each
@@ -93,10 +103,11 @@ the package directory), and metadata a registry requires.
 
 The `--exclude`s are not optional: `cargo package --workspace` packages
 `publish = false` crates too. `keelson-sqlcheck` cannot survive the trip for
-the `include_str!` reason above, and `keelson-examples` depends on `keelson` by
-path alone — deliberately, since it is the repository's own examples and there
-is no released version for it to name. Excluding both verifies exactly the set
-that would be published.
+the `include_str!` reason above; `keelson-examples` and
+`keelson-facade-consumer` both depend on `keelson` by path alone —
+deliberately, since they exist to compile against *this* checkout and there is
+no released version for them to name. Excluding the three verifies exactly the
+set that would be published.
 
 Every published crate carries `description`, `license`, `repository` and
 `authors`; the first three are what crates.io rejects an upload for.
@@ -110,7 +121,7 @@ artifacts and fail on a symbol that is plainly there — or, worse, pass on one
 that is not. The fix is a clean target directory:
 
 ```sh
-CARGO_TARGET_DIR=$(mktemp -d) cargo package --workspace --exclude keelson-sqlcheck --exclude keelson-examples --allow-dirty
+CARGO_TARGET_DIR=$(mktemp -d) cargo package --workspace --exclude keelson-sqlcheck --exclude keelson-examples --exclude keelson-facade-consumer --allow-dirty
 ```
 
 CI is unaffected — a fresh runner has nothing to reuse — and so is the real

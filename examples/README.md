@@ -110,7 +110,7 @@ The Layer 1 examples already build PostgreSQL and MySQL statements. To *run*
 against one, the change is a feature and a pool type:
 
 ```toml
-keelson = { version = "0.1.0", features = ["sqlx-psql", "models"] }
+keelson = { version = "0.1.1", features = ["sqlx-psql", "models"] }
 ```
 
 ```rust

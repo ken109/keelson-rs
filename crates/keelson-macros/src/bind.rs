@@ -56,6 +56,9 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
     } = field.expect("no error means a field");
 
     let name = &input.ident;
+    // Resolved per call site: `::keelson_core` for a direct dependant,
+    // `::keelson::core` for one that only took the facade. See krate.rs.
+    let core_path = crate::krate::core();
     let mut generics = input.generics.clone();
     // A concrete inner type needs no bound: the failure then lands on the
     // field's own type, which is where a user can fix it. A generic one does,
@@ -65,7 +68,7 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
         generics
             .make_where_clause()
             .predicates
-            .push(syn::parse_quote!(#ty: ::keelson_core::ToValue + ::keelson_core::FromValue));
+            .push(syn::parse_quote!(#ty: #core_path::ToValue + #core_path::FromValue));
     }
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
@@ -76,18 +79,18 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
 
     Ok(quote! {
         #[automatically_derived]
-        impl #impl_generics ::keelson_core::ToValue for #name #ty_generics #where_clause {
-            fn to_value(self) -> ::keelson_core::Value {
-                <#ty as ::keelson_core::ToValue>::to_value(self.#member)
+        impl #impl_generics #core_path::ToValue for #name #ty_generics #where_clause {
+            fn to_value(self) -> #core_path::Value {
+                <#ty as #core_path::ToValue>::to_value(self.#member)
             }
         }
 
         #[automatically_derived]
-        impl #impl_generics ::keelson_core::FromValue for #name #ty_generics #where_clause {
+        impl #impl_generics #core_path::FromValue for #name #ty_generics #where_clause {
             fn from_value(
-                value: ::keelson_core::Value,
-            ) -> ::core::result::Result<Self, ::keelson_core::Error> {
-                <#ty as ::keelson_core::FromValue>::from_value(value)
+                value: #core_path::Value,
+            ) -> ::core::result::Result<Self, #core_path::Error> {
+                <#ty as #core_path::FromValue>::from_value(value)
                     .map(|inner| #construct)
             }
         }

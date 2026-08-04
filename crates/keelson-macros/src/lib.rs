@@ -215,23 +215,33 @@
 //! Nothing is imported into your scope, and nothing you write must be: every
 //! path the expansion names is absolute.
 //!
-//! - `#[derive(Bind)]` names only `::keelson_core` (`ToValue`, `FromValue`,
+//! - `#[derive(Bind)]` names only keelson-core (`ToValue`, `FromValue`,
 //!   `Value`, `Error`).
-//! - `#[derive(FromRow)]` names only `::keelson_exec` (`FromRow`, `Row`,
-//!   `ExecError`) — plus `::keelson_core` in the one case where a bound must
-//!   be written out: a *generic* struct, whose emitted `where` clause says
-//!   `FieldTy: ::keelson_core::FromValue`. A generic `FromRow` struct
-//!   therefore needs keelson-core in its dependencies; a non-generic one does
-//!   not.
+//! - `#[derive(FromRow)]` names only keelson-exec (`FromRow`, `Row`,
+//!   `ExecError`) — plus keelson-core in the one case where a bound must be
+//!   written out: a *generic* struct, whose emitted `where` clause says
+//!   `FieldTy: FromValue`.
 //!
-//! Both crates are dependencies you already have — `FromRow` cannot exist
-//! without keelson-exec, and keelson-exec depends on keelson-core.
+//! **Which spelling those become is decided per call site.** A crate that
+//! depends on keelson-core or keelson-exec directly gets `::keelson_core` and
+//! `::keelson_exec`. A crate that depends only on the `keelson` facade gets
+//! `::keelson::core` and `::keelson::exec`, because a transitive dependency is
+//! not in the extern prelude and the direct spelling would not resolve there.
+//! `proc_macro_crate` reads the caller's manifest to tell those apart, so a
+//! renamed dependency works too.
+//!
+//! This was wrong in 0.1.0, which always emitted the direct spelling and so
+//! broke both derives for exactly the one-line dependency the facade
+//! advertises. `tests/facade-consumer` is the package that now compiles from
+//! that seat; every other context in the workspace has the inner crates for
+//! reasons of its own and cannot catch it.
 
 #![warn(missing_docs)]
 
 mod attr;
 mod bind;
 mod from_row;
+mod krate;
 mod sql;
 
 use proc_macro::TokenStream;

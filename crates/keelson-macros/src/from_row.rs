@@ -12,6 +12,10 @@ use syn::{Data, DeriveInput, Error, Fields, Result};
 use crate::attr::{combine, field_options, reject_lifetimes};
 
 pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
+    // Resolved per call site: the inner crates for a direct dependant, the
+    // facade's re-exports for one that only took `keelson`. See krate.rs.
+    let core_path = crate::krate::core();
+    let exec_path = crate::krate::exec();
     let mut errors: Option<Error> = None;
 
     let named_type = input.ident.to_string();
@@ -81,7 +85,7 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
                 // impl does the work and the columns it consumes are its own
                 // business.
                 inits.push(quote! {
-                    #ident: <#ty as ::keelson_exec::FromRow>::from_row(row)?
+                    #ident: <#ty as #exec_path::FromRow>::from_row(row)?
                 });
             }
             (None, rename) => {
@@ -117,7 +121,7 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
                 }
                 taken.push((column.clone(), ident.clone(), span));
                 inits.push(quote! {
-                    #ident: ::keelson_exec::Row::take::<#ty>(row, #column)?
+                    #ident: #exec_path::Row::take::<#ty>(row, #column)?
                 });
             }
         }
@@ -139,9 +143,9 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
             let ty = &field.ty;
             let opts = field_options(&field.attrs).unwrap_or_default();
             let predicate: syn::WherePredicate = if opts.flatten.is_some() {
-                syn::parse_quote!(#ty: ::keelson_exec::FromRow)
+                syn::parse_quote!(#ty: #exec_path::FromRow)
             } else {
-                syn::parse_quote!(#ty: ::keelson_core::FromValue)
+                syn::parse_quote!(#ty: #core_path::FromValue)
             };
             let key = quote!(#predicate).to_string();
             if !seen.contains(&key) {
@@ -154,10 +158,10 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
 
     Ok(quote! {
         #[automatically_derived]
-        impl #impl_generics ::keelson_exec::FromRow for #name #ty_generics #where_clause {
+        impl #impl_generics #exec_path::FromRow for #name #ty_generics #where_clause {
             fn from_row(
-                row: &mut ::keelson_exec::Row,
-            ) -> ::core::result::Result<Self, ::keelson_exec::ExecError> {
+                row: &mut #exec_path::Row,
+            ) -> ::core::result::Result<Self, #exec_path::ExecError> {
                 ::core::result::Result::Ok(#name {
                     #(#inits,)*
                 })
