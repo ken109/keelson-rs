@@ -6,7 +6,7 @@ resolver = "3"
 members = ["crates/*", "examples"]
 
 [workspace.package]
-version = "0.0.0"
+version = "0.1.0"
 edition = "2024"
 rust-version = "1.90"
 license = "MIT"
@@ -19,17 +19,17 @@ authors = ["Kensuke Kubo"]
 # drops the path. The one exception is keelson-sqlcheck — `publish = false`, and
 # used only as a dev-dependency, which cargo strips from a packaged manifest
 # when (and only when) it has no version to keep.
-keelson-core = { path = "crates/keelson-core", version = "0.0.0" }
-keelson-exec = { path = "crates/keelson-exec", version = "0.0.0" }
-keelson-factory = { path = "crates/keelson-factory", version = "0.0.0" }
-keelson-gen = { path = "crates/keelson-gen", version = "0.0.0" }
-keelson-macros = { path = "crates/keelson-macros", version = "0.0.0" }
-keelson-models = { path = "crates/keelson-models", version = "0.0.0" }
+keelson-core = { path = "crates/keelson-core", version = "0.1.0" }
+keelson-exec = { path = "crates/keelson-exec", version = "0.1.0" }
+keelson-factory = { path = "crates/keelson-factory", version = "0.1.0" }
+keelson-gen = { path = "crates/keelson-gen", version = "0.1.0" }
+keelson-macros = { path = "crates/keelson-macros", version = "0.1.0" }
+keelson-models = { path = "crates/keelson-models", version = "0.1.0" }
 keelson-sqlcheck = { path = "crates/keelson-sqlcheck" }
-keelson-sqlx = { path = "crates/keelson-sqlx", version = "0.0.0" }
-keelson-mysql = { path = "crates/keelson-mysql", version = "0.0.0" }
-keelson-psql = { path = "crates/keelson-psql", version = "0.0.0" }
-keelson-sqlite = { path = "crates/keelson-sqlite", version = "0.0.0" }
+keelson-sqlx = { path = "crates/keelson-sqlx", version = "0.1.0" }
+keelson-mysql = { path = "crates/keelson-mysql", version = "0.1.0" }
+keelson-psql = { path = "crates/keelson-psql", version = "0.1.0" }
+keelson-sqlite = { path = "crates/keelson-sqlite", version = "0.1.0" }
 
 pg_query = "6"
 proptest = "1"

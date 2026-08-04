@@ -103,11 +103,11 @@ Every published crate carries `description`, `license`, `repository` and
 
 **Run it twice locally and the second run can lie.** Verification builds each
 tarball as a *registry* dependency, and cargo treats a registry package as
-immutable: the build fingerprint is keyed on name and version, and this
-workspace's version never moves off `0.0.0`. So a second `cargo package` after
-a source change can link the first run's artifacts and fail on a symbol that is
-plainly there — or, worse, pass on one that is not. The fix is a clean target
-directory:
+immutable: the build fingerprint is keyed on name and version, and the
+workspace version only moves when a release is cut. So within one release
+cycle, a second `cargo package` after a source change can link the first run's
+artifacts and fail on a symbol that is plainly there — or, worse, pass on one
+that is not. The fix is a clean target directory:
 
 ```sh
 CARGO_TARGET_DIR=$(mktemp -d) cargo package --workspace --exclude keelson-sqlcheck --exclude keelson-examples --allow-dirty
@@ -151,22 +151,28 @@ by
 which compiles the empty set, every feature alone, and the combinations an
 application would actually write. CI runs it on every pull request.
 
-## What still has to happen before a first release
+## Cutting a release
 
-- **A version.** Everything is `0.0.0`, which is a placeholder, not a release.
-  One version for the whole workspace — they are released together and depend
-  on each other by version — bumped in `[workspace.package]` **and** in the
-  `version = "0.0.0"` of each `[workspace.dependencies]` entry, which is the
-  requirement the packaged manifests carry.
-- **A `CHANGELOG.md`**, starting at the first released version.
-- **Ownership and naming.** All eleven names were unregistered on crates.io
-  when this document was written (every `GET /api/v1/crates/<name>` answered
-  404). Nothing reserves them: the first upload claims each one, and until then
-  anybody else can.
-- **`cargo publish`, in the order above**, one crate at a time, waiting for the
-  index to catch up between steps. Nothing in this repository has ever run
-  `cargo publish`.
-- **docs.rs check after the first upload.** Each crate declares what docs.rs
-  should build it with (`[package.metadata.docs.rs]`); that declaration has
-  been exercised locally with `cargo doc --no-deps` per feature set, but only
-  the real docs.rs build proves it.
+`0.1.0` was the first, published on 2026-08-04; all eleven names were
+unregistered until that upload claimed them.
+
+1. **Bump the version.** One version for the whole workspace — the crates are
+   released together and depend on each other by version — set in
+   `[workspace.package]` **and** in the `version` of each
+   `[workspace.dependencies]` entry, which is the requirement the packaged
+   manifests carry. `keelson-sqlcheck` is the one entry with no version, and
+   stays that way.
+2. **Write the `CHANGELOG.md` entry** for the new version.
+3. **Verify the packages** with the clean-target command above. It builds every
+   tarball in isolation, which is the only check that catches a missing file or
+   missing registry metadata.
+4. **`cargo publish`, in the order above**, one crate at a time, waiting for the
+   index to catch up between steps. A crate cannot be published until
+   everything it depends on is live.
+5. **Check docs.rs after the upload.** Each crate declares what docs.rs should
+   build it with (`[package.metadata.docs.rs]`); local `cargo doc --no-deps`
+   exercises that declaration, but only the real docs.rs build proves it.
+
+Note that crates.io uploads are permanent: `cargo yank` withdraws a version
+from *new* dependency resolution, but never deletes it, and a version number
+can never be reused.
