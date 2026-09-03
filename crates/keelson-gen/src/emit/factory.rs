@@ -67,7 +67,7 @@ use quote::{format_ident, quote};
 use crate::config::Config;
 use crate::error::{GenError, Result};
 use crate::names::ident;
-use crate::resolve::{BelongsTo, Model, ModelColumn};
+use crate::resolve::{BelongsTo, HasMany, Model, ModelColumn};
 use crate::rust_types::{is_copy, key_access, parse_type};
 use crate::schema::TableKind;
 
@@ -214,6 +214,378 @@ fn template_name(m: &Model) -> proc_macro2::Ident {
     format_ident!("{}Template", m.row)
 }
 
+/// What one back-reference contributes to its table's factory module.
+#[derive(Default)]
+struct ChildParts {
+    /// The `Vec<child template>` field, absent for a `SELECT`-only child.
+    field: Option<TokenStream>,
+    /// The step that creates those children after the parent row exists.
+    child_step: Option<TokenStream>,
+    /// The `with_new_…` mod.
+    mods: Vec<TokenStream>,
+    /// Every fn name generated here, for the collision check.
+    fn_names: Vec<String>,
+}
+
+/// A back-reference: the children this row can be created with.
+fn has_many_child(
+    m: &Model,
+    h: &HasMany,
+    all: &[Model],
+    config: &Config,
+    tpl: &proc_macro2::Ident,
+    table: &str,
+) -> Result<ChildParts> {
+    let mut parts = ChildParts::default();
+    let child = model_of(all, &h.child)?;
+    // Same rule as `roles`: a `SELECT`-only child — any view — has no
+    // template to create, so no `with_new_…` mod is offered for it.
+    if !child.writable {
+        return Ok(ChildParts::default());
+    }
+    let child_mod = ident(&child.table);
+    let child_tpl = template_name(child);
+    let rel = ident(&h.name);
+    let (_, parent_key) = m.column(&h.parent_key_column).ok_or_else(|| {
+        GenError::Config(format!(
+            "factory: back-reference key {table}.{} is not generated",
+            h.parent_key_column
+        ))
+    })?;
+    // The child's own parent field for this key: same relation the child
+    // model resolved for the foreign key.
+    let (child_fk_idx, child_fk) = child.column(&h.child_fk_column).ok_or_else(|| {
+        GenError::Config(format!(
+            "factory: back-reference key {}.{} is not generated",
+            h.child, h.child_fk_column
+        ))
+    })?;
+    let child_rel = child
+        .belongs_to
+        .iter()
+        .find(|b| b.fk_column == child_fk_idx)
+        .ok_or_else(|| {
+            GenError::Config(format!(
+                "factory: `{}.{}` has no to-one relation to bind a new child to",
+                h.child, h.child_fk_column
+            ))
+        })?;
+    let child_rel_f = ident(&child_rel.name);
+
+    let doc = format!(
+        " Has-many `{}` children, created after this row exists, each with \
+         `{}.{}` forced to it.",
+        h.child, h.child, h.child_fk_column
+    );
+    let field = quote! {
+        #[doc = #doc]
+        pub #rel: Vec<super::#child_mod::#child_tpl>
+    };
+
+    let existing_state = if child_fk.nullable {
+        quote!(keelson_factory::OptionalParent::Existing)
+    } else {
+        quote!(keelson_factory::Parent::Existing)
+    };
+    let key = key_access(quote!(row), parent_key);
+    let child_step = quote! {
+        for c in &self.#rel {
+            let mut child = c.clone();
+            child.#child_rel_f = #existing_state(#key);
+            child.create_with(db, &mut *f).await?;
+        }
+    };
+
+    let with_fn = format_ident!(
+        "with_new_{}",
+        crate::names::singular(&h.child, &config.inflections)
+    );
+    let with_name = format!(
+        "with_new_{}",
+        crate::names::singular(&h.child, &config.inflections)
+    );
+    let doc = format!(" Queue a new `{}` child for this row.", h.child);
+    parts.mods.push(quote! {
+        #[doc = #doc]
+        pub fn #with_fn(tpl: super::#child_mod::#child_tpl) -> impl keelson_core::Mod<#tpl> {
+            keelson_core::mod_fn(move |t: &mut #tpl| t.#rel.push(tpl))
+        }
+    });
+    parts.fn_names.push(with_name);
+    parts.field = Some(field);
+    parts.child_step = Some(child_step);
+    Ok(parts)
+}
+
+/// What one column contributes to its table's factory module.
+///
+/// A column is either a value the factory makes up or the foreign key of a
+/// relation it creates first, and the two answers used to be two arms of one
+/// loop, each reaching into six accumulators declared a hundred lines above.
+/// Returning the contribution instead means each arm is a function of its
+/// column, and the loop is the only thing that knows there are six lists.
+#[derive(Default)]
+struct ColumnParts {
+    /// The `Template` field for this column.
+    field: TokenStream,
+    /// How that field resolves into the model's setter.
+    setter_init: TokenStream,
+    /// The mods this column gets — `id(v)`, `email_null()`, `for_user(tpl)`.
+    mods: Vec<TokenStream>,
+    /// For a foreign key: the step that creates the parent row first.
+    parent_step: Option<TokenStream>,
+    /// Every fn name generated here, for the collision check.
+    fn_names: Vec<String>,
+    /// Whether this column draws from a `Sequence`, which the module only
+    /// imports when something does.
+    uses_sequence: bool,
+}
+
+/// A plain value column: a [`Source`](keelson_factory::Source) field, its
+/// setter, and the mods that set it.
+fn source_column(
+    c: &ModelColumn,
+    f: &proc_macro2::Ident,
+    tpl: &proc_macro2::Ident,
+    table: &str,
+    singular: &str,
+) -> Result<ColumnParts> {
+    let mut parts = ColumnParts::default();
+    let ty = parse_type(&c.rust_type, &format!("column {table}.{}", c.db_name))?;
+    let doc = format!(" `{}`.", c.db_name);
+    let field = quote! {
+        #[doc = #doc]
+        pub #f: keelson_factory::Source<#ty>
+    };
+
+    let auto = auto_rule(c, singular);
+    parts.uses_sequence |= auto.uses_sequence();
+    let closure = auto.closure(singular);
+    let setter_init = quote!(#f: self.#f.resolve(f, #closure));
+
+    // The value mod. Strings take `impl Into<String>` so a
+    // `&str` literal works at the call site.
+    let doc = format!(" Set `{}`.", c.db_name);
+    if c.rust_type == "String" {
+        parts.mods.push(quote! {
+            #[doc = #doc]
+            pub fn #f(v: impl Into<String>) -> impl keelson_core::Mod<#tpl> {
+                let v = v.into();
+                keelson_core::mod_fn(move |t: &mut #tpl| {
+                    t.#f = keelson_factory::Source::Value(v)
+                })
+            }
+        });
+    } else {
+        parts.mods.push(quote! {
+            #[doc = #doc]
+            pub fn #f(v: #ty) -> impl keelson_core::Mod<#tpl> {
+                keelson_core::mod_fn(move |t: &mut #tpl| {
+                    t.#f = keelson_factory::Source::Value(v)
+                })
+            }
+        });
+    }
+    parts.fn_names.push(c.field.clone());
+
+    if c.nullable {
+        let null_fn = format_ident!("{}_null", c.field);
+        let doc = format!(" Set `{}` to SQL NULL.", c.db_name);
+        parts.mods.push(quote! {
+            #[doc = #doc]
+            pub fn #null_fn() -> impl keelson_core::Mod<#tpl> {
+                keelson_core::mod_fn(|t: &mut #tpl| {
+                    t.#f = keelson_factory::Source::Null
+                })
+            }
+        });
+        parts.fn_names.push(format!("{}_null", c.field));
+    }
+
+    // A sequence-backed column also gets the random alternative:
+    // still inside the faker's seed, unlike the sequence.
+    if auto.uses_sequence()
+        && let Some(range) = random_key(&c.rust_type)
+    {
+        let random_fn = format_ident!("random_{}", c.field);
+        let doc = format!(
+            " Draw `{}` at random instead of from the sequence — \
+                         random values are inside the faker's seed, sequence \
+                         values deliberately are not.",
+            c.db_name
+        );
+        parts.mods.push(quote! {
+            #[doc = #doc]
+            pub fn #random_fn() -> impl keelson_core::Mod<#tpl> {
+                keelson_core::mod_fn(|t: &mut #tpl| {
+                    t.#f = keelson_factory::Source::from_fn(|f| #range)
+                })
+            }
+        });
+        parts.fn_names.push(format!("random_{}", c.field));
+    }
+    parts.field = field;
+    parts.setter_init = setter_init;
+    Ok(parts)
+}
+
+/// The foreign key of a to-one relation the factory can create: a
+/// [`Parent`](keelson_factory::Parent) field, the step that creates the
+/// parent row, and the triple of mods that reach it.
+fn parent_column(
+    c: &ModelColumn,
+    f: &proc_macro2::Ident,
+    b: &BelongsTo,
+    all: &[Model],
+    tpl: &proc_macro2::Ident,
+    table: &str,
+) -> Result<ColumnParts> {
+    let mut parts = ColumnParts::default();
+    let parent = model_of(all, &b.target)?;
+    let parent_mod = ident(&parent.table);
+    let parent_tpl = template_name(parent);
+    let parent_row = ident(&parent.row);
+    let (_, ref_col) = parent.column(&b.ref_column).ok_or_else(|| {
+        GenError::Config(format!(
+            "factory: relation {table}.{} references missing column {}.{}",
+            c.db_name, b.target, b.ref_column
+        ))
+    })?;
+    let pk_ty = parse_type(&ref_col.rust_type, "parent key")?;
+    let rel = ident(&b.name);
+    let ref_f = ident(&ref_col.field);
+
+    let (state, doc) = if c.nullable {
+        (
+            quote!(keelson_factory::OptionalParent),
+            format!(
+                " Nullable FK `{}` → `{}`: absent (NULL) unless a mod opts in.",
+                c.db_name, b.target
+            ),
+        )
+    } else {
+        (
+            quote!(keelson_factory::Parent),
+            format!(
+                " FK `{}` → `{}`: auto-created from `{}`'s own template \
+                             unless a mod overrides it.",
+                c.db_name, b.target, b.target
+            ),
+        )
+    };
+    let field = quote! {
+        #[doc = #doc]
+        pub #rel: #state<Box<super::#parent_mod::#parent_tpl>, #pk_ty>
+    };
+
+    let existing = if is_copy(&ref_col.rust_type) {
+        quote!(keelson_models::Set::Value(*pk))
+    } else {
+        quote!(keelson_models::Set::Value(pk.clone()))
+    };
+    let setter_init = if c.nullable {
+        quote! {
+            #f: match &self.#rel {
+                keelson_factory::OptionalParent::Existing(pk) => #existing,
+                keelson_factory::OptionalParent::Absent
+                | keelson_factory::OptionalParent::Template(_) => {
+                    keelson_models::Set::Unset
+                }
+            }
+        }
+    } else {
+        quote! {
+            #f: match &self.#rel {
+                keelson_factory::Parent::Existing(pk) => #existing,
+                keelson_factory::Parent::Auto
+                | keelson_factory::Parent::Template(_) => keelson_models::Set::Unset,
+            }
+        }
+    };
+
+    let parent_step = Some(if c.nullable {
+        quote! {
+            if let keelson_factory::OptionalParent::Template(t) = &self.#rel {
+                s.#f = keelson_models::Set::Value(
+                    t.create_with(db, &mut *f).await?.#ref_f,
+                );
+            }
+        }
+    } else {
+        quote! {
+            match &self.#rel {
+                keelson_factory::Parent::Existing(_) => {}
+                keelson_factory::Parent::Template(t) => {
+                    s.#f = keelson_models::Set::Value(
+                        t.create_with(db, &mut *f).await?.#ref_f,
+                    );
+                }
+                keelson_factory::Parent::Auto => {
+                    let t = super::#parent_mod::#parent_tpl::default();
+                    s.#f = keelson_models::Set::Value(
+                        t.create_with(db, &mut *f).await?.#ref_f,
+                    );
+                }
+            }
+        }
+    });
+
+    // The parent triple. The key form is named after the FK
+    // column; when that name is already the relation's, it takes
+    // a `_key` suffix so the two cannot collide.
+    let key_name = if c.field == b.name {
+        format!("{}_key", c.field)
+    } else {
+        c.field.clone()
+    };
+    let key_fn = ident(&key_name);
+    let for_fn = format_ident!("for_{}", b.name);
+    let existing_state = if c.nullable {
+        quote!(keelson_factory::OptionalParent::Existing)
+    } else {
+        quote!(keelson_factory::Parent::Existing)
+    };
+    let template_state = if c.nullable {
+        quote!(keelson_factory::OptionalParent::Template)
+    } else {
+        quote!(keelson_factory::Parent::Template)
+    };
+    let take_key = key_access(quote!(row), ref_col);
+    let row_doc = format!(" Use this existing `{}` row as the parent.", b.target);
+    let key_doc = format!(" Use this existing `{}` key as the parent.", b.target);
+    let tpl_doc = format!(" Create the `{}` parent from this template.", b.target);
+    parts.mods.push(quote! {
+        #[doc = #row_doc]
+        pub fn #rel(
+            row: &super::super::#parent_mod::#parent_row,
+        ) -> impl keelson_core::Mod<#tpl> {
+            let pk = #take_key;
+            keelson_core::mod_fn(move |t: &mut #tpl| t.#rel = #existing_state(pk))
+        }
+
+        #[doc = #key_doc]
+        pub fn #key_fn(pk: #pk_ty) -> impl keelson_core::Mod<#tpl> {
+            keelson_core::mod_fn(move |t: &mut #tpl| t.#rel = #existing_state(pk))
+        }
+
+        #[doc = #tpl_doc]
+        pub fn #for_fn(
+            tpl: super::#parent_mod::#parent_tpl,
+        ) -> impl keelson_core::Mod<#tpl> {
+            keelson_core::mod_fn(move |t: &mut #tpl| {
+                t.#rel = #template_state(Box::new(tpl))
+            })
+        }
+    });
+    parts.fn_names.push(b.name.clone());
+    parts.fn_names.push(key_name);
+    parts.fn_names.push(format!("for_{}", b.name));
+    parts.field = field;
+    parts.setter_init = setter_init;
+    parts.parent_step = parent_step;
+    Ok(parts)
+}
+
 fn factory_mod(m: &Model, all: &[Model], config: &Config) -> Result<TokenStream> {
     let module = ident(&m.table);
     let table = &m.table;
@@ -236,303 +608,25 @@ fn factory_mod(m: &Model, all: &[Model], config: &Config) -> Result<TokenStream>
     // ── one field, one setter init and the mods per column ──
     for (i, c) in m.columns.iter().enumerate() {
         let f = ident(&c.field);
-        match roles[i] {
-            Role::Source => {
-                let ty = parse_type(&c.rust_type, &format!("column {table}.{}", c.db_name))?;
-                let doc = format!(" `{}`.", c.db_name);
-                fields.push(quote! {
-                    #[doc = #doc]
-                    pub #f: keelson_factory::Source<#ty>
-                });
-
-                let auto = auto_rule(c, &singular);
-                uses_sequence |= auto.uses_sequence();
-                let closure = auto.closure(&singular);
-                setter_inits.push(quote!(#f: self.#f.resolve(f, #closure)));
-
-                // The value mod. Strings take `impl Into<String>` so a
-                // `&str` literal works at the call site.
-                let doc = format!(" Set `{}`.", c.db_name);
-                if c.rust_type == "String" {
-                    mods.push(quote! {
-                        #[doc = #doc]
-                        pub fn #f(v: impl Into<String>) -> impl keelson_core::Mod<#tpl> {
-                            let v = v.into();
-                            keelson_core::mod_fn(move |t: &mut #tpl| {
-                                t.#f = keelson_factory::Source::Value(v)
-                            })
-                        }
-                    });
-                } else {
-                    mods.push(quote! {
-                        #[doc = #doc]
-                        pub fn #f(v: #ty) -> impl keelson_core::Mod<#tpl> {
-                            keelson_core::mod_fn(move |t: &mut #tpl| {
-                                t.#f = keelson_factory::Source::Value(v)
-                            })
-                        }
-                    });
-                }
-                fn_names.push(c.field.clone());
-
-                if c.nullable {
-                    let null_fn = format_ident!("{}_null", c.field);
-                    let doc = format!(" Set `{}` to SQL NULL.", c.db_name);
-                    mods.push(quote! {
-                        #[doc = #doc]
-                        pub fn #null_fn() -> impl keelson_core::Mod<#tpl> {
-                            keelson_core::mod_fn(|t: &mut #tpl| {
-                                t.#f = keelson_factory::Source::Null
-                            })
-                        }
-                    });
-                    fn_names.push(format!("{}_null", c.field));
-                }
-
-                // A sequence-backed column also gets the random alternative:
-                // still inside the faker's seed, unlike the sequence.
-                if auto.uses_sequence()
-                    && let Some(range) = random_key(&c.rust_type)
-                {
-                    let random_fn = format_ident!("random_{}", c.field);
-                    let doc = format!(
-                        " Draw `{}` at random instead of from the sequence — \
-                         random values are inside the faker's seed, sequence \
-                         values deliberately are not.",
-                        c.db_name
-                    );
-                    mods.push(quote! {
-                        #[doc = #doc]
-                        pub fn #random_fn() -> impl keelson_core::Mod<#tpl> {
-                            keelson_core::mod_fn(|t: &mut #tpl| {
-                                t.#f = keelson_factory::Source::from_fn(|f| #range)
-                            })
-                        }
-                    });
-                    fn_names.push(format!("random_{}", c.field));
-                }
-            }
-            Role::Parent(b) => {
-                let parent = model_of(all, &b.target)?;
-                let parent_mod = ident(&parent.table);
-                let parent_tpl = template_name(parent);
-                let parent_row = ident(&parent.row);
-                let (_, ref_col) = parent.column(&b.ref_column).ok_or_else(|| {
-                    GenError::Config(format!(
-                        "factory: relation {table}.{} references missing column {}.{}",
-                        c.db_name, b.target, b.ref_column
-                    ))
-                })?;
-                let pk_ty = parse_type(&ref_col.rust_type, "parent key")?;
-                let rel = ident(&b.name);
-                let ref_f = ident(&ref_col.field);
-
-                let (state, doc) = if c.nullable {
-                    (
-                        quote!(keelson_factory::OptionalParent),
-                        format!(
-                            " Nullable FK `{}` → `{}`: absent (NULL) unless a mod opts in.",
-                            c.db_name, b.target
-                        ),
-                    )
-                } else {
-                    (
-                        quote!(keelson_factory::Parent),
-                        format!(
-                            " FK `{}` → `{}`: auto-created from `{}`'s own template \
-                             unless a mod overrides it.",
-                            c.db_name, b.target, b.target
-                        ),
-                    )
-                };
-                fields.push(quote! {
-                    #[doc = #doc]
-                    pub #rel: #state<Box<super::#parent_mod::#parent_tpl>, #pk_ty>
-                });
-
-                let existing = if is_copy(&ref_col.rust_type) {
-                    quote!(keelson_models::Set::Value(*pk))
-                } else {
-                    quote!(keelson_models::Set::Value(pk.clone()))
-                };
-                setter_inits.push(if c.nullable {
-                    quote! {
-                        #f: match &self.#rel {
-                            keelson_factory::OptionalParent::Existing(pk) => #existing,
-                            keelson_factory::OptionalParent::Absent
-                            | keelson_factory::OptionalParent::Template(_) => {
-                                keelson_models::Set::Unset
-                            }
-                        }
-                    }
-                } else {
-                    quote! {
-                        #f: match &self.#rel {
-                            keelson_factory::Parent::Existing(pk) => #existing,
-                            keelson_factory::Parent::Auto
-                            | keelson_factory::Parent::Template(_) => keelson_models::Set::Unset,
-                        }
-                    }
-                });
-
-                parent_steps.push(if c.nullable {
-                    quote! {
-                        if let keelson_factory::OptionalParent::Template(t) = &self.#rel {
-                            s.#f = keelson_models::Set::Value(
-                                t.create_with(db, &mut *f).await?.#ref_f,
-                            );
-                        }
-                    }
-                } else {
-                    quote! {
-                        match &self.#rel {
-                            keelson_factory::Parent::Existing(_) => {}
-                            keelson_factory::Parent::Template(t) => {
-                                s.#f = keelson_models::Set::Value(
-                                    t.create_with(db, &mut *f).await?.#ref_f,
-                                );
-                            }
-                            keelson_factory::Parent::Auto => {
-                                let t = super::#parent_mod::#parent_tpl::default();
-                                s.#f = keelson_models::Set::Value(
-                                    t.create_with(db, &mut *f).await?.#ref_f,
-                                );
-                            }
-                        }
-                    }
-                });
-
-                // The parent triple. The key form is named after the FK
-                // column; when that name is already the relation's, it takes
-                // a `_key` suffix so the two cannot collide.
-                let key_name = if c.field == b.name {
-                    format!("{}_key", c.field)
-                } else {
-                    c.field.clone()
-                };
-                let key_fn = ident(&key_name);
-                let for_fn = format_ident!("for_{}", b.name);
-                let existing_state = if c.nullable {
-                    quote!(keelson_factory::OptionalParent::Existing)
-                } else {
-                    quote!(keelson_factory::Parent::Existing)
-                };
-                let template_state = if c.nullable {
-                    quote!(keelson_factory::OptionalParent::Template)
-                } else {
-                    quote!(keelson_factory::Parent::Template)
-                };
-                let take_key = key_access(quote!(row), ref_col);
-                let row_doc = format!(" Use this existing `{}` row as the parent.", b.target);
-                let key_doc = format!(" Use this existing `{}` key as the parent.", b.target);
-                let tpl_doc = format!(" Create the `{}` parent from this template.", b.target);
-                mods.push(quote! {
-                    #[doc = #row_doc]
-                    pub fn #rel(
-                        row: &super::super::#parent_mod::#parent_row,
-                    ) -> impl keelson_core::Mod<#tpl> {
-                        let pk = #take_key;
-                        keelson_core::mod_fn(move |t: &mut #tpl| t.#rel = #existing_state(pk))
-                    }
-
-                    #[doc = #key_doc]
-                    pub fn #key_fn(pk: #pk_ty) -> impl keelson_core::Mod<#tpl> {
-                        keelson_core::mod_fn(move |t: &mut #tpl| t.#rel = #existing_state(pk))
-                    }
-
-                    #[doc = #tpl_doc]
-                    pub fn #for_fn(
-                        tpl: super::#parent_mod::#parent_tpl,
-                    ) -> impl keelson_core::Mod<#tpl> {
-                        keelson_core::mod_fn(move |t: &mut #tpl| {
-                            t.#rel = #template_state(Box::new(tpl))
-                        })
-                    }
-                });
-                fn_names.push(b.name.clone());
-                fn_names.push(key_name);
-                fn_names.push(format!("for_{}", b.name));
-            }
-        }
+        let parts = match roles[i] {
+            Role::Source => source_column(c, &f, &tpl, table, &singular)?,
+            Role::Parent(b) => parent_column(c, &f, b, all, &tpl, table)?,
+        };
+        fields.push(parts.field);
+        setter_inits.push(parts.setter_init);
+        mods.extend(parts.mods);
+        parent_steps.extend(parts.parent_step);
+        fn_names.extend(parts.fn_names);
+        uses_sequence |= parts.uses_sequence;
     }
 
     // ── has-many children ──
     for h in &m.has_many {
-        let child = model_of(all, &h.child)?;
-        // Same rule as `roles`: a `SELECT`-only child — any view — has no
-        // template to create, so no `with_new_…` mod is offered for it.
-        if !child.writable {
-            continue;
-        }
-        let child_mod = ident(&child.table);
-        let child_tpl = template_name(child);
-        let rel = ident(&h.name);
-        let (_, parent_key) = m.column(&h.parent_key_column).ok_or_else(|| {
-            GenError::Config(format!(
-                "factory: back-reference key {table}.{} is not generated",
-                h.parent_key_column
-            ))
-        })?;
-        // The child's own parent field for this key: same relation the child
-        // model resolved for the foreign key.
-        let (child_fk_idx, child_fk) = child.column(&h.child_fk_column).ok_or_else(|| {
-            GenError::Config(format!(
-                "factory: back-reference key {}.{} is not generated",
-                h.child, h.child_fk_column
-            ))
-        })?;
-        let child_rel = child
-            .belongs_to
-            .iter()
-            .find(|b| b.fk_column == child_fk_idx)
-            .ok_or_else(|| {
-                GenError::Config(format!(
-                    "factory: `{}.{}` has no to-one relation to bind a new child to",
-                    h.child, h.child_fk_column
-                ))
-            })?;
-        let child_rel_f = ident(&child_rel.name);
-
-        let doc = format!(
-            " Has-many `{}` children, created after this row exists, each with \
-             `{}.{}` forced to it.",
-            h.child, h.child, h.child_fk_column
-        );
-        fields.push(quote! {
-            #[doc = #doc]
-            pub #rel: Vec<super::#child_mod::#child_tpl>
-        });
-
-        let existing_state = if child_fk.nullable {
-            quote!(keelson_factory::OptionalParent::Existing)
-        } else {
-            quote!(keelson_factory::Parent::Existing)
-        };
-        let key = key_access(quote!(row), parent_key);
-        child_steps.push(quote! {
-            for c in &self.#rel {
-                let mut child = c.clone();
-                child.#child_rel_f = #existing_state(#key);
-                child.create_with(db, &mut *f).await?;
-            }
-        });
-
-        let with_fn = format_ident!(
-            "with_new_{}",
-            crate::names::singular(&h.child, &config.inflections)
-        );
-        let with_name = format!(
-            "with_new_{}",
-            crate::names::singular(&h.child, &config.inflections)
-        );
-        let doc = format!(" Queue a new `{}` child for this row.", h.child);
-        mods.push(quote! {
-            #[doc = #doc]
-            pub fn #with_fn(tpl: super::#child_mod::#child_tpl) -> impl keelson_core::Mod<#tpl> {
-                keelson_core::mod_fn(move |t: &mut #tpl| t.#rel.push(tpl))
-            }
-        });
-        fn_names.push(with_name);
+        let parts = has_many_child(m, h, all, config, &tpl, table)?;
+        fields.extend(parts.field);
+        child_steps.extend(parts.child_step);
+        mods.extend(parts.mods);
+        fn_names.extend(parts.fn_names);
     }
 
     // Two mods of the same name would be a confusing compile error inside a
