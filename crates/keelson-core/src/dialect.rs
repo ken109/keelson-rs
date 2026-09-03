@@ -81,7 +81,7 @@ pub mod testing {
     impl Dialect for TestDialect {
         fn write_arg(&self, w: &mut SqlWriter<'_>, position: usize) {
             w.push_str("?");
-            w.push_str(&position.to_string());
+            w.push_usize(position);
         }
 
         fn write_quoted(&self, w: &mut SqlWriter<'_>, s: &str) {
@@ -103,7 +103,7 @@ pub mod testing {
     impl Dialect for Numbered {
         fn write_arg(&self, w: &mut SqlWriter<'_>, position: usize) {
             w.push_str("$");
-            w.push_str(&position.to_string());
+            w.push_usize(position);
         }
 
         fn write_quoted(&self, w: &mut SqlWriter<'_>, s: &str) {

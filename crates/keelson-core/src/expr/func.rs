@@ -71,9 +71,10 @@ impl IntoExprList for FuncExpr {
 
 impl Expression for FuncExpr {
     fn write_sql(&self, w: &mut SqlWriter<'_>) {
-        // Cheap enough to go through the enum: cloning the parts costs one Vec
-        // and one Cow, and it keeps the rendering rules in exactly one place.
-        w.write_expr(&self.clone().into_expr());
+        // The rendering rules stay in exactly one place — `write_func` is the
+        // body of `Expr::Func`'s arm — but reached by reference. Going through
+        // the enum meant cloning a `Vec` and a `Cow` on every render.
+        super::node::write_func(w, &self.name, &self.args, None);
     }
 }
 

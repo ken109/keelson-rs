@@ -11,7 +11,7 @@ pub struct Psql;
 impl Dialect for Psql {
     fn write_arg(&self, w: &mut SqlWriter<'_>, position: usize) {
         w.push_str("$");
-        w.push_str(&position.to_string());
+        w.push_usize(position);
     }
 
     /// Quote `s` as a delimited identifier.

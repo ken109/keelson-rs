@@ -425,17 +425,7 @@ impl Expression for Expr {
 
             Expr::Join { exprs, sep } => w.write_slice(exprs, "", sep, ""),
 
-            Expr::Func { name, args, over } => {
-                w.push_str(name);
-                w.push_str("(");
-                w.write_slice(args, "", ", ", "");
-                w.push_str(")");
-                // bob writes `avg(x)OVER (w)` with no space, which is legal but
-                // reads like a typo. The space is free: the golden comparison
-                // normalises whitespace next to parentheses, so both forms clean
-                // to the same string.
-                w.write_if_some(over.as_deref(), " OVER (", ")");
-            }
+            Expr::Func { name, args, over } => write_func(w, name, args, over.as_deref()),
 
             Expr::Case { whens, else_ } => {
                 if whens.is_empty() {
@@ -467,6 +457,22 @@ impl Expression for Expr {
             Expr::Custom(e) => w.write_expr(&**e),
         }
     }
+}
+
+/// The `name(args..) [OVER (w)]` production, by reference.
+///
+/// Split out of the [`Expr::Func`] arm so [`FuncExpr`](super::FuncExpr) can
+/// render itself without first cloning into an `Expr` — a `Vec` and a `Cow`
+/// per render, on the path a window function takes every time.
+pub(super) fn write_func(w: &mut SqlWriter<'_>, name: &str, args: &[Expr], over: Option<&Expr>) {
+    w.push_str(name);
+    w.push_str("(");
+    w.write_slice(args, "", ", ", "");
+    w.push_str(")");
+    // bob writes `avg(x)OVER (w)` with no space, which is legal but reads like
+    // a typo. The space is free: the golden comparison normalises whitespace
+    // next to parentheses, so both forms clean to the same string.
+    w.write_if_some(over, " OVER (", ")");
 }
 
 #[cfg(test)]

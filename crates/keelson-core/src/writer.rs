@@ -230,6 +230,16 @@ impl<'d> SqlWriter<'d> {
         self.sql.push_str(s);
     }
 
+    /// Append a number without allocating a `String` for it.
+    ///
+    /// Placeholders are the hot path this exists for: every dialect that
+    /// numbers them (`$1`, `?1`) wrote `position.to_string()` and threw the
+    /// `String` away, once per bound argument.
+    pub fn push_usize(&mut self, n: usize) {
+        let mut buf = itoa_buf();
+        self.sql.push_str(format_usize(&mut buf, n));
+    }
+
     /// Bind `v` and write its placeholder.
     ///
     /// The single point where the placeholder counter advances.
@@ -403,6 +413,32 @@ impl<'d> SqlWriter<'d> {
 
 /// `write!` into the SQL buffer, for the rare fragment that is easier formatted
 /// than pushed.
+/// A stack buffer wide enough for any `usize` in decimal.
+///
+/// `usize::MAX` is 20 digits on 64-bit; 20 is the exact bound, and the extra
+/// room costs nothing on the stack.
+fn itoa_buf() -> [u8; 20] {
+    [0; 20]
+}
+
+/// Write `n` into `buf` and return the decimal digits.
+///
+/// `write!` into a `String` is what this replaces, and it allocates; this is
+/// the same digits with the allocation removed.
+fn format_usize(buf: &mut [u8; 20], mut n: usize) -> &str {
+    let mut i = buf.len();
+    loop {
+        i -= 1;
+        buf[i] = b'0' + u8::try_from(n % 10).expect("a decimal digit");
+        n /= 10;
+        if n == 0 {
+            break;
+        }
+    }
+    // Every byte written is an ASCII digit.
+    core::str::from_utf8(&buf[i..]).expect("ASCII digits")
+}
+
 impl fmt::Write for SqlWriter<'_> {
     fn write_str(&mut self, s: &str) -> fmt::Result {
         self.sql.push_str(s);
@@ -437,6 +473,15 @@ mod tests {
     use std::fmt::Write as _;
 
     use keelson_sqlcheck::testing::assert_frag_sql;
+
+    #[test]
+    fn push_usize_writes_the_same_digits_as_to_string() {
+        for n in [0usize, 1, 9, 10, 99, 100, 12345, usize::MAX] {
+            let mut w = SqlWriter::new(&Numbered);
+            w.push_usize(n);
+            assert_eq!(w.sql(), n.to_string(), "{n}");
+        }
+    }
 
     use super::*;
     use crate::dialect::testing::{Numbered, Positional, TestDialect};
