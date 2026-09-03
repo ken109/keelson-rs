@@ -43,14 +43,23 @@
 //!
 //! # The one type a backend may decline
 //!
-//! `Decimal` is behind the `conformance-decimal` feature. `rust_decimal`'s
-//! PostgreSQL support is a feature *of rust_decimal* and Cargo unifies
-//! features across a workspace, so keelson-tokio-postgres cannot enable it
-//! without adding tokio-postgres to the graph of every crate here that
-//! touches `rust_decimal` — it declines, and says so in its own crate docs.
-//! Everything else is mandatory. A backend declines by naming a feature in
-//! its manifest, which is a line a reviewer sees; it cannot end up with a
-//! shorter suite by writing less.
+//! keelson-tokio-postgres carries no `Decimal`: `rust_decimal`'s PostgreSQL
+//! support is a feature *of rust_decimal*, and enabling it would add
+//! tokio-postgres to the dependency graph of every crate here that touches
+//! `rust_decimal` (its crate docs say so). It calls
+//! [`every_mapped_type_round_trips_except`] and names [`Mapped::Decimal`].
+//!
+//! A *runtime* argument rather than a Cargo feature, and that is the whole
+//! design: features unify across a workspace, so a `conformance-decimal`
+//! feature enabled by one backend is enabled for every other backend
+//! compiled in the same `cargo test --workspace` — the suite would come back
+//! with the decimal assertions in it exactly where they cannot pass. (It
+//! did. That is how this was found.) An argument is per call site, so it
+//! cannot be turned on from somewhere else, and it is a line in the
+//! backend's own test naming what it does not do.
+//!
+//! Everything else is mandatory. A backend cannot end up with a shorter
+//! suite by writing less.
 
 use std::fmt::Debug;
 use std::sync::atomic::{AtomicI64, Ordering};
@@ -193,11 +202,28 @@ fn fixed_uuid() -> Uuid {
     Uuid::parse_str("67e55044-10b1-426f-9247-bb680e5fe0c8").expect("a literal UUID")
 }
 
+/// A mapped type a backend may honestly not carry.
+///
+/// Naming one is how a backend declines part of the suite: a line in its own
+/// test, not a Cargo feature that would follow the crate into every other
+/// backend's build.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Mapped {
+    /// `rust_decimal::Decimal`.
+    Decimal,
+}
+
 /// Every mapped type, out and back, with the edges of each.
 ///
 /// Call it against a live executor whose [`TABLE`] exists — see [`ddl`]. It
 /// panics on the first disagreement, naming the column.
 pub async fn every_mapped_type_round_trips(db: &dyn Executor) {
+    every_mapped_type_round_trips_except(db, &[]).await;
+}
+
+/// The suite with the named types left out. See [`Mapped`].
+pub async fn every_mapped_type_round_trips_except(db: &dyn Executor, skip: &[Mapped]) {
     // Booleans and integers.
     rt(db, "c_bool", true).await;
     rt(db, "c_bool", false).await;
@@ -275,11 +301,8 @@ pub async fn every_mapped_type_round_trips(db: &dyn Executor) {
     rt(db, "c_uuid", Uuid::max()).await;
     rt(db, "c_uuid", fixed_uuid()).await;
 
-    // Decimals: numeric equality; negatives; high precision. Behind
-    // `conformance-decimal`, which a backend that cannot carry `rust_decimal`
-    // declines in its manifest — see this module's docs.
-    #[cfg(feature = "conformance-decimal")]
-    {
+    // Decimals: numeric equality; negatives; high precision.
+    if !skip.contains(&Mapped::Decimal) {
         use rust_decimal::Decimal;
         rt(db, "c_dec", Decimal::new(1999, 2)).await; // 19.99
         rt(db, "c_dec", Decimal::new(-12345, 4)).await; // -1.2345

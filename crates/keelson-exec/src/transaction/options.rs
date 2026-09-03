@@ -92,7 +92,7 @@ pub enum SqliteBegin {
     /// Locks are taken at the first statement that needs them. The default.
     Deferred,
     /// The write lock is taken at `BEGIN`, so a write-write conflict surfaces
-    /// as [`TxConflict::Busy`] immediately instead of mid-transaction.
+    /// as [`TxConflict::Busy`](crate::TxConflict::Busy) immediately instead of mid-transaction.
     Immediate,
     /// As `IMMEDIATE`, and other connections cannot read either (outside WAL).
     Exclusive,
@@ -113,8 +113,8 @@ impl SqliteBegin {
 /// three engines do not agree on.
 ///
 /// Defaults to "whatever the engine's own default is" on every axis, so
-/// [`Transaction::begin_on_with`] with a default `TxOptions` sends exactly
-/// what [`Transaction::begin_on`] sends.
+/// [`Transaction::begin_on_with`](crate::Transaction::begin_on_with) with a default `TxOptions` sends exactly
+/// what [`Transaction::begin_on`](crate::Transaction::begin_on) sends.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct TxOptions {
     isolation: Option<Isolation>,
@@ -177,7 +177,7 @@ impl TxOptions {
         self.plan(family).map(|_| ())
     }
 
-    /// The exact statements [`Transaction::begin_on_with`] will run, in
+    /// The exact statements [`Transaction::begin_on_with`](crate::Transaction::begin_on_with) will run, in
     /// order, on the transaction's own connection — or the error explaining
     /// why this engine cannot be asked for this.
     ///

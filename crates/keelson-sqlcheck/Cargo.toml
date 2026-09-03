@@ -30,18 +30,12 @@ conformance = [
     "dep:keelson-exec",
     "dep:chrono",
     "dep:uuid",
+    "dep:rust_decimal",
     "keelson-core/chrono",
     "keelson-core/uuid",
+    "keelson-core/decimal",
     "keelson-core/json",
 ]
-# `Decimal` in the conformance suite. Separate because it is the one mapped
-# type a backend can honestly not carry: `rust_decimal`'s PostgreSQL support is
-# a feature *of rust_decimal*, and Cargo unifies features across a workspace,
-# so keelson-tokio-postgres declines it on purpose (its crate docs say why) and
-# enables `conformance` alone. Declining it in a manifest is the point — the
-# gap is written down where dependencies are, instead of being a suite that is
-# quietly shorter on one backend.
-conformance-decimal = ["conformance", "dep:rust_decimal", "keelson-core/decimal"]
 # Exposes `keelson_sqlcheck::property`: the random-query generator Tier C's
 # three lanes share. Dialect-free by construction — it builds a typed AST and
 # `keelson_core` expressions, and each lane renders it into its own dialect.

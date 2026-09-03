@@ -218,7 +218,7 @@ impl<B: Begin + ?Sized> BeginExt for B {}
 ///
 /// A **retry loop belongs at the transaction boundary, not here.** Rolling
 /// back to a savepoint does recover a transaction from an error, but a
-/// serialization failure ([`TxConflict`]) will recur against the same
+/// serialization failure ([`TxConflict`](crate::TxConflict)) will recur against the same
 /// snapshot; only re-running the whole transaction can win. Retry where the
 /// transaction begins.
 ///

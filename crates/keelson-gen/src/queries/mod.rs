@@ -130,7 +130,7 @@
 //! separator. See [`nest`].
 
 pub mod emit;
-pub mod infer;
+mod infer;
 pub mod ir;
 pub mod lex;
 pub mod nest;
