@@ -68,7 +68,7 @@ proc-macro-crate = "3"
 proc-macro2 = "1"
 quote = "1"
 syn = { version = "2", default-features = false, features = ["full", "parsing", "printing", "clone-impls", "proc-macro"] }
-prettyplease = "0.2"
+prettyplease = "0.3"
 toml = "0.8"
 trybuild = "1"
 
