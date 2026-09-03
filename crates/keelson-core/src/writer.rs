@@ -150,6 +150,20 @@ pub struct SqlWriter<'d> {
     error: Option<Error>,
 }
 
+/// What a writer starts with room for.
+///
+/// One writer renders one whole statement — nesting reuses it, because the
+/// placeholder counter belongs to the writer — so these are sized for a
+/// statement rather than a fragment. Starting empty meant a typical `SELECT`
+/// grew its buffer from 8 bytes through six reallocations on the way to its
+/// couple of hundred; an allocation of 256 bytes costs no more than one of 8,
+/// so the only thing the old default bought was the copying.
+///
+/// A statement that outgrows either figure still grows, exactly as before.
+const SQL_CAPACITY: usize = 256;
+/// Room for the arguments of that same statement.
+const ARG_CAPACITY: usize = 8;
+
 impl<'d> SqlWriter<'d> {
     /// A writer numbering placeholders from 1.
     pub fn new(dialect: &'d dyn Dialect) -> Self {
@@ -166,8 +180,8 @@ impl<'d> SqlWriter<'d> {
     pub fn with_start(dialect: &'d dyn Dialect, start: usize) -> Self {
         assert!(start > 0, "placeholder positions are 1-based, got {start}");
         SqlWriter {
-            sql: String::new(),
-            args: Vec::new(),
+            sql: String::with_capacity(SQL_CAPACITY),
+            args: Vec::with_capacity(ARG_CAPACITY),
             dialect,
             next_arg: start,
             error: None,
