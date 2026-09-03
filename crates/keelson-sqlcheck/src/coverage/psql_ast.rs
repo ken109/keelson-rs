@@ -417,8 +417,40 @@ pub(super) const PSQL_ACCOUNTED_KINDS: &[&str] = &[
     "SqlvalueFunction",
 ];
 
-#[allow(clippy::too_many_lines)] // one match arm per grammar node, and the length *is* the inventory
+/// One node of a parse tree → the construct ids it exercises.
+///
+/// Split by node family. Each family is a `match` over the kinds it owns and
+/// they are disjoint, so `detect` runs all of them and the dispatch stays one
+/// readable list — the inventory is the point, and five hundred lines of it
+/// in one function was the inventory nobody could read.
 fn detect(kind: &str, node: &Obj, parent: Option<&str>, sql: &str, obs: &mut PsqlObservation) {
+    detect_statements(kind, node, parent, sql, obs);
+    detect_from_items(kind, node, obs);
+    detect_clauses(kind, node, parent, obs);
+    detect_exprs(kind, node, sql, obs);
+    detect_targets(kind, node, parent, obs);
+
+    // The `WITH [RECURSIVE]` flag lives on a plain struct field of the four
+    // statements, so it is read here rather than through a node key.
+    if matches!(
+        kind,
+        "SelectStmt" | "InsertStmt" | "UpdateStmt" | "DeleteStmt"
+    ) && let Some(with) = object(node, "with_clause")
+        && boolean(with, "recursive")
+    {
+        obs.found.insert("cte.recursive");
+    }
+}
+
+/// Statements: the four that a manifest counts as `stmt.*`, and the
+/// clause presence each one carries.
+fn detect_statements(
+    kind: &str,
+    node: &Obj,
+    parent: Option<&str>,
+    sql: &str,
+    obs: &mut PsqlObservation,
+) {
     use pg_query::protobuf as pb;
     let found = &mut obs.found;
     match kind {
@@ -608,6 +640,16 @@ fn detect(kind: &str, node: &Obj, parent: Option<&str>, sql: &str, obs: &mut Psq
                 found.insert("clause.returning");
             }
         }
+        _ => {}
+    }
+}
+
+/// From-items and joins: what a `FROM` may name, and how two of them
+/// are put together.
+fn detect_from_items(kind: &str, node: &Obj, obs: &mut PsqlObservation) {
+    use pg_query::protobuf as pb;
+    let found = &mut obs.found;
+    match kind {
         "RangeVar" => {
             found.insert("from.table");
             if !boolean(node, "inh") {
@@ -672,6 +714,15 @@ fn detect(kind: &str, node: &Obj, parent: Option<&str>, sql: &str, obs: &mut Psq
                 found.insert("join.using");
             }
         }
+        _ => {}
+    }
+}
+
+/// The clauses that hang off a statement rather than an expression.
+fn detect_clauses(kind: &str, node: &Obj, parent: Option<&str>, obs: &mut PsqlObservation) {
+    use pg_query::protobuf as pb;
+    let found = &mut obs.found;
+    match kind {
         "CommonTableExpr" => {
             found.insert("cte.with");
             if !list(node, "aliascolnames").is_empty() {
@@ -757,6 +808,16 @@ fn detect(kind: &str, node: &Obj, parent: Option<&str>, sql: &str, obs: &mut Psq
         "WindowDef" => {
             detect_window_def(node, parent, found);
         }
+        _ => {}
+    }
+}
+
+/// Expressions. The operator vocabulary is [`detect_a_expr`]'s; this is
+/// everything else a value position can be.
+fn detect_exprs(kind: &str, node: &Obj, sql: &str, obs: &mut PsqlObservation) {
+    use pg_query::protobuf as pb;
+    let found = &mut obs.found;
+    match kind {
         "FuncCall" => {
             found.insert("expr.func");
             if boolean(node, "agg_distinct") {
@@ -892,21 +953,18 @@ fn detect(kind: &str, node: &Obj, parent: Option<&str>, sql: &str, obs: &mut Psq
         "MultiAssignRef" => {
             found.insert("update.set_row");
         }
+        _ => {}
+    }
+}
+
+/// A select-list entry.
+fn detect_targets(kind: &str, node: &Obj, parent: Option<&str>, obs: &mut PsqlObservation) {
+    let found = &mut obs.found;
+    match kind {
         "ResTarget" if parent == Some("SelectStmt") && !text(node, "name").is_empty() => {
             found.insert("expr.alias");
         }
         _ => {}
-    }
-
-    // The `WITH [RECURSIVE]` flag lives on a plain struct field of the four
-    // statements, so it is read here rather than through a node key.
-    if matches!(
-        kind,
-        "SelectStmt" | "InsertStmt" | "UpdateStmt" | "DeleteStmt"
-    ) && let Some(with) = object(node, "with_clause")
-        && boolean(with, "recursive")
-    {
-        obs.found.insert("cte.recursive");
     }
 }
 
