@@ -1,0 +1,369 @@
+{
+  "generator": "keelson-gen 0.1.1",
+  "version": 1,
+  "dialect": "sqlite",
+  "schema": {
+    "tables": [
+      {
+        "name": "audit_logs",
+        "kind": "table",
+        "columns": [
+          {
+            "name": "id",
+            "db_type": "INTEGER",
+            "nullable": false,
+            "default": null,
+            "autoincrement": true,
+            "comment": null
+          },
+          {
+            "name": "entity",
+            "db_type": "TEXT",
+            "nullable": false,
+            "default": null,
+            "autoincrement": false,
+            "comment": null
+          },
+          {
+            "name": "entity_id",
+            "db_type": "INTEGER",
+            "nullable": false,
+            "default": null,
+            "autoincrement": false,
+            "comment": null
+          },
+          {
+            "name": "note",
+            "db_type": "TEXT",
+            "nullable": false,
+            "default": null,
+            "autoincrement": false,
+            "comment": null
+          }
+        ],
+        "primary_key": [
+          "id"
+        ],
+        "foreign_keys": [],
+        "unique_keys": []
+      },
+      {
+        "name": "comments",
+        "kind": "table",
+        "columns": [
+          {
+            "name": "id",
+            "db_type": "INTEGER",
+            "nullable": false,
+            "default": null,
+            "autoincrement": true,
+            "comment": null
+          },
+          {
+            "name": "post_id",
+            "db_type": "INTEGER",
+            "nullable": false,
+            "default": null,
+            "autoincrement": false,
+            "comment": null
+          },
+          {
+            "name": "user_id",
+            "db_type": "INTEGER",
+            "nullable": true,
+            "default": null,
+            "autoincrement": false,
+            "comment": null
+          },
+          {
+            "name": "body",
+            "db_type": "TEXT",
+            "nullable": false,
+            "default": null,
+            "autoincrement": false,
+            "comment": null
+          },
+          {
+            "name": "created_at",
+            "db_type": "TEXT",
+            "nullable": false,
+            "default": "CURRENT_TIMESTAMP",
+            "autoincrement": false,
+            "comment": null
+          }
+        ],
+        "primary_key": [
+          "id"
+        ],
+        "foreign_keys": [
+          {
+            "columns": [
+              "post_id"
+            ],
+            "ref_table": "posts",
+            "ref_columns": [
+              "id"
+            ]
+          },
+          {
+            "columns": [
+              "user_id"
+            ],
+            "ref_table": "users",
+            "ref_columns": [
+              "id"
+            ]
+          }
+        ],
+        "unique_keys": []
+      },
+      {
+        "name": "post_authors",
+        "kind": "view",
+        "columns": [
+          {
+            "name": "post_id",
+            "db_type": "INTEGER",
+            "nullable": true,
+            "default": null,
+            "autoincrement": false,
+            "comment": null
+          },
+          {
+            "name": "title",
+            "db_type": "TEXT",
+            "nullable": true,
+            "default": null,
+            "autoincrement": false,
+            "comment": null
+          },
+          {
+            "name": "user_id",
+            "db_type": "INTEGER",
+            "nullable": true,
+            "default": null,
+            "autoincrement": false,
+            "comment": null
+          },
+          {
+            "name": "user_name",
+            "db_type": "TEXT",
+            "nullable": true,
+            "default": null,
+            "autoincrement": false,
+            "comment": null
+          }
+        ],
+        "primary_key": [],
+        "foreign_keys": [],
+        "unique_keys": []
+      },
+      {
+        "name": "post_tags",
+        "kind": "table",
+        "columns": [
+          {
+            "name": "post_id",
+            "db_type": "INTEGER",
+            "nullable": false,
+            "default": null,
+            "autoincrement": false,
+            "comment": null
+          },
+          {
+            "name": "tag_id",
+            "db_type": "INTEGER",
+            "nullable": false,
+            "default": null,
+            "autoincrement": false,
+            "comment": null
+          }
+        ],
+        "primary_key": [
+          "post_id",
+          "tag_id"
+        ],
+        "foreign_keys": [
+          {
+            "columns": [
+              "post_id"
+            ],
+            "ref_table": "posts",
+            "ref_columns": [
+              "id"
+            ]
+          },
+          {
+            "columns": [
+              "tag_id"
+            ],
+            "ref_table": "tags",
+            "ref_columns": [
+              "id"
+            ]
+          }
+        ],
+        "unique_keys": []
+      },
+      {
+        "name": "posts",
+        "kind": "table",
+        "columns": [
+          {
+            "name": "id",
+            "db_type": "INTEGER",
+            "nullable": false,
+            "default": null,
+            "autoincrement": true,
+            "comment": null
+          },
+          {
+            "name": "user_id",
+            "db_type": "INTEGER",
+            "nullable": false,
+            "default": null,
+            "autoincrement": false,
+            "comment": null
+          },
+          {
+            "name": "title",
+            "db_type": "TEXT",
+            "nullable": false,
+            "default": null,
+            "autoincrement": false,
+            "comment": null
+          },
+          {
+            "name": "status",
+            "db_type": "TEXT",
+            "nullable": true,
+            "default": null,
+            "autoincrement": false,
+            "comment": null
+          },
+          {
+            "name": "views",
+            "db_type": "INTEGER",
+            "nullable": false,
+            "default": "0",
+            "autoincrement": false,
+            "comment": null
+          },
+          {
+            "name": "published_at",
+            "db_type": "TEXT",
+            "nullable": true,
+            "default": null,
+            "autoincrement": false,
+            "comment": null
+          }
+        ],
+        "primary_key": [
+          "id"
+        ],
+        "foreign_keys": [
+          {
+            "columns": [
+              "user_id"
+            ],
+            "ref_table": "users",
+            "ref_columns": [
+              "id"
+            ]
+          }
+        ],
+        "unique_keys": []
+      },
+      {
+        "name": "tags",
+        "kind": "table",
+        "columns": [
+          {
+            "name": "id",
+            "db_type": "INTEGER",
+            "nullable": false,
+            "default": null,
+            "autoincrement": true,
+            "comment": null
+          },
+          {
+            "name": "name",
+            "db_type": "TEXT",
+            "nullable": false,
+            "default": null,
+            "autoincrement": false,
+            "comment": null
+          }
+        ],
+        "primary_key": [
+          "id"
+        ],
+        "foreign_keys": [],
+        "unique_keys": [
+          [
+            "name"
+          ]
+        ]
+      },
+      {
+        "name": "users",
+        "kind": "table",
+        "columns": [
+          {
+            "name": "id",
+            "db_type": "INTEGER",
+            "nullable": false,
+            "default": null,
+            "autoincrement": true,
+            "comment": null
+          },
+          {
+            "name": "name",
+            "db_type": "TEXT",
+            "nullable": false,
+            "default": null,
+            "autoincrement": false,
+            "comment": null
+          },
+          {
+            "name": "email",
+            "db_type": "TEXT",
+            "nullable": true,
+            "default": null,
+            "autoincrement": false,
+            "comment": null
+          },
+          {
+            "name": "age",
+            "db_type": "INTEGER",
+            "nullable": true,
+            "default": null,
+            "autoincrement": false,
+            "comment": null
+          },
+          {
+            "name": "is_active",
+            "db_type": "BOOLEAN",
+            "nullable": false,
+            "default": "1",
+            "autoincrement": false,
+            "comment": null
+          },
+          {
+            "name": "created_at",
+            "db_type": "TEXT",
+            "nullable": false,
+            "default": "CURRENT_TIMESTAMP",
+            "autoincrement": false,
+            "comment": null
+          }
+        ],
+        "primary_key": [
+          "id"
+        ],
+        "foreign_keys": [],
+        "unique_keys": []
+      }
+    ]
+  }
+}

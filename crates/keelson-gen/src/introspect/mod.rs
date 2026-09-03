@@ -15,15 +15,62 @@ pub(crate) mod mysql;
 pub(crate) mod psql;
 pub(crate) mod sqlite;
 
+use std::path::PathBuf;
+
 use crate::config::{Config, Dialect};
 use crate::error::{GenError, Result};
-use crate::schema::Schema;
+use crate::schema::{Schema, Snapshot};
+
+/// Where a [`Schema`] came from.
+///
+/// The callers that write ([`crate::run`]) and the callers that compare
+/// ([`crate::check`]) both need to know: a schema read from the live catalog
+/// is what a snapshot file should be refreshed to (or checked against), and a
+/// schema read *from* that file cannot be either.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Origin {
+    /// Read from the live catalog.
+    Database,
+    /// Read from the committed snapshot at this path.
+    Snapshot(PathBuf),
+}
 
 /// Introspect the database the config points at.
+///
+/// With no `url`, falls back to the configured schema snapshot — see
+/// [`introspect_from`] for the rule.
 pub fn introspect(config: &Config) -> Result<Schema> {
-    let url = config.url.as_deref().ok_or_else(|| {
-        GenError::Config("no `url` in the config (and none given on the command line)".to_owned())
-    })?;
+    introspect_from(config).map(|(schema, _)| schema)
+}
+
+/// [`introspect`], saying where the answer came from.
+///
+/// The rule is one line: **a `url` wins, a snapshot is the fallback.** The
+/// live catalog is the truth and is used whenever it is reachable; the
+/// snapshot exists so that a checkout without a database is not stuck, not so
+/// that anyone can prefer it to the database by accident.
+pub fn introspect_from(config: &Config) -> Result<(Schema, Origin)> {
+    match (config.url.as_deref(), config.snapshot.as_deref()) {
+        (Some(url), _) => Ok((live(config, url)?, Origin::Database)),
+        (None, Some(path)) => {
+            let path = PathBuf::from(path);
+            let mut schema = Snapshot::load(&path)?.schema_for(config.dialect, &path)?;
+            // A snapshot is written canonicalised, but a hand-edited one may
+            // not be, and the emitter's determinism is not the file's promise
+            // to keep.
+            canonicalise(&mut schema);
+            Ok((schema, Origin::Snapshot(path)))
+        }
+        (None, None) => Err(GenError::Config(
+            "no `url` in the config (and none given on the command line), and no `snapshot` \
+             to read instead"
+                .to_owned(),
+        )),
+    }
+}
+
+/// Introspect the live catalog.
+fn live(config: &Config, url: &str) -> Result<Schema> {
     match config.dialect {
         Dialect::Sqlite => sqlite::introspect(url),
         Dialect::Psql => psql::introspect(url, &config.schema),

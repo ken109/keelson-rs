@@ -150,6 +150,7 @@
 //! `[output] factories = true` cannot cover a writable view and says so.
 
 #![warn(missing_docs)]
+#![forbid(unsafe_code)]
 
 pub mod config;
 mod emit;
@@ -168,12 +169,61 @@ pub use config::Config;
 pub use error::{GenError, Result};
 pub use typemap::ResolvedType;
 
-/// Introspect the configured database and render every generated file as
-/// `(file name, contents)`, `mod.rs` first — without touching the
-/// filesystem.
+/// Introspect the configured database — or read the configured schema
+/// snapshot — and render every generated file as `(file name, contents)`,
+/// `mod.rs` first, without touching the filesystem.
 pub fn generate(config: &Config) -> Result<Vec<(String, String)>> {
     let schema = introspect::introspect(config)?;
     generate_from_schema(&schema, config)
+}
+
+/// Introspect once, refreshing the configured schema snapshot when the answer
+/// came from a live catalog.
+///
+/// Every entry point that *writes* goes through here, so the snapshot is a
+/// by-product of an ordinary generator run rather than a second command
+/// somebody has to remember. A run that already read the snapshot rewrites
+/// nothing: there is no new truth to record.
+pub(crate) fn introspect_and_refresh(config: &Config) -> Result<(schema::Schema, Option<PathBuf>)> {
+    let (schema, origin) = introspect::introspect_from(config)?;
+    let Some(path) = config.snapshot.as_deref() else {
+        return Ok((schema, None));
+    };
+    if origin != introspect::Origin::Database {
+        return Ok((schema, None));
+    }
+    let mut canonical = schema.clone();
+    introspect::canonicalise(&mut canonical);
+    schema::Snapshot::new(config.dialect, canonical).save(path)?;
+    Ok((schema, Some(PathBuf::from(path))))
+}
+
+/// Introspect once, reporting how the configured schema snapshot differs from
+/// the live catalog.
+///
+/// The mirror of [`introspect_and_refresh`], and the reason `--check` against
+/// a real database is worth running at all: it is the only thing that can
+/// catch a snapshot somebody forgot to commit. Against the snapshot itself
+/// there is nothing to compare, and nothing is reported.
+pub(crate) fn introspect_and_check(config: &Config) -> Result<(schema::Schema, Vec<Drift>)> {
+    let (schema, origin) = introspect::introspect_from(config)?;
+    let Some(path) = config.snapshot.as_deref() else {
+        return Ok((schema, Vec::new()));
+    };
+    if origin != introspect::Origin::Database {
+        return Ok((schema, Vec::new()));
+    }
+    let path = PathBuf::from(path);
+    let mut canonical = schema.clone();
+    introspect::canonicalise(&mut canonical);
+    let rendered = schema::Snapshot::new(config.dialect, canonical).to_json()?;
+    let drift = match std::fs::read_to_string(&path) {
+        Ok(on_disk) if on_disk == rendered => Vec::new(),
+        Ok(_) => vec![Drift::Stale(path)],
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => vec![Drift::Missing(path)],
+        Err(e) => return Err(GenError::Io(e)),
+    };
+    Ok((schema, drift))
 }
 
 /// Render from an already-held [`schema::Schema`] — the seam tests and
@@ -220,6 +270,111 @@ pub fn write_files(out_dir: &Path, files: &[(String, String)]) -> Result<Vec<Pat
     Ok(written)
 }
 
+/// One generated file that does not match what is on disk.
+///
+/// The three kinds are the three ways a committed generated tree can be wrong,
+/// and they are kept apart because the fix differs: a `Missing` file was never
+/// committed, a `Stale` one was committed before the schema moved, and an
+/// `Orphaned` one belongs to a table that no longer exists — the file
+/// [`write_files`] would have deleted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Drift {
+    /// The generator writes this file and the output directory does not have
+    /// it.
+    Missing(PathBuf),
+    /// The file is there and its contents are not what the generator renders.
+    Stale(PathBuf),
+    /// A file carrying the `@generated` header that the generator no longer
+    /// writes.
+    Orphaned(PathBuf),
+}
+
+impl Drift {
+    /// The path the drift is about.
+    pub fn path(&self) -> &Path {
+        match self {
+            Drift::Missing(p) | Drift::Stale(p) | Drift::Orphaned(p) => p,
+        }
+    }
+}
+
+impl std::fmt::Display for Drift {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Drift::Missing(p) => write!(f, "{}: not generated yet", p.display()),
+            Drift::Stale(p) => write!(f, "{}: out of date", p.display()),
+            Drift::Orphaned(p) => write!(f, "{}: no longer generated", p.display()),
+        }
+    }
+}
+
+/// [`write_files`] without the writing: compare rendered files against
+/// `out_dir` and report what differs.
+///
+/// This is the half of the *migrate → regenerate → compile* loop that a CI job
+/// needs. Committed generated code is only safe if something notices when it
+/// stops matching the schema it came from, and noticing must not require
+/// write access to the checkout — so nothing here touches the filesystem
+/// except to read.
+///
+/// An empty result means the tree on disk is byte-for-byte what a run of the
+/// generator would produce. The `@generated` rule is the same one
+/// [`write_files`] deletes by, so a hand-written file dropped into the
+/// directory is not reported as orphaned any more than it would be removed.
+pub fn check_files(out_dir: &Path, files: &[(String, String)]) -> Result<Vec<Drift>> {
+    let mut drift = Vec::new();
+
+    for (name, rendered) in files {
+        let path = out_dir.join(name);
+        match std::fs::read_to_string(&path) {
+            Ok(on_disk) if &on_disk == rendered => {}
+            Ok(_) => drift.push(Drift::Stale(path)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => drift.push(Drift::Missing(path)),
+            Err(e) => return Err(GenError::Io(e)),
+        }
+    }
+
+    // A missing output directory is not an error here: every file it should
+    // hold is already reported as `Missing`, and reporting the directory as
+    // well would say the same thing twice.
+    match std::fs::read_dir(out_dir) {
+        Ok(entries) => {
+            for entry in entries {
+                let path = entry?.path();
+                let is_ours = path.extension().is_some_and(|e| e == "rs")
+                    && std::fs::read_to_string(&path)
+                        .is_ok_and(|s| s.starts_with("// @generated by keelson-gen"));
+                let still_wanted = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| files.iter().any(|(f, _)| f == n));
+                if is_ours && !still_wanted {
+                    drift.push(Drift::Orphaned(path));
+                }
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(GenError::Io(e)),
+    }
+
+    drift.sort_by(|a, b| a.path().cmp(b.path()));
+    Ok(drift)
+}
+
+/// [`run`] without the writing: introspect, render, and report how the
+/// configured output directory differs. What the CLI's `--check` calls.
+pub fn check(config: &Config) -> Result<Vec<Drift>> {
+    let out = config.out.clone().ok_or_else(|| {
+        GenError::Config(
+            "no `out` directory in the config (and none given on the command line)".to_owned(),
+        )
+    })?;
+    let (schema, mut drift) = introspect_and_check(config)?;
+    let files = generate_from_schema(&schema, config)?;
+    drift.extend(check_files(Path::new(&out), &files)?);
+    Ok(drift)
+}
+
 /// The documented main entry: introspect, render, write to the configured
 /// output directory. This is what the `keelson-gen` binary calls.
 pub fn run(config: &Config) -> Result<Vec<PathBuf>> {
@@ -228,6 +383,9 @@ pub fn run(config: &Config) -> Result<Vec<PathBuf>> {
             "no `out` directory in the config (and none given on the command line)".to_owned(),
         )
     })?;
-    let files = generate(config)?;
-    write_files(Path::new(&out), &files)
+    let (schema, snapshot) = introspect_and_refresh(config)?;
+    let files = generate_from_schema(&schema, config)?;
+    let mut written = write_files(Path::new(&out), &files)?;
+    written.extend(snapshot);
+    Ok(written)
 }

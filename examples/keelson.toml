@@ -11,6 +11,15 @@
 dialect = "sqlite"
 out = "src/models"
 
+# The committed schema snapshot. With `--url` the generator reads the database
+# and rewrites this; with no `--url` it reads this instead — which is how
+# `keelson-gen --check` runs in a job that has no database, and how a checkout
+# without one can still regenerate. It is a generated file like `src/models/`
+# is: refreshed by the same run, reviewed in the same diff.
+#
+#     keelson-gen --config keelson.toml --check
+snapshot = "schema.snapshot.json"
+
 # Hooks are hand-written and live *outside* the generated tree; the generated
 # `Table` impl delegates to `crate::hooks::<table>::<hook>`.
 [hooks]

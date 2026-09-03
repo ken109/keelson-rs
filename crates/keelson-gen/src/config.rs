@@ -39,12 +39,15 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::path::Path;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::error::{GenError, Result};
 
 /// Which dialect to introspect and emit for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+///
+/// `Serialize` as well as `Deserialize` because a schema snapshot records the
+/// dialect it was taken from (see [`crate::schema::Snapshot`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Dialect {
     /// PostgreSQL: introspect `pg_catalog`, emit against `keelson_psql`.
@@ -55,6 +58,24 @@ pub enum Dialect {
     /// MySQL: introspect `information_schema`, emit against `keelson_mysql`
     /// — with the no-`RETURNING` mutation surface (see the crate docs).
     Mysql,
+}
+
+impl Dialect {
+    /// The name this dialect is spelled with in `keelson.toml` and in a
+    /// snapshot file.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Dialect::Psql => "psql",
+            Dialect::Sqlite => "sqlite",
+            Dialect::Mysql => "mysql",
+        }
+    }
+}
+
+impl fmt::Display for Dialect {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
 }
 
 /// The seven hook methods a table can opt into delegating.
@@ -109,6 +130,18 @@ pub struct Config {
     /// business — the generator reads whatever the connection sees.
     #[serde(default)]
     pub url: Option<String>,
+    /// Where to keep a committed [`Snapshot`](crate::schema::Snapshot) of the
+    /// introspected schema.
+    ///
+    /// This is the other answer to "what schema am I generating from": with a
+    /// `url` the generator reads the database and, if this is set, refreshes
+    /// the file; with no `url` it reads the file. That is what lets a CI job
+    /// run `--check`, and a contributor run the generator, without a database
+    /// in the loop. Unlike `url`, this belongs in the committed config — a
+    /// connection string is an environment's business, but where the snapshot
+    /// lives is the repository's.
+    #[serde(default)]
+    pub snapshot: Option<String>,
     /// The directory the generated files land in.
     #[serde(default)]
     pub out: Option<String>,
