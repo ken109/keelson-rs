@@ -20,6 +20,28 @@ live-docker = ["live", "dep:testcontainers", "dep:testcontainers-modules", "dep:
 # own can still have its SQL judged. Off by default because it is the one thing
 # here that depends on the workspace.
 testing = ["dep:keelson-core"]
+# Exposes `keelson_sqlcheck::conformance`: the round-trip suite every execution
+# backend has to pass, written against `&dyn Executor` so one copy serves all of
+# them. Off by default — it is the only thing here that reaches past
+# keelson-core into the execution layer, and a crate judging SQL grammar wants
+# none of it.
+conformance = [
+    "dep:keelson-core",
+    "dep:keelson-exec",
+    "dep:chrono",
+    "dep:uuid",
+    "keelson-core/chrono",
+    "keelson-core/uuid",
+    "keelson-core/json",
+]
+# `Decimal` in the conformance suite. Separate because it is the one mapped
+# type a backend can honestly not carry: `rust_decimal`'s PostgreSQL support is
+# a feature *of rust_decimal*, and Cargo unifies features across a workspace,
+# so keelson-tokio-postgres declines it on purpose (its crate docs say why) and
+# enables `conformance` alone. Declining it in a manifest is the point — the
+# gap is written down where dependencies are, instead of being a suite that is
+# quietly shorter on one backend.
+conformance-decimal = ["conformance", "dep:rust_decimal", "keelson-core/decimal"]
 
 [dependencies]
 # For `testing` only, and only for the `Dialect` / `Expression` traits.
@@ -27,6 +49,12 @@ testing = ["dep:keelson-core"]
 # dev-dependencies is the one Cargo permits, and it is the whole reason the
 # stand-in dialect lives here rather than in a dialect crate.
 keelson-core = { workspace = true, optional = true }
+# For `conformance` only: the suite takes a `&dyn Executor` and nothing else,
+# which is the whole reason one copy can serve every backend.
+keelson-exec = { workspace = true, optional = true }
+chrono = { workspace = true, optional = true }
+uuid = { workspace = true, optional = true }
+rust_decimal = { workspace = true, optional = true }
 pg_query.workspace = true
 mysql = { workspace = true, optional = true }
 postgres = { workspace = true, optional = true }

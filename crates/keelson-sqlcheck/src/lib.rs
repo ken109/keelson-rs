@@ -42,6 +42,9 @@
 //! is a stand-in that lives here instead, where the dependency is a
 //! dev-dependency cycle Cargo allows.
 
+/// The round-trip suite every execution backend has to pass.
+#[cfg(feature = "conformance")]
+pub mod conformance;
 pub mod coverage;
 pub mod live;
 pub mod record;

@@ -55,7 +55,7 @@ serde_json = { workspace = true, optional = true }
 # — `cargo test` with no flags exercises the whole harness against real
 # SQLite; the server engines come in via `live-docker` above.
 keelson-sqlx = { path = ".", features = ["sqlite", "chrono", "uuid", "decimal", "json"] }
-keelson-sqlcheck = { path = "../keelson-sqlcheck" }
+keelson-sqlcheck = { path = "../keelson-sqlcheck", features = ["conformance-decimal"] }
 keelson-psql = { path = "../keelson-psql" }
 keelson-mysql = { path = "../keelson-mysql" }
 keelson-sqlite = { path = "../keelson-sqlite", features = ["macros"] }

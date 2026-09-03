@@ -1,7 +1,12 @@
-//! Round-trip tests for every mapped type in `docs/type-mappings.md`:
-//! bind → `INSERT` → `SELECT` back → compare with the type's own semantic
-//! equality. This is the executable form of the mappings table — the tests of
-//! each backend's `bind_value` and `decode_value` pair.
+//! What sqlx's three engines do with the mapped types *beyond* the shared
+//! floor.
+//!
+//! The floor — every mapped type out and back, with the edges of each — is
+//! `keelson_sqlcheck::conformance`, which every backend runs, so it is not
+//! written here. What is written here is what only these engines can be
+//! asked: PostgreSQL's narrower integer and float widths and its arrays,
+//! MySQL's unsigned ladder and its binary UUIDs, SQLite's pinned text forms,
+//! and the refusals each engine owes for a value it cannot store.
 //!
 //! Real SQLite always (in-process, so `cargo test` exercises the whole
 //! harness); real PostgreSQL 17 and MySQL 8.4 behind the `live-docker`
@@ -15,9 +20,10 @@
 use std::fmt::Debug;
 use std::sync::atomic::{AtomicI64, Ordering};
 
-use chrono::{DateTime, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, TimeZone as _, Utc};
+use chrono::{NaiveDate, NaiveDateTime, NaiveTime, TimeZone as _, Utc};
 use keelson_core::{FromValue, ToValue, Value};
 use keelson_exec::{ExecError, Executor, Family, Statement};
+use keelson_sqlcheck::conformance;
 use rust_decimal::Decimal;
 use uuid::Uuid;
 
@@ -66,134 +72,8 @@ async fn store(db: &dyn Executor, col: &str, v: Value) -> Result<Value, ExecErro
     rows[0].take_at::<Value>(0)
 }
 
-/// The canonical round-trip: a Rust value out and back, compared with its own
-/// equality.
-async fn rt<T>(db: &dyn Executor, col: &str, v: T)
-where
-    T: ToValue + FromValue + PartialEq + Debug + Clone,
-{
-    let out = store(db, col, v.clone().to_value())
-        .await
-        .unwrap_or_else(|e| panic!("column {col}: {e}"));
-    let back = T::from_value(out).unwrap_or_else(|e| panic!("column {col}: {e}"));
-    assert_eq!(back, v, "column {col} did not round-trip");
-}
-
-/// `None` for every mapped type: NULL out, NULL back.
-async fn rt_none<T>(db: &dyn Executor, col: &str)
-where
-    T: ToValue + FromValue + PartialEq + Debug + Clone,
-{
-    rt::<Option<T>>(db, col, None).await;
-}
-
 fn fixed_uuid() -> Uuid {
     Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap()
-}
-
-/// The shared per-family suite: every mapped type, canonical values plus the
-/// edges the mappings doc pins. Columns that exist on every family.
-async fn common_suite(db: &dyn Executor) {
-    // Booleans and integers.
-    rt(db, "c_bool", true).await;
-    rt(db, "c_bool", false).await;
-    rt(db, "c_i64", i64::MAX).await;
-    rt(db, "c_i64", i64::MIN).await;
-    rt(db, "c_i64", 0i64).await;
-
-    // Floats: exactly-representable values, so equality is honest.
-    rt(db, "c_f64", 1.5f64).await;
-    rt(db, "c_f64", -2.25f64).await;
-
-    // Text: empty, non-BMP unicode, and a 64 KiB body.
-    rt(db, "c_text", String::new()).await;
-    rt(db, "c_text", "crab 🦀 ∅ 日本語".to_owned()).await;
-    // 32 KiB: large enough to cross packet boundaries, inside MySQL's 64
-    // KiB TEXT cap.
-    rt(db, "c_text", "x".repeat(32 * 1024)).await;
-
-    // Bytes: empty, embedded NUL, 0xFF.
-    rt(db, "c_bytes", Vec::<u8>::new()).await;
-    rt(db, "c_bytes", vec![0u8, 1, 0, 255]).await;
-
-    // Dates: epoch, a leap day, the far end.
-    rt(db, "c_date", NaiveDate::from_ymd_opt(1970, 1, 1).unwrap()).await;
-    rt(db, "c_date", NaiveDate::from_ymd_opt(2024, 2, 29).unwrap()).await;
-    rt(db, "c_date", NaiveDate::from_ymd_opt(9999, 12, 31).unwrap()).await;
-
-    // Times: midnight, 3- and 6-digit fractions.
-    rt(db, "c_time", NaiveTime::from_hms_opt(0, 0, 0).unwrap()).await;
-    rt(
-        db,
-        "c_time",
-        NaiveTime::from_hms_milli_opt(23, 59, 59, 999).unwrap(),
-    )
-    .await;
-    rt(
-        db,
-        "c_time",
-        NaiveTime::from_hms_micro_opt(12, 34, 56, 123_456).unwrap(),
-    )
-    .await;
-
-    // Naive datetimes, with fractions.
-    let dt = NaiveDate::from_ymd_opt(2026, 7, 30)
-        .unwrap()
-        .and_hms_micro_opt(12, 34, 56, 789_000)
-        .unwrap();
-    rt(db, "c_dt", dt).await;
-
-    // Instants: a zoned bind (+09:00) must come back as the same instant in
-    // UTC — the offset is consumed, never stored.
-    let jst: DateTime<FixedOffset> = "2026-07-30T21:34:56.123456+09:00".parse().unwrap();
-    let utc = jst.with_timezone(&Utc);
-    let out = store(db, "c_tstz", jst.to_value()).await.unwrap();
-    assert_eq!(DateTime::<Utc>::from_value(out).unwrap(), utc);
-    rt(
-        db,
-        "c_tstz",
-        Utc.with_ymd_and_hms(2026, 7, 30, 12, 34, 56).unwrap(),
-    )
-    .await;
-
-    // UUIDs: nil, max, fixed.
-    rt(db, "c_uuid", Uuid::nil()).await;
-    rt(db, "c_uuid", Uuid::max()).await;
-    rt(db, "c_uuid", fixed_uuid()).await;
-
-    // Decimals: numeric equality; negatives; high precision.
-    rt(db, "c_dec", Decimal::new(1999, 2)).await; // 19.99
-    rt(db, "c_dec", Decimal::new(-12345, 4)).await; // -1.2345
-    rt(
-        db,
-        "c_dec",
-        "1234567890123456789012345.678".parse::<Decimal>().unwrap(),
-    )
-    .await;
-
-    // JSON: object, array, nested unicode keys, and the "null" document.
-    rt(
-        db,
-        "c_json",
-        serde_json::json!({"a": [1, 2], "b": {"日": "本"}}),
-    )
-    .await;
-    rt(db, "c_json", serde_json::json!([1, "two", null])).await;
-    rt(db, "c_json", serde_json::Value::Null).await;
-
-    // NULL through every mapped type: None → None.
-    rt_none::<bool>(db, "c_bool").await;
-    rt_none::<i64>(db, "c_i64").await;
-    rt_none::<f64>(db, "c_f64").await;
-    rt_none::<String>(db, "c_text").await;
-    rt_none::<Vec<u8>>(db, "c_bytes").await;
-    rt_none::<NaiveDate>(db, "c_date").await;
-    rt_none::<NaiveTime>(db, "c_time").await;
-    rt_none::<NaiveDateTime>(db, "c_dt").await;
-    rt_none::<DateTime<Utc>>(db, "c_tstz").await;
-    rt_none::<Uuid>(db, "c_uuid").await;
-    rt_none::<Decimal>(db, "c_dec").await;
-    rt_none::<serde_json::Value>(db, "c_json").await;
 }
 
 // ───────────────────────────── SQLite (always) ─────────────────────────────
@@ -225,7 +105,11 @@ mod sqlite_engine {
 
     #[tokio::test]
     async fn every_mapped_type_round_trips() {
-        common_suite(&pool().await).await;
+        let db = pool().await;
+        db.execute(Statement::new(conformance::ddl(Family::Sqlite), vec![]))
+            .await
+            .unwrap();
+        conformance::every_mapped_type_round_trips(&db).await;
     }
 
     /// SQLite stores every mapped type as its pinned text form; the exact
@@ -325,6 +209,21 @@ mod sqlite_engine {
 #[cfg(feature = "live-docker")]
 mod live_engines {
     use super::*;
+    use chrono::DateTime;
+
+    /// The canonical round-trip: a Rust value out and back, compared with its own
+    /// equality.
+    async fn rt<T>(db: &dyn Executor, col: &str, v: T)
+    where
+        T: ToValue + FromValue + PartialEq + Debug + Clone,
+    {
+        let out = store(db, col, v.clone().to_value())
+            .await
+            .unwrap_or_else(|e| panic!("column {col}: {e}"));
+        let back = T::from_value(out).unwrap_or_else(|e| panic!("column {col}: {e}"));
+        assert_eq!(back, v, "column {col} did not round-trip");
+    }
+
     use tokio::sync::Mutex as DdlMutex;
 
     /// Run `ddl` exactly once per process, serialised across parallel tests
@@ -368,6 +267,13 @@ mod live_engines {
                 c_arr_i64 int8[], c_arr_text text[])",
         )
         .await;
+        static CONFORMANCE_DONE: DdlMutex<bool> = DdlMutex::const_new(false);
+        ensure_ddl(
+            &pool,
+            &CONFORMANCE_DONE,
+            &conformance::ddl(Family::Postgres),
+        )
+        .await;
         pool
     }
 
@@ -394,13 +300,15 @@ mod live_engines {
                 c_dec DECIMAL(30, 4), c_json JSON)",
         )
         .await;
+        static CONFORMANCE_DONE: DdlMutex<bool> = DdlMutex::const_new(false);
+        ensure_ddl(&pool, &CONFORMANCE_DONE, &conformance::ddl(Family::MySql)).await;
         pool
     }
 
     #[tokio::test]
     async fn psql_every_mapped_type_round_trips() {
         let db = &psql_pool().await;
-        common_suite(db).await;
+        conformance::every_mapped_type_round_trips(db).await;
 
         // The narrower integer and float widths PostgreSQL types natively.
         rt(db, "c_i16", i16::MIN).await;
@@ -514,7 +422,7 @@ mod live_engines {
     #[tokio::test]
     async fn mysql_every_mapped_type_round_trips() {
         let db = &mysql_pool().await;
-        common_suite(db).await;
+        conformance::every_mapped_type_round_trips(db).await;
 
         // The full signed and unsigned ladder MySQL types natively.
         rt(db, "c_i8", i8::MIN).await;
