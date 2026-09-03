@@ -66,7 +66,8 @@ SELECT p.id,
        p.status = 'published'                        AS is_published,
        CASE WHEN p.views > 100 THEN 'hot' ELSE 'cold' END AS heat,
        CASE WHEN p.views > 100 THEN 'hot' END        AS maybe_heat,
-       p.views::bigint                               AS views_wide
+       p.views::bigint                               AS views_wide,
+       p.title::name                                 AS title_name
 FROM posts p
 ORDER BY p.id;
 

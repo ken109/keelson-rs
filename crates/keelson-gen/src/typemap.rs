@@ -107,11 +107,44 @@ fn matches(m: &Matcher, c: &ColumnDef) -> bool {
 }
 
 /// The built-in default table, per dialect.
+///
+/// Each table is handed exactly what it reads, rather than the whole
+/// [`ColumnDef`]: SQLite's needs the column's default expression and MySQL's
+/// needs the un-normalised type text. That is what lets [`cast_target`] reach
+/// the same tables — a cast has a type name and nothing else.
 fn default_type(dialect: Dialect, norm: &str, column: &ColumnDef) -> Option<&'static str> {
     match dialect {
         Dialect::Psql => psql_default(norm),
-        Dialect::Sqlite => sqlite_default(norm, column),
-        Dialect::Mysql => mysql_default(norm, column),
+        Dialect::Sqlite => sqlite_default(norm, column.default.as_deref()),
+        Dialect::Mysql => mysql_default(norm, &column.db_type.trim().to_lowercase()),
+    }
+}
+
+/// The Rust type for an explicit cast's target — `CAST(x AS numeric)`,
+/// `x::timestamptz` — or `None` when the dialect's table does not name it.
+///
+/// This is the *same* table [`resolve`] uses for columns, which is the whole
+/// point: a `NUMERIC` column and a cast to `NUMERIC` must not disagree about
+/// whether the value is a `Decimal`. The query analysers each used to carry
+/// their own smaller copy while their doc comments claimed otherwise, and the
+/// copies had drifted — SQLite's had no `numeric` rule at all, so
+/// `CAST(x AS NUMERIC)` inferred nothing where the identically typed column
+/// inferred `rust_decimal::Decimal`.
+///
+/// A cast has no column behind it, so the rules that read one do not fire: a
+/// SQLite `TEXT` cast is a `String` rather than the `NaiveDateTime` that a
+/// `TEXT DEFAULT CURRENT_TIMESTAMP` *column* resolves to, and MySQL's
+/// `tinyint(1)` → `bool` rule sees the cast's own text. An empty name is not
+/// a cast target and never reaches SQLite's "no declared type" rule.
+pub(crate) fn cast_target(dialect: Dialect, name: &str) -> Option<&'static str> {
+    let norm = normalise(name);
+    if norm.is_empty() {
+        return None;
+    }
+    match dialect {
+        Dialect::Psql => psql_default(&norm),
+        Dialect::Sqlite => sqlite_default(&norm, None),
+        Dialect::Mysql => mysql_default(&norm, &norm),
     }
 }
 
@@ -146,7 +179,7 @@ fn psql_default(norm: &str) -> Option<&'static str> {
 /// column will actually hold). Other datetime-intent `TEXT` columns are
 /// `String` until a `[[types.override]]` says otherwise — the schema simply
 /// does not carry the information.
-fn sqlite_default(norm: &str, column: &ColumnDef) -> Option<&'static str> {
+fn sqlite_default(norm: &str, default: Option<&str>) -> Option<&'static str> {
     // Exact names first: the intent-carrying declarations.
     match norm {
         "boolean" | "bool" => return Some("bool"),
@@ -160,11 +193,7 @@ fn sqlite_default(norm: &str, column: &ColumnDef) -> Option<&'static str> {
         return Some("i64"); // SQLite integers are 64-bit; there is no i32 column type
     }
     if norm.contains("char") || norm.contains("clob") || norm.contains("text") {
-        if column
-            .default
-            .as_deref()
-            .is_some_and(|d| d.trim().eq_ignore_ascii_case("current_timestamp"))
-        {
+        if default.is_some_and(|d| d.trim().eq_ignore_ascii_case("current_timestamp")) {
             return Some("chrono::NaiveDateTime");
         }
         return Some("String");
@@ -196,8 +225,7 @@ fn sqlite_default(norm: &str, column: &ColumnDef) -> Option<&'static str> {
 ///   maps `chrono::NaiveDateTime` onto `DATETIME` and
 ///   `chrono::DateTime<Utc>` onto `TIMESTAMP` (which MySQL converts through
 ///   the session zone the execution layer pins to `+00:00`).
-fn mysql_default(norm: &str, column: &ColumnDef) -> Option<&'static str> {
-    let raw = column.db_type.trim().to_lowercase();
+fn mysql_default(norm: &str, raw: &str) -> Option<&'static str> {
     if raw.starts_with("tinyint(1)") || norm == "bool" || norm == "boolean" {
         return Some("bool");
     }
@@ -262,6 +290,69 @@ mod tests {
         resolve(dialect, &Types::default(), &t, &c)
             .unwrap()
             .rust_type
+    }
+
+    /// The bug this consolidation fixes: the SQLite analyser's private cast
+    /// table had no `numeric`/`dec` rule, so a cast inferred nothing where
+    /// the identically typed column inferred a `Decimal`.
+    #[test]
+    fn a_cast_and_a_column_agree_on_the_same_type_name() {
+        for (dialect, db_type) in [
+            (Dialect::Sqlite, "NUMERIC"),
+            (Dialect::Sqlite, "DECIMAL(10, 2)"),
+            (Dialect::Psql, "numeric"),
+        ] {
+            assert_eq!(
+                cast_target(dialect, db_type),
+                Some("rust_decimal::Decimal"),
+                "{dialect:?} cast to `{db_type}`"
+            );
+            assert_eq!(plain(dialect, db_type), "rust_decimal::Decimal");
+        }
+    }
+
+    /// PostgreSQL writes a cast target as its internal name — `int`, `integer`
+    /// and `int4` all arrive as `int4`, `character` as `bpchar` — but `name`
+    /// arrives unqualified and was the one spelling the analyser's own table
+    /// had never listed.
+    #[test]
+    fn the_psql_cast_table_covers_the_internal_spellings() {
+        for (target, rust) in [
+            ("int4", "i32"),
+            ("bpchar", "String"),
+            ("timestamptz", "chrono::DateTime<chrono::Utc>"),
+            ("citext", "String"),
+            ("name", "String"),
+        ] {
+            assert_eq!(cast_target(Dialect::Psql, target), Some(rust), "{target}");
+        }
+    }
+
+    /// A cast carries no column, so the rules that read one stay quiet: a
+    /// SQLite `TEXT` cast is a `String`, never the `NaiveDateTime` that a
+    /// `TEXT DEFAULT CURRENT_TIMESTAMP` column resolves to.
+    #[test]
+    fn a_cast_does_not_inherit_a_columns_default_rule() {
+        assert_eq!(cast_target(Dialect::Sqlite, "TEXT"), Some("String"));
+        let c = ColumnDef {
+            default: Some("CURRENT_TIMESTAMP".to_owned()),
+            ..col("at", "TEXT", false)
+        };
+        let t = table("t", vec![c.clone()]);
+        assert_eq!(
+            resolve(Dialect::Sqlite, &Types::default(), &t, &c)
+                .unwrap()
+                .rust_type,
+            "chrono::NaiveDateTime"
+        );
+    }
+
+    /// An empty name is not a cast target, and must not fall into SQLite's
+    /// "no declared type means BLOB affinity" rule.
+    #[test]
+    fn an_empty_cast_target_is_not_a_blob() {
+        assert_eq!(cast_target(Dialect::Sqlite, ""), None);
+        assert_eq!(cast_target(Dialect::Sqlite, "   "), None);
     }
 
     #[test]

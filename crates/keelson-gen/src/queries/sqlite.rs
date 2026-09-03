@@ -527,7 +527,10 @@ impl Scope<'_> {
             ast::Expr::Cast { expr, type_name } => {
                 let inner = self.infer(expr)?;
                 let target = type_name.as_ref().map(|t| t.name.to_string());
-                match target.as_deref().and_then(sqlite_type_to_rust) {
+                match target
+                    .as_deref()
+                    .and_then(|n| crate::typemap::cast_target(Dialect::Sqlite, n))
+                {
                     Some(t) => Inferred::known(t, inner.nullable, "N13"),
                     None => Inferred::unknown("N13"),
                 }
@@ -812,29 +815,4 @@ fn literal(lit: &ast::Literal<'_>) -> Inferred {
             Inferred::known("chrono::NaiveDateTime", false, "N8").named("current_timestamp")
         }
     }
-}
-
-/// A cast's target type name → the Rust type, by SQLite's own affinity rules
-/// (the same ones `crate::typemap` applies to a declared column type).
-fn sqlite_type_to_rust(name: &str) -> Option<&'static str> {
-    let n = name.to_ascii_lowercase();
-    Some(match n.as_str() {
-        "boolean" | "bool" => "bool",
-        "datetime" | "timestamp" => "chrono::NaiveDateTime",
-        "date" => "chrono::NaiveDate",
-        "time" => "chrono::NaiveTime",
-        _ => {
-            if n.contains("int") {
-                "i64"
-            } else if n.contains("char") || n.contains("clob") || n.contains("text") {
-                "String"
-            } else if n.contains("blob") {
-                "Vec<u8>"
-            } else if n.contains("real") || n.contains("floa") || n.contains("doub") {
-                "f64"
-            } else {
-                return None;
-            }
-        }
-    })
 }

@@ -256,6 +256,11 @@ fn the_expression_rules() {
             ("heat", "String", false, "N9"),
             ("maybe_heat", "String", true, "N9"),
             ("views_wide", "i64", false, "N13"),
+            // PostgreSQL writes a cast target as its internal type name, and
+            // `name` is one the analyser's own copy of the type table had
+            // never listed — it inferred nothing here. Casts now go through
+            // `typemap`, the table the model generator reads for columns.
+            ("title_name", "String", false, "N13"),
         ],
     );
 }

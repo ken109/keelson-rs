@@ -6,7 +6,7 @@
 /// The query file, verbatim. Every span below indexes it.
 const SOURCE: &str = include_str!("../../queries/psql/posts.sql");
 const _: () = assert!(
-    SOURCE.len() == 4758usize,
+    SOURCE.len() == 4826usize,
     "tests/queries/psql/posts.sql changed after it was generated from; re-run keelson-gen"
 );
 /// Parameters of `posts_for_user`.
@@ -568,6 +568,8 @@ pub struct PostFlagsRow {
     pub maybe_heat: Option<String>,
     /// `views_wide` — never NULL by rule N13.
     pub views_wide: i64,
+    /// `title_name` — never NULL by rule N13.
+    pub title_name: String,
 }
 impl keelson_exec::FromRow for PostFlagsRow {
     fn from_row(row: &mut keelson_exec::Row) -> Result<Self, keelson_exec::ExecError> {
@@ -579,6 +581,7 @@ impl keelson_exec::FromRow for PostFlagsRow {
             heat: row.take("heat")?,
             maybe_heat: row.take("maybe_heat")?,
             views_wide: row.take("views_wide")?,
+            title_name: row.take("title_name")?,
         })
     }
 }
@@ -600,7 +603,7 @@ impl keelson_core::Expression for PostFlagsQuery {
         let args = self.params.args();
         w.push_str(&SOURCE[2419usize..2517usize]);
         w.push_arg(args[0].clone());
-        w.push_str(&SOURCE[2519usize..2866usize]);
+        w.push_str(&SOURCE[2519usize..2934usize]);
     }
 }
 impl keelson_core::Query for PostFlagsQuery {
@@ -656,7 +659,7 @@ pub fn post_flags_mod(
                             keelson_core::expr_fn(move |
                                 w: &mut keelson_core::SqlWriter<'_>|
                             {
-                                w.push_str(&SOURCE[2845usize..2852usize]);
+                                w.push_str(&SOURCE[2913usize..2920usize]);
                             }),
                         ),
                     );
@@ -667,7 +670,7 @@ pub fn post_flags_mod(
                 .append_order(
                     keelson_core::dyn_expr(
                         keelson_core::expr_fn(move |w: &mut keelson_core::SqlWriter<'_>| {
-                            w.push_str(&SOURCE[2862usize..2866usize]);
+                            w.push_str(&SOURCE[2930usize..2934usize]);
                         }),
                     ),
                 );
@@ -744,7 +747,7 @@ impl PostsWithTagsQuery {
 }
 impl keelson_core::Expression for PostsWithTagsQuery {
     fn write_sql(&self, w: &mut keelson_core::SqlWriter<'_>) {
-        w.push_str(&SOURCE[3030usize..3189usize]);
+        w.push_str(&SOURCE[3098usize..3257usize]);
     }
 }
 impl keelson_core::Query for PostsWithTagsQuery {
@@ -815,7 +818,7 @@ pub fn posts_with_tags_mod(
                             keelson_core::expr_fn(move |
                                 w: &mut keelson_core::SqlWriter<'_>|
                             {
-                                w.push_str(&SOURCE[3079usize..3167usize]);
+                                w.push_str(&SOURCE[3147usize..3235usize]);
                             }),
                         ),
                     );
@@ -826,7 +829,7 @@ pub fn posts_with_tags_mod(
                 .append_order(
                     keelson_core::dyn_expr(
                         keelson_core::expr_fn(move |w: &mut keelson_core::SqlWriter<'_>| {
-                            w.push_str(&SOURCE[3177usize..3189usize]);
+                            w.push_str(&SOURCE[3245usize..3257usize]);
                         }),
                     ),
                 );
@@ -902,7 +905,7 @@ impl UserByIdQuery {
 impl keelson_core::Expression for UserByIdQuery {
     fn write_sql(&self, w: &mut keelson_core::SqlWriter<'_>) {
         let args = self.params.args();
-        w.push_str(&SOURCE[3272usize..3361usize]);
+        w.push_str(&SOURCE[3340usize..3429usize]);
         w.push_arg(args[0].clone());
     }
 }
@@ -951,7 +954,7 @@ pub fn user_by_id_mod(
                             keelson_core::expr_fn(move |
                                 w: &mut keelson_core::SqlWriter<'_>|
                             {
-                                w.push_str(&SOURCE[3340usize..3347usize]);
+                                w.push_str(&SOURCE[3408usize..3415usize]);
                             }),
                         ),
                     );
@@ -964,7 +967,7 @@ pub fn user_by_id_mod(
                     keelson_core::dyn_expr(
                         keelson_core::expr_fn(move |w: &mut keelson_core::SqlWriter<'_>| {
                             w.push_str("(");
-                            w.push_str(&SOURCE[3354usize..3361usize]);
+                            w.push_str(&SOURCE[3422usize..3429usize]);
                             w.push_arg(a0.clone());
                             w.push_str(")");
                         }),
@@ -1030,9 +1033,9 @@ impl AnnotatedQuery {
 impl keelson_core::Expression for AnnotatedQuery {
     fn write_sql(&self, w: &mut keelson_core::SqlWriter<'_>) {
         let args = self.params.args();
-        w.push_str(&SOURCE[3702usize..3772usize]);
+        w.push_str(&SOURCE[3770usize..3840usize]);
         w.push_arg(args[0].clone());
-        w.push_str(&SOURCE[3774usize..3788usize]);
+        w.push_str(&SOURCE[3842usize..3856usize]);
     }
 }
 impl keelson_core::Query for AnnotatedQuery {
@@ -1084,7 +1087,7 @@ pub fn annotated_mod(
                             keelson_core::expr_fn(move |
                                 w: &mut keelson_core::SqlWriter<'_>|
                             {
-                                w.push_str(&SOURCE[3745usize..3752usize]);
+                                w.push_str(&SOURCE[3813usize..3820usize]);
                             }),
                         ),
                     );
@@ -1097,7 +1100,7 @@ pub fn annotated_mod(
                     keelson_core::dyn_expr(
                         keelson_core::expr_fn(move |w: &mut keelson_core::SqlWriter<'_>| {
                             w.push_str("(");
-                            w.push_str(&SOURCE[3759usize..3772usize]);
+                            w.push_str(&SOURCE[3827usize..3840usize]);
                             w.push_arg(a0.clone());
                             w.push_str(")");
                         }),
@@ -1109,7 +1112,7 @@ pub fn annotated_mod(
                 .append_order(
                     keelson_core::dyn_expr(
                         keelson_core::expr_fn(move |w: &mut keelson_core::SqlWriter<'_>| {
-                            w.push_str(&SOURCE[3784usize..3788usize]);
+                            w.push_str(&SOURCE[3852usize..3856usize]);
                         }),
                     ),
                 );
@@ -1166,7 +1169,7 @@ impl TitlesUnionQuery {
 }
 impl keelson_core::Expression for TitlesUnionQuery {
     fn write_sql(&self, w: &mut keelson_core::SqlWriter<'_>) {
-        w.push_str(&SOURCE[3954usize..4035usize]);
+        w.push_str(&SOURCE[4022usize..4103usize]);
     }
 }
 impl keelson_core::Query for TitlesUnionQuery {
@@ -1261,7 +1264,7 @@ impl UserByEmailQuery {
 impl keelson_core::Expression for UserByEmailQuery {
     fn write_sql(&self, w: &mut keelson_core::SqlWriter<'_>) {
         let args = self.params.args();
-        w.push_str(&SOURCE[4122usize..4171usize]);
+        w.push_str(&SOURCE[4190usize..4239usize]);
         w.push_arg(args[0].clone());
     }
 }
@@ -1310,7 +1313,7 @@ pub fn user_by_email_mod(
                             keelson_core::expr_fn(move |
                                 w: &mut keelson_core::SqlWriter<'_>|
                             {
-                                w.push_str(&SOURCE[4147usize..4154usize]);
+                                w.push_str(&SOURCE[4215usize..4222usize]);
                             }),
                         ),
                     );
@@ -1323,7 +1326,7 @@ pub fn user_by_email_mod(
                     keelson_core::dyn_expr(
                         keelson_core::expr_fn(move |w: &mut keelson_core::SqlWriter<'_>| {
                             w.push_str("(");
-                            w.push_str(&SOURCE[4161usize..4171usize]);
+                            w.push_str(&SOURCE[4229usize..4239usize]);
                             w.push_arg(a0.clone());
                             w.push_str(")");
                         }),
@@ -1373,7 +1376,7 @@ impl BumpViewsQuery {
 impl keelson_core::Expression for BumpViewsQuery {
     fn write_sql(&self, w: &mut keelson_core::SqlWriter<'_>) {
         let args = self.params.args();
-        w.push_str(&SOURCE[4337usize..4383usize]);
+        w.push_str(&SOURCE[4405usize..4451usize]);
         w.push_arg(args[0].clone());
     }
 }
@@ -1486,7 +1489,7 @@ impl CommentsWithPrefixedAuthorQuery {
 }
 impl keelson_core::Expression for CommentsWithPrefixedAuthorQuery {
     fn write_sql(&self, w: &mut keelson_core::SqlWriter<'_>) {
-        w.push_str(&SOURCE[4635usize..4756usize]);
+        w.push_str(&SOURCE[4703usize..4824usize]);
     }
 }
 impl keelson_core::Query for CommentsWithPrefixedAuthorQuery {
@@ -1543,7 +1546,7 @@ pub fn comments_with_prefixed_author_mod(
                             keelson_core::expr_fn(move |
                                 w: &mut keelson_core::SqlWriter<'_>|
                             {
-                                w.push_str(&SOURCE[4694usize..4742usize]);
+                                w.push_str(&SOURCE[4762usize..4810usize]);
                             }),
                         ),
                     );
@@ -1554,7 +1557,7 @@ pub fn comments_with_prefixed_author_mod(
                 .append_order(
                     keelson_core::dyn_expr(
                         keelson_core::expr_fn(move |w: &mut keelson_core::SqlWriter<'_>| {
-                            w.push_str(&SOURCE[4752usize..4756usize]);
+                            w.push_str(&SOURCE[4820usize..4824usize]);
                         }),
                     ),
                 );

@@ -572,7 +572,10 @@ impl Scope<'_> {
                     Some((k, n)) => self.infer(k, n)?,
                     None => Inferred::unknown("N13"),
                 };
-                match target.as_deref().and_then(psql_type_to_rust) {
+                match target
+                    .as_deref()
+                    .and_then(|n| crate::typemap::cast_target(Dialect::Psql, n))
+                {
                     Some(t) => Inferred::known(t, inner.nullable, "N13"),
                     None => Inferred::unknown("N13"),
                 }
@@ -752,8 +755,9 @@ impl Scope<'_> {
                         }
                         "TypeCast" => {
                             if let Some(("ParamRef", p)) = child(node, "arg")
-                                && let Some(t) =
-                                    type_name(node).as_deref().and_then(psql_type_to_rust)
+                                && let Some(t) = type_name(node)
+                                    .as_deref()
+                                    .and_then(|n| crate::typemap::cast_target(Dialect::Psql, n))
                             {
                                 let n = int(p, "number") as usize;
                                 out.entry(n)
@@ -928,27 +932,4 @@ fn widen_avg(arg: Option<&str>) -> String {
         _ => "rust_decimal::Decimal",
     }
     .to_owned()
-}
-
-/// A cast's target type name → the Rust type, through the same table the model
-/// generator uses for columns.
-fn psql_type_to_rust(name: &str) -> Option<&'static str> {
-    Some(match name.to_ascii_lowercase().as_str() {
-        "int2" | "smallint" => "i16",
-        "int4" | "int" | "integer" => "i32",
-        "int8" | "bigint" => "i64",
-        "float4" | "real" => "f32",
-        "float8" | "double precision" => "f64",
-        "bool" | "boolean" => "bool",
-        "text" | "varchar" | "bpchar" | "character varying" | "citext" => "String",
-        "bytea" => "Vec<u8>",
-        "date" => "chrono::NaiveDate",
-        "time" => "chrono::NaiveTime",
-        "timestamp" => "chrono::NaiveDateTime",
-        "timestamptz" => "chrono::DateTime<chrono::Utc>",
-        "uuid" => "uuid::Uuid",
-        "numeric" | "decimal" => "rust_decimal::Decimal",
-        "json" | "jsonb" => "serde_json::Value",
-        _ => return None,
-    })
 }
