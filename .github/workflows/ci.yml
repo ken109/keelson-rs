@@ -131,6 +131,19 @@ jobs:
       # The examples assert their own output, so running them is a behavioural
       # gate and not just a second compile. No services: SQLite in a temp file.
       - run: ./scripts/run-examples.sh
+      # `cargo package` and trybuild each build a project *inside* `target/`,
+      # and Swatinem/rust-cache's cleanup probes every directory it walks for
+      # the two nested-target layouts it knows (`<dir>/tests/target` and
+      # `<dir>/tests/trybuild`). Where those are absent the `opendir` rejects
+      # asynchronously, past the action's own `try`, and each one surfaces as a
+      # red error annotation on a run that passed — forty-four of them on this
+      # workflow. Neither tree is worth keeping: `target/package` is
+      # `cargo package` output and `target/tests` is trybuild scratch, both
+      # rebuilt from nothing every run. Removing them leaves nothing to probe.
+      # Every job that caches and produces either one does this.
+      - name: Drop the nested target trees before the cache is saved
+        if: always()
+        run: rm -rf target/tests target/package
 
   release-surface:
     name: docs / feature matrix / package
@@ -163,6 +176,11 @@ jobs:
           --exclude keelson-benches
           --exclude keelson-tokio-postgres
           --allow-dirty
+      # See the `fast` job: nothing to probe, nothing to annotate. This is the
+      # job that produced forty-four of them, one per packaged crate.
+      - name: Drop the nested target trees before the cache is saved
+        if: always()
+        run: rm -rf target/tests target/package
 
   coverage-gate:
     name: sqlcheck coverage gate (Tier D)
@@ -179,6 +197,10 @@ jobs:
         run: KEELSON_SQLCHECK_RECORD="$GITHUB_WORKSPACE/target/sqlcheck-record" cargo test --workspace
       - name: Replay recording against the construct manifests
         run: cargo run -p keelson-sqlcheck --bin coverage-gate -- target/sqlcheck-record
+      # See the `fast` job: nothing to probe, nothing to annotate.
+      - name: Drop the nested target trees before the cache is saved
+        if: always()
+        run: rm -rf target/tests target/package
 
   supply-chain:
     name: supply chain (cargo-deny)
@@ -277,3 +299,7 @@ jobs:
         run: |
           ids=$(docker ps -q --filter "label=org.testcontainers.managed-by=testcontainers")
           [ -n "$ids" ] && docker rm -f $ids || true
+      # See the `fast` job: nothing to probe, nothing to annotate.
+      - name: Drop the nested target trees before the cache is saved
+        if: always()
+        run: rm -rf target/tests target/package
