@@ -920,6 +920,9 @@ fn then_load_mod(
 ) -> Result<TokenStream> {
     let mut items = Vec::new();
 
+    // A belongs-to is the to-one direction of the same shape: this model's
+    // foreign key is the parent key, and the target's referenced column is
+    // what the keyed query filters on.
     for b in &m.belongs_to {
         let target = all
             .iter()
@@ -932,60 +935,9 @@ fn then_load_mod(
                 m.table, fk.db_name, b.target, b.ref_column
             ))
         })?;
-        let name = ident(&b.name);
-        let tmod = ident(&target.table);
-        let tmarker = ident(&target.marker);
-        let ref_fn = ident(&ref_c.field);
-        let kty = parse_type(&fk.rust_type, "relation key")?;
-        let fk_f = ident(&fk.field);
-
-        let collect = match (fk.nullable, is_copy(&fk.rust_type)) {
-            (false, true) => quote!(rows.iter().map(|r| r.#fk_f).collect()),
-            (false, false) => quote!(rows.iter().map(|r| r.#fk_f.clone()).collect()),
-            (true, true) => quote!(rows.iter().filter_map(|r| r.#fk_f).collect()),
-            (true, false) => quote!(rows.iter().filter_map(|r| r.#fk_f.clone()).collect()),
-        };
-        let parent_key = key_access_leveled(quote!(r), fk, ref_c.nullable);
-        let child_key = key_access_leveled(quote!(c), ref_c, fk.nullable);
-        let allow = if needs_copy_allow(&fk.rust_type) || needs_copy_allow(&ref_c.rust_type) {
-            quote!(#[allow(clippy::clone_on_copy)])
-        } else {
-            quote!()
-        };
-
-        let doc = format!(
-            " Load each row's `{}` (to-one), one keyed query per batch of keys \
-             — `.then(…)` hangs the next level of the path off this one.",
-            b.name
-        );
-        items.push(quote! {
-            #[doc = #doc]
-            #allow
-            pub fn #name() -> keelson_models::ThenLoad<
-                super::#marker,
-                super::super::#tmod::#tmarker,
-                #kty,
-            > {
-                keelson_models::ThenLoad::new(
-                    |rows: &[super::#row]| #collect,
-                    |keys, q| keelson_core::Mod::apply(
-                        super::super::#tmod::#ref_fn().in_(keys),
-                        q,
-                    ),
-                    |rows: &mut [super::#row], related| {
-                        keelson_models::attach_to_one(
-                            rows,
-                            related,
-                            |r| #parent_key,
-                            |c| #child_key,
-                            |r, c| {
-                                r.rel.#name = c.map(Box::new);
-                            },
-                        );
-                    },
-                )
-            }
-        });
+        items.push(then_load_item(
+            marker, row, &b.name, target, fk, ref_c, false,
+        )?);
     }
 
     for h in &m.has_many {
@@ -1005,86 +957,10 @@ fn then_load_mod(
                 h.child, h.child_fk_column
             ))
         })?;
-        let name = ident(&h.name);
-        let cmod = ident(&child.table);
-        let cmarker = ident(&child.marker);
-        let fk_fn = ident(&child_fk.field);
-        let kty = parse_type(&parent_c.rust_type, "relation key")?;
-        let key_f = ident(&parent_c.field);
-
-        let collect = match (parent_c.nullable, is_copy(&parent_c.rust_type)) {
-            (false, true) => quote!(rows.iter().map(|r| r.#key_f).collect()),
-            (false, false) => quote!(rows.iter().map(|r| r.#key_f.clone()).collect()),
-            (true, true) => quote!(rows.iter().filter_map(|r| r.#key_f).collect()),
-            (true, false) => quote!(rows.iter().filter_map(|r| r.#key_f.clone()).collect()),
-        };
-        let parent_key = key_access_leveled(quote!(r), parent_c, child_fk.nullable);
-        let child_key = key_access_leveled(quote!(c), child_fk, parent_c.nullable);
-        let allow =
-            if needs_copy_allow(&parent_c.rust_type) || needs_copy_allow(&child_fk.rust_type) {
-                quote!(#[allow(clippy::clone_on_copy)])
-            } else {
-                quote!()
-            };
-
         // `cardinality = "one_to_one"` attaches at most one child row.
-        let (arity, attach) = if h.to_one {
-            (
-                "to-one",
-                quote! {
-                    keelson_models::attach_to_one(
-                        rows,
-                        related,
-                        |r| #parent_key,
-                        |c| #child_key,
-                        |r, c| {
-                            r.rel.#name = c.map(Box::new);
-                        },
-                    );
-                },
-            )
-        } else {
-            (
-                "to-many",
-                quote! {
-                    keelson_models::attach_to_many(
-                        rows,
-                        related,
-                        |r| #parent_key,
-                        |c| #child_key,
-                        |r, cs| {
-                            r.rel.#name = cs;
-                        },
-                    );
-                },
-            )
-        };
-
-        let doc = format!(
-            " Load each row's `{}` ({arity}), one keyed query per batch of keys \
-             — `.then(…)` hangs the next level of the path off this one.",
-            h.name
-        );
-        items.push(quote! {
-            #[doc = #doc]
-            #allow
-            pub fn #name() -> keelson_models::ThenLoad<
-                super::#marker,
-                super::super::#cmod::#cmarker,
-                #kty,
-            > {
-                keelson_models::ThenLoad::new(
-                    |rows: &[super::#row]| #collect,
-                    |keys, q| keelson_core::Mod::apply(
-                        super::super::#cmod::#fk_fn().in_(keys),
-                        q,
-                    ),
-                    |rows: &mut [super::#row], related| {
-                        #attach
-                    },
-                )
-            }
-        });
+        items.push(then_load_item(
+            marker, row, &h.name, child, parent_c, child_fk, !h.to_one,
+        )?);
     }
 
     Ok(quote! {
@@ -1093,6 +969,106 @@ fn then_load_mod(
                   levels, two queries, checked by the compiler."]
         pub mod then_load {
             #(#items)*
+        }
+    })
+}
+
+/// One then-load mod, in the one shape both relation directions have.
+///
+/// A belongs-to and a has-many differ in which model is on which end and
+/// whether the attach takes one child or many. Everything else — collect the
+/// parent keys, filter the other model by them, compare the two key columns
+/// with the nullability bridged — is the same, and was written out twice
+/// with the roles renamed.
+///
+/// `parent` is the column on *this* model whose values are the keys;
+/// `child` is the column on `other` the keyed query filters, and the one the
+/// attachment compares against.
+#[allow(clippy::too_many_arguments)] // six of them are one relation, spelled out
+fn then_load_item(
+    marker: &proc_macro2::Ident,
+    row: &proc_macro2::Ident,
+    name: &str,
+    other: &Model,
+    parent: &ModelColumn,
+    child: &ModelColumn,
+    to_many: bool,
+) -> Result<TokenStream> {
+    let fn_name = ident(name);
+    let omod = ident(&other.table);
+    let omarker = ident(&other.marker);
+    let child_fn = ident(&child.field);
+    let kty = parse_type(&parent.rust_type, "relation key")?;
+    let key_f = ident(&parent.field);
+
+    let collect = match (parent.nullable, is_copy(&parent.rust_type)) {
+        (false, true) => quote!(rows.iter().map(|r| r.#key_f).collect()),
+        (false, false) => quote!(rows.iter().map(|r| r.#key_f.clone()).collect()),
+        (true, true) => quote!(rows.iter().filter_map(|r| r.#key_f).collect()),
+        (true, false) => quote!(rows.iter().filter_map(|r| r.#key_f.clone()).collect()),
+    };
+    let parent_key = key_access_leveled(quote!(r), parent, child.nullable);
+    let child_key = key_access_leveled(quote!(c), child, parent.nullable);
+    let allow = if needs_copy_allow(&parent.rust_type) || needs_copy_allow(&child.rust_type) {
+        quote!(#[allow(clippy::clone_on_copy)])
+    } else {
+        quote!()
+    };
+
+    let (arity, attach) = if to_many {
+        (
+            "to-many",
+            quote! {
+                keelson_models::attach_to_many(
+                    rows,
+                    related,
+                    |r| #parent_key,
+                    |c| #child_key,
+                    |r, cs| {
+                        r.rel.#fn_name = cs;
+                    },
+                );
+            },
+        )
+    } else {
+        (
+            "to-one",
+            quote! {
+                keelson_models::attach_to_one(
+                    rows,
+                    related,
+                    |r| #parent_key,
+                    |c| #child_key,
+                    |r, c| {
+                        r.rel.#fn_name = c.map(Box::new);
+                    },
+                );
+            },
+        )
+    };
+
+    let doc = format!(
+        " Load each row's `{name}` ({arity}), one keyed query per batch of keys \
+         — `.then(…)` hangs the next level of the path off this one."
+    );
+    Ok(quote! {
+        #[doc = #doc]
+        #allow
+        pub fn #fn_name() -> keelson_models::ThenLoad<
+            super::#marker,
+            super::super::#omod::#omarker,
+            #kty,
+        > {
+            keelson_models::ThenLoad::new(
+                |rows: &[super::#row]| #collect,
+                |keys, q| keelson_core::Mod::apply(
+                    super::super::#omod::#child_fn().in_(keys),
+                    q,
+                ),
+                |rows: &mut [super::#row], related| {
+                    #attach
+                },
+            )
         }
     })
 }
