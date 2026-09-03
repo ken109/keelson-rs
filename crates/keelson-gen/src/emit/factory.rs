@@ -68,51 +68,8 @@ use crate::config::Config;
 use crate::error::{GenError, Result};
 use crate::names::ident;
 use crate::resolve::{BelongsTo, Model, ModelColumn};
+use crate::rust_types::{is_copy, key_access, parse_type};
 use crate::schema::TableKind;
-
-/// Copy types, so a key access needs no `.clone()` (the model emitter's list,
-/// kept in step).
-fn is_copy(rust_type: &str) -> bool {
-    matches!(
-        rust_type,
-        "i8" | "i16"
-            | "i32"
-            | "i64"
-            | "i128"
-            | "isize"
-            | "u8"
-            | "u16"
-            | "u32"
-            | "u64"
-            | "u128"
-            | "usize"
-            | "bool"
-            | "f32"
-            | "f64"
-            | "char"
-            | "uuid::Uuid"
-            | "chrono::NaiveDate"
-            | "chrono::NaiveTime"
-            | "chrono::NaiveDateTime"
-            | "chrono::DateTime<chrono::Utc>"
-            | "rust_decimal::Decimal"
-    )
-}
-
-fn parse_type(rust_type: &str, what: &str) -> Result<syn::Type> {
-    syn::parse_str(rust_type)
-        .map_err(|e| GenError::Config(format!("{what}: `{rust_type}` is not a Rust type: {e}")))
-}
-
-/// `row.field` / `row.field.clone()`, as the type demands.
-fn key_access(recv: TokenStream, c: &ModelColumn) -> TokenStream {
-    let f = ident(&c.field);
-    if is_copy(&c.rust_type) {
-        quote!(#recv.#f)
-    } else {
-        quote!(#recv.#f.clone())
-    }
-}
 
 /// Render `factories.rs`: one module per writable model, in table order.
 ///

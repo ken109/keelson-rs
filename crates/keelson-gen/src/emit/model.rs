@@ -38,64 +38,9 @@ use crate::config::{Config, Hook};
 use crate::error::{GenError, Result};
 use crate::names::ident;
 use crate::resolve::{Model, ModelColumn};
+use crate::rust_types::{is_copy, key_access, needs_copy_allow, parse_type};
 
 use super::Dial;
-
-/// Rust types the generator knows are `Copy` (so a key access needs no
-/// `.clone()`); everything else clones, and types outside
-/// [`KNOWN_CLONE`] additionally get a `clone_on_copy` allow because the
-/// generator cannot know whether an override type is `Copy`.
-const KNOWN_COPY: &[&str] = &[
-    "i8",
-    "i16",
-    "i32",
-    "i64",
-    "i128",
-    "isize",
-    "u8",
-    "u16",
-    "u32",
-    "u64",
-    "u128",
-    "usize",
-    "bool",
-    "f32",
-    "f64",
-    "char",
-    "uuid::Uuid",
-    "chrono::NaiveDate",
-    "chrono::NaiveTime",
-    "chrono::NaiveDateTime",
-    "chrono::DateTime<chrono::Utc>",
-    "rust_decimal::Decimal",
-];
-
-/// Rust types the generator knows are *not* `Copy` — cloning them is not a
-/// `clone_on_copy` candidate, so no allow is needed.
-const KNOWN_CLONE: &[&str] = &["String", "Vec<u8>", "serde_json::Value"];
-
-fn is_copy(rust_type: &str) -> bool {
-    KNOWN_COPY.contains(&rust_type)
-}
-
-fn needs_copy_allow(rust_type: &str) -> bool {
-    !is_copy(rust_type) && !KNOWN_CLONE.contains(&rust_type)
-}
-
-fn parse_type(rust_type: &str, what: &str) -> Result<syn::Type> {
-    syn::parse_str(rust_type)
-        .map_err(|e| GenError::Config(format!("{what}: `{rust_type}` is not a Rust type: {e}")))
-}
-
-/// `row.field` / `row.field.clone()` as the column's type demands.
-fn key_access(recv: TokenStream, c: &ModelColumn) -> TokenStream {
-    let f = ident(&c.field);
-    if is_copy(&c.rust_type) {
-        quote!(#recv.#f)
-    } else {
-        quote!(#recv.#f.clone())
-    }
-}
 
 /// The same access with an `Option` mismatch bridged: when only one side of
 /// an attachment key is nullable, the non-null side wraps in `Some`.

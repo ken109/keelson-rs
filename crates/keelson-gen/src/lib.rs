@@ -158,6 +158,7 @@ pub mod introspect;
 mod names;
 pub mod queries;
 mod resolve;
+mod rust_types;
 pub mod schema;
 mod typemap;
 

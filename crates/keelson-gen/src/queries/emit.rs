@@ -15,6 +15,7 @@ use crate::error::{GenError, Result};
 use crate::names::{ident, pascal};
 use crate::queries::ir::{Analysis, Nesting, OutputColumn, Part, Span};
 use crate::queries::spec::{Cardinality, QueryFile};
+use crate::rust_types::{is_copy, needs_copy_allow, parse_type};
 
 /// The dialect's contribution: the crate its statement types come from, the
 /// placeholder spelling, and the `Dialect` value a query hands back.
@@ -93,48 +94,9 @@ fn groups<'a>(outputs: &'a [OutputColumn]) -> Vec<Group<'a>> {
     out
 }
 
-/// The Rust types this emitter knows are `Copy`, so a parameter is read
-/// rather than cloned on its way into a [`keelson_core::Value`]. The same list
-/// the model emitter keeps, and for the same reason: a `.clone()` on an `i32`
-/// is a lint in the *reader's* crate, and generated code must not create work
-/// for its reader.
-const KNOWN_COPY: &[&str] = &[
-    "i8",
-    "i16",
-    "i32",
-    "i64",
-    "i128",
-    "isize",
-    "u8",
-    "u16",
-    "u32",
-    "u64",
-    "u128",
-    "usize",
-    "bool",
-    "f32",
-    "f64",
-    "char",
-    "uuid::Uuid",
-    "chrono::NaiveDate",
-    "chrono::NaiveTime",
-    "chrono::NaiveDateTime",
-    "chrono::DateTime<chrono::Utc>",
-    "rust_decimal::Decimal",
-];
-
-/// Types known *not* to be `Copy`: cloning them is never a `clone_on_copy`
-/// candidate, so no `allow` is needed.
-const KNOWN_CLONE: &[&str] = &["String", "Vec<u8>", "serde_json::Value"];
-
-fn ty(rust_type: &str, what: &str) -> Result<syn::Type> {
-    syn::parse_str(rust_type)
-        .map_err(|e| GenError::Config(format!("{what}: `{rust_type}` is not a Rust type: {e}")))
-}
-
 /// `T` or `Option<T>`.
 fn field_type(rust_type: &str, nullable: bool, what: &str) -> Result<TokenStream> {
-    let t = ty(rust_type, what)?;
+    let t = parse_type(rust_type, what)?;
     Ok(if nullable {
         quote!(Option<#t>)
     } else {
@@ -248,7 +210,7 @@ fn params_struct(a: &Analysis, params_ty: &Ident) -> Result<TokenStream> {
         .iter()
         .map(|p| {
             let f = ident(&p.name);
-            let t = ty(
+            let t = parse_type(
                 &p.rust_type,
                 &format!("query `{name}` parameter `{}`", p.name),
             )?;
@@ -269,11 +231,11 @@ fn params_struct(a: &Analysis, params_ty: &Ident) -> Result<TokenStream> {
     let arg_types = a
         .params
         .iter()
-        .map(|p| ty(&p.rust_type, "parameter"))
+        .map(|p| parse_type(&p.rust_type, "parameter"))
         .collect::<Result<Vec<_>>>()?;
     let to_values = a.params.iter().map(|p| {
         let f = ident(&p.name);
-        if KNOWN_COPY.contains(&p.rust_type.as_str()) {
+        if is_copy(&p.rust_type) {
             quote!(keelson_core::ToValue::to_value(self.#f))
         } else {
             quote!(keelson_core::ToValue::to_value(self.#f.clone()))
@@ -285,10 +247,7 @@ fn params_struct(a: &Analysis, params_ty: &Ident) -> Result<TokenStream> {
     let clone_allow = a
         .params
         .iter()
-        .any(|p| {
-            !KNOWN_COPY.contains(&p.rust_type.as_str())
-                && !KNOWN_CLONE.contains(&p.rust_type.as_str())
-        })
+        .any(|p| needs_copy_allow(&p.rust_type))
         .then(|| quote!(#[allow(clippy::clone_on_copy)]));
 
     let doc_text = format!(" Parameters of `{name}`.");
@@ -519,7 +478,7 @@ fn nested_field(
     for c in &g.columns {
         let f = ident(&c.field);
         let key = Literal::string(&c.name);
-        let inner = ty(&c.rust_type, "nested column")?;
+        let inner = parse_type(&c.rust_type, "nested column")?;
         lets.push(quote!(let #f: Option<#inner> = row.take(#key)?;));
         any_some.push(quote!(#f.is_some()));
         if c.inner_nullable {
