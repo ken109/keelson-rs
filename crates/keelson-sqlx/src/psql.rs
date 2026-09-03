@@ -5,8 +5,9 @@ use std::sync::Arc;
 
 use keelson_core::Value;
 use keelson_exec::{
-    Begin, BeginWith, Column, ExecError, ExecFuture, ExecResult, Executor, Family, RawConnection,
-    Row, RowStream, Statement, StreamExecutor, Transaction, TxConflict, TxConflictError, TxOptions,
+    Begin, BeginWith, Column, ExecError, ExecFuture, ExecResult, Executor, Family, Header,
+    RawConnection, Row, RowStream, Statement, StreamExecutor, Transaction, TxConflict,
+    TxConflictError, TxOptions,
 };
 use sqlx::postgres::{PgArgumentBuffer, PgArguments, PgRow, PgTypeInfo};
 use sqlx::{Column as _, Postgres, Row as _, TypeInfo as _, ValueRef as _};
@@ -98,7 +99,7 @@ impl StreamExecutor for Pool {
                     }
                 };
                 let mut native = q.fetch(&pool);
-                let mut header: Option<Arc<[Column]>> = None;
+                let mut header: Option<Arc<Header>> = None;
                 while let Some(next) = native.next().await {
                     let msg = match next {
                         Ok(row) => decode_row(&row, &mut header),
@@ -182,7 +183,7 @@ where
         .fetch_all(exec)
         .await
         .map_err(driver_err)?;
-    let mut header: Option<Arc<[Column]>> = None;
+    let mut header: Option<Arc<Header>> = None;
     rows.iter().map(|r| decode_row(r, &mut header)).collect()
 }
 
@@ -327,21 +328,25 @@ fn bind_array<'q>(
 
 /// Native row → keelson [`Row`], per the column-type column of the mappings
 /// table. The header is built once per result set and shared.
-fn decode_row(row: &PgRow, header: &mut Option<Arc<[Column]>>) -> Result<Row, ExecError> {
-    let columns = header
+fn decode_row(row: &PgRow, header: &mut Option<Arc<Header>>) -> Result<Row, ExecError> {
+    // Built from the first row of the result set and shared by the rest, so
+    // the name lookup every `FromRow` does is prepared once rather than
+    // re-scanned per row.
+    let header = header
         .get_or_insert_with(|| {
-            row.columns()
-                .iter()
-                .map(|c| Column::new(c.name()))
-                .collect::<Vec<_>>()
-                .into()
+            Arc::new(Header::new(
+                row.columns()
+                    .iter()
+                    .map(|c| Column::new(c.name()))
+                    .collect::<Vec<_>>(),
+            ))
         })
         .clone();
     let mut values = Vec::with_capacity(row.columns().len());
     for i in 0..row.columns().len() {
         values.push(decode_value(row, i)?);
     }
-    Ok(Row::new(columns, values))
+    Ok(Row::with_header(header, values))
 }
 
 fn decode_value(row: &PgRow, i: usize) -> Result<Value, ExecError> {

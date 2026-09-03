@@ -89,7 +89,7 @@ pub use execute::Execute;
 pub use executor::{
     ExecFuture, ExecResult, Executor, Family, RowStream, Statement, StreamExecutor,
 };
-pub use row::{Column, FromRow, Row};
+pub use row::{Column, FromRow, Header, Row};
 pub use transaction::{
     Access, Atomic, Begin, BeginExt, BeginWith, BeginWithExt, ExecHook, ExecLoader, Isolation,
     RawConnection, SqliteBegin, Transaction, TxConflict, TxConflictError, TxOptions,

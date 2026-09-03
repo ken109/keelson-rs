@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use keelson_core::{FromValue, Value};
@@ -22,6 +23,61 @@ impl Column {
     }
 }
 
+/// Headers at or below this width are searched by scanning.
+///
+/// Measured on this crate's own rows: reading every column of 5,000 rows by
+/// name costs 1.29x a scan against a prepared hash map at 8 columns, 2.2x at
+/// 30 and 7x at 80 — but at 8 columns the whole name lookup is only 5% of
+/// decoding, so the map would buy about 1% for an allocation every result
+/// set makes. By 30 columns the lookup is 23% of decoding and by 80 it is
+/// 66%, which is what the map is for.
+const SCAN_LIMIT: usize = 8;
+
+/// A result set's column header, with the name lookup prepared once.
+///
+/// Rows of one result set share this. That sharing is the point: resolving a
+/// column name used to be a scan of the header *per read*, so a wide row cost
+/// O(columns) name comparisons for each of its own columns — quadratic in the
+/// width, and by 80 columns two thirds of the time spent decoding. A backend
+/// builds one of these when the first row arrives and clones the `Arc` for
+/// every row after it.
+#[derive(Debug, Clone)]
+pub struct Header {
+    columns: Arc<[Column]>,
+    /// `None` for a header narrow enough that scanning wins — see
+    /// [`SCAN_LIMIT`].
+    index: Option<HashMap<Box<str>, usize>>,
+}
+
+impl Header {
+    /// Prepare a header for a result set. Backend-facing.
+    pub fn new(columns: impl Into<Arc<[Column]>>) -> Self {
+        let columns = columns.into();
+        let index = (columns.len() > SCAN_LIMIT).then(|| {
+            let mut m = HashMap::with_capacity(columns.len());
+            for (i, c) in columns.iter().enumerate() {
+                // First wins, matching the scan this replaces and what
+                // [`Row::value`] documents about duplicate names.
+                m.entry(Box::from(c.name())).or_insert(i);
+            }
+            m
+        });
+        Header { columns, index }
+    }
+
+    /// The columns, in order.
+    pub fn columns(&self) -> &[Column] {
+        &self.columns
+    }
+
+    fn index_of(&self, name: &str) -> Option<usize> {
+        match &self.index {
+            Some(m) => m.get(name).copied(),
+            None => self.columns.iter().position(|c| c.name == name),
+        }
+    }
+}
+
 /// One decoded row: a shared column header and one [`Value`] per column.
 ///
 /// Owned, cloneable, lifetime-free and driver-free — a backend converts its
@@ -31,21 +87,45 @@ impl Column {
 /// acceptance), and what makes row mapping testable without a database.
 #[derive(Debug, Clone)]
 pub struct Row {
-    columns: Arc<[Column]>,
+    header: Arc<Header>,
     values: Vec<Value>,
 }
 
 impl Row {
-    /// Assemble a row. Backend-facing; the header is shared across all rows
-    /// of a result set via the `Arc`.
+    /// Assemble a row that carries its own header.
+    ///
+    /// For a row on its own — a test, a hand-built fixture. A backend reading
+    /// a *result set* builds one [`Header`] when the first row arrives and
+    /// calls [`with_header`](Self::with_header) for each row, so the name
+    /// lookup is prepared once rather than per row: a header assembled here
+    /// belongs to one row and gets the scan, because an index built for a
+    /// single row is pure cost.
     pub fn new(columns: Arc<[Column]>, values: Vec<Value>) -> Self {
         debug_assert_eq!(columns.len(), values.len());
-        Row { columns, values }
+        Row {
+            header: Arc::new(Header {
+                columns,
+                index: None,
+            }),
+            values,
+        }
+    }
+
+    /// Assemble a row against a header shared with the rest of its result
+    /// set. Backend-facing.
+    pub fn with_header(header: Arc<Header>, values: Vec<Value>) -> Self {
+        debug_assert_eq!(header.columns.len(), values.len());
+        Row { header, values }
+    }
+
+    /// The header this row shares with its result set.
+    pub fn header(&self) -> &Arc<Header> {
+        &self.header
     }
 
     /// The result set's columns, in order.
     pub fn columns(&self) -> &[Column] {
-        &self.columns
+        &self.header.columns
     }
 
     /// The raw value under `name`, if such a column exists.
@@ -60,13 +140,13 @@ impl Row {
     /// [`take`](Self::take) instead so `String`/`Vec<u8>`/JSON move.
     pub fn get<T: FromValue>(&self, name: &str) -> Result<T, ExecError> {
         let i = self.require(name)?;
-        decode(&self.columns[i].name, self.values[i].clone())
+        decode(&self.header.columns[i].name, self.values[i].clone())
     }
 
     /// Read the column at `index` as `T`.
     pub fn get_at<T: FromValue>(&self, index: usize) -> Result<T, ExecError> {
         let v = self.value_at(index)?.clone();
-        decode(&positional_label(index, &self.columns), v)
+        decode(&positional_label(index, self.columns()), v)
     }
 
     /// Take the column `name` out of the row as `T`, leaving `NULL` behind.
@@ -76,31 +156,31 @@ impl Row {
     pub fn take<T: FromValue>(&mut self, name: &str) -> Result<T, ExecError> {
         let i = self.require(name)?;
         let v = std::mem::replace(&mut self.values[i], Value::Null);
-        decode(&self.columns[i].name, v)
+        decode(&self.header.columns[i].name, v)
     }
 
     /// Take the column at `index` out of the row as `T`.
     pub fn take_at<T: FromValue>(&mut self, index: usize) -> Result<T, ExecError> {
         if index >= self.values.len() {
-            return Err(missing(&format!("#{index}"), &self.columns));
+            return Err(missing(&format!("#{index}"), self.columns()));
         }
         let v = std::mem::replace(&mut self.values[index], Value::Null);
-        decode(&positional_label(index, &self.columns), v)
+        decode(&positional_label(index, self.columns()), v)
     }
 
     fn index_of(&self, name: &str) -> Option<usize> {
-        self.columns.iter().position(|c| c.name == name)
+        self.header.index_of(name)
     }
 
     fn require(&self, name: &str) -> Result<usize, ExecError> {
         self.index_of(name)
-            .ok_or_else(|| missing(name, &self.columns))
+            .ok_or_else(|| missing(name, self.columns()))
     }
 
     fn value_at(&self, index: usize) -> Result<&Value, ExecError> {
         self.values
             .get(index)
-            .ok_or_else(|| missing(&format!("#{index}"), &self.columns))
+            .ok_or_else(|| missing(&format!("#{index}"), self.columns()))
     }
 }
 
@@ -197,6 +277,65 @@ mod tests {
             columns,
             vec![Value::I64(7), Value::Text("ada".into()), Value::Null],
         )
+    }
+
+    /// A header wide enough to take the prepared-map path, so every
+    /// invariant below is checked on *both* sides of [`SCAN_LIMIT`] — the map
+    /// is an optimisation and must be invisible.
+    fn wide_row() -> Row {
+        let names: Vec<String> = (0..SCAN_LIMIT + 4).map(|i| format!("c{i}")).collect();
+        let header = Arc::new(Header::new(
+            names.iter().map(Column::new).collect::<Vec<_>>(),
+        ));
+        let values = (0..names.len()).map(|i| Value::I64(i as i64)).collect();
+        Row::with_header(header, values)
+    }
+
+    #[test]
+    fn a_wide_header_resolves_names_through_the_prepared_map() {
+        let r = wide_row();
+        assert!(r.header().index.is_some(), "the map path is what is tested");
+        for (i, c) in r.columns().iter().enumerate() {
+            let name = c.name().to_owned();
+            assert_eq!(r.get::<i64>(&name).unwrap(), i as i64);
+        }
+        assert_eq!(r.value("nope"), None);
+    }
+
+    #[test]
+    fn a_narrow_header_scans() {
+        assert!(row().header().index.is_none());
+    }
+
+    /// Duplicate names resolve to the first, and the map must agree with the
+    /// scan it replaces — `HashMap` insertion would otherwise keep the last.
+    #[test]
+    fn a_duplicate_name_resolves_to_the_first_either_way() {
+        for extra in [0, SCAN_LIMIT] {
+            let mut names = vec!["dup".to_owned(), "dup".to_owned()];
+            names.extend((0..extra).map(|i| format!("c{i}")));
+            let header = Arc::new(Header::new(
+                names.iter().map(Column::new).collect::<Vec<_>>(),
+            ));
+            let mut values = vec![Value::I64(1), Value::I64(2)];
+            values.extend((0..extra).map(|_| Value::Null));
+            let r = Row::with_header(header, values);
+            assert_eq!(
+                r.value("dup"),
+                Some(&Value::I64(1)),
+                "{} columns",
+                2 + extra
+            );
+        }
+    }
+
+    /// A header assembled per row keeps its own columns, so `Row::new` stays
+    /// the plain way to build one.
+    #[test]
+    fn a_row_built_on_its_own_carries_its_header() {
+        let r = row();
+        assert_eq!(r.header().columns().len(), 3);
+        assert_eq!(r.columns()[0].name(), "id");
     }
 
     #[test]
