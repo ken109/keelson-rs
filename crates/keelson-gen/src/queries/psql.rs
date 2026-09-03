@@ -17,6 +17,7 @@ use serde_json::Value as Json;
 
 use crate::config::{Config, Dialect};
 use crate::error::{GenError, Result};
+use crate::queries::infer::{Inferred, Source};
 use crate::queries::ir::{Analysis, OutputColumn};
 use crate::queries::lex;
 use crate::queries::nest;
@@ -83,68 +84,6 @@ fn svals(nodes: &[Json]) -> impl DoubleEndedIterator<Item = &str> {
 }
 
 // --- what a FROM item contributes -----------------------------------------
-
-/// One `FROM` item, and whether a join can make its columns NULL.
-#[derive(Debug, Clone)]
-struct Source {
-    /// The name the query refers to it by (alias if there is one).
-    key: String,
-    /// The introspected table, when the item is a real table.
-    table: Option<TableDef>,
-    /// Rule N2: a left-joined table's columns are nullable whatever the DDL
-    /// says.
-    outer: bool,
-}
-
-#[derive(Debug)]
-struct Scope<'a> {
-    schema: &'a Schema,
-    config: &'a Config,
-    sources: Vec<Source>,
-    /// `-- column:` / `-- nullable:` overrides for this query.
-    spec: &'a QuerySpec,
-}
-
-/// What one expression yielded.
-#[derive(Debug, Clone)]
-struct Inferred {
-    /// `None` when the generator will not guess — the caller must annotate.
-    rust_type: Option<String>,
-    nullable: bool,
-    /// True when [`nullable`](Self::nullable) is owed to an outer join only.
-    outer_join: bool,
-    /// The nullability with the outer join taken back out.
-    inner_nullable: bool,
-    rule: &'static str,
-    /// The output name PostgreSQL would give this expression with no alias.
-    name: Option<String>,
-}
-
-impl Inferred {
-    fn new(rust_type: Option<String>, nullable: bool, rule: &'static str) -> Inferred {
-        Inferred {
-            rust_type,
-            nullable,
-            outer_join: false,
-            inner_nullable: nullable,
-            rule,
-            name: None,
-        }
-    }
-
-    fn known(t: &str, nullable: bool, rule: &'static str) -> Inferred {
-        Inferred::new(Some(t.to_owned()), nullable, rule)
-    }
-
-    fn unknown(rule: &'static str) -> Inferred {
-        Inferred::new(None, true, rule)
-    }
-
-    fn named(mut self, name: &str) -> Inferred {
-        self.name = Some(name.to_owned());
-        self
-    }
-}
 
 /// Analyse one PostgreSQL query.
 pub fn analyse(
@@ -279,6 +218,16 @@ fn branch(
     let mut found = ParamMap::new();
     scope.walk_params(&Json::Object(stmt.clone()), None, &mut found)?;
     Ok((outputs, found))
+}
+
+/// What one query can refer to, and what the spec says about it.
+#[derive(Debug)]
+struct Scope<'a> {
+    schema: &'a Schema,
+    config: &'a Config,
+    sources: Vec<Source>,
+    /// `-- column:` / `-- nullable:` overrides for this query.
+    spec: &'a QuerySpec,
 }
 
 impl Scope<'_> {

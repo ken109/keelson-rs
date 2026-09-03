@@ -18,6 +18,7 @@ use sqlite3_parser::{Bump, FallibleIterator, lexer::sql::Parser};
 
 use crate::config::{Config, Dialect};
 use crate::error::{GenError, Result};
+use crate::queries::infer::{Inferred, Source};
 use crate::queries::ir::{Analysis, OutputColumn};
 use crate::queries::lex;
 use crate::queries::nest;
@@ -26,58 +27,6 @@ use crate::schema::{Schema, TableDef};
 
 /// Placeholder number → (suggested name, Rust type, which rule found it).
 type ParamMap = BTreeMap<usize, (String, String, &'static str)>;
-
-/// One `FROM` item and whether a join can make its columns NULL.
-#[derive(Debug, Clone)]
-struct Source {
-    key: String,
-    table: Option<TableDef>,
-    outer: bool,
-}
-
-struct Scope<'a> {
-    schema: &'a Schema,
-    config: &'a Config,
-    spec: &'a QuerySpec,
-    sources: Vec<Source>,
-}
-
-/// What one expression yielded. The SQLite twin of the psql analyser's.
-#[derive(Debug, Clone)]
-struct Inferred {
-    rust_type: Option<String>,
-    nullable: bool,
-    outer_join: bool,
-    inner_nullable: bool,
-    rule: &'static str,
-    name: Option<String>,
-}
-
-impl Inferred {
-    fn new(rust_type: Option<String>, nullable: bool, rule: &'static str) -> Inferred {
-        Inferred {
-            rust_type,
-            nullable,
-            outer_join: false,
-            inner_nullable: nullable,
-            rule,
-            name: None,
-        }
-    }
-
-    fn known(t: &str, nullable: bool, rule: &'static str) -> Inferred {
-        Inferred::new(Some(t.to_owned()), nullable, rule)
-    }
-
-    fn unknown(rule: &'static str) -> Inferred {
-        Inferred::new(None, true, rule)
-    }
-
-    fn named(mut self, name: &str) -> Inferred {
-        self.name = Some(name.to_owned());
-        self
-    }
-}
 
 /// Analyse one SQLite query.
 pub fn analyse(
@@ -278,6 +227,16 @@ fn note_limit(expr: &ast::Expr<'_>, what: &'static str, out: &mut ParamMap) {
         out.entry(n)
             .or_insert((what.to_owned(), "i64".to_owned(), "P3"));
     }
+}
+
+/// What one query can refer to, and what the spec says about it. The SQLite
+/// twin of the psql analyser's — same fields, different walker.
+#[derive(Debug)]
+struct Scope<'a> {
+    schema: &'a Schema,
+    config: &'a Config,
+    spec: &'a QuerySpec,
+    sources: Vec<Source>,
 }
 
 impl Scope<'_> {
