@@ -8,7 +8,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 — with the pre-1.0 caveat that a `0.x` minor bump is allowed to break.
 
-## [Unreleased]
+## [0.2.0] — 2026-09-03
+
+A `0.x` minor, and it breaks: `ThenLoad::new` takes a `Relation` rather than
+three closures, and `C::Row: Clone` is a bound where the runtime groups a
+to-one relation. Both are in the **Changed** section with what to do about
+them. `ExecError::Conflict` is additive — the enum is `#[non_exhaustive]` —
+but code that reached a concurrency conflict through `ExecError::Driver` and
+a `downcast_ref` will stop finding it there; `TxConflict::of` still answers.
 
 ### Added
 
@@ -105,7 +112,9 @@ and versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   itself into an `Expr` to render. Cumulative with the writer's buffers, on
   the `benches/` suite: an eight-element `IN` list is 37% faster, a
   512-element one 44%, a single-row `INSERT` 31%, a 64-deep nested predicate
-  22%. All p < 0.05.
+  22%. All p < 0.05. `SqlWriter::push_usize` is the new method a dialect uses
+  to write a placeholder's number, and is what a custom `Dialect` should call
+  instead of formatting the number itself.
 
 - **Six hundred lines of `impl Has* for XQuery` became a line each.**
   `keelson_core::impl_clause_accessors!` takes the pair those five-line impls
@@ -205,6 +214,11 @@ and versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   `caching_sha2_password` support — has no patched release to move to and is
   ignored with its exposure and its mitigation written out in `deny.toml`.
 
+- **`chacha20` moved off a yanked release** (`0.10.1` → `0.10.2`), reached
+  through `rand` under `postgres-protocol`. Found by the new supply-chain job
+  on its first run, which is the sort of thing `cargo build` has no opinion
+  about.
+
 ## [0.1.1] — 2026-08-05
 
 ### Fixed
@@ -283,5 +297,6 @@ version is the point at which it became installable.
   container runtime, and reads the repository's `tests/schema/` through
   `include_str!`.
 
+[0.2.0]: https://github.com/ken109/keelson-rs/releases/tag/v0.2.0
 [0.1.1]: https://github.com/ken109/keelson-rs/releases/tag/v0.1.1
 [0.1.0]: https://github.com/ken109/keelson-rs/releases/tag/v0.1.0

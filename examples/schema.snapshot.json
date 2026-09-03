@@ -1,5 +1,5 @@
 {
-  "generator": "keelson-gen 0.1.1",
+  "generator": "keelson-gen 0.2.0",
   "version": 1,
   "dialect": "sqlite",
   "schema": {
