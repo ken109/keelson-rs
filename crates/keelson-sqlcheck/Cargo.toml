@@ -42,6 +42,10 @@ conformance = [
 # gap is written down where dependencies are, instead of being a suite that is
 # quietly shorter on one backend.
 conformance-decimal = ["conformance", "dep:rust_decimal", "keelson-core/decimal"]
+# Exposes `keelson_sqlcheck::property`: the random-query generator Tier C's
+# three lanes share. Dialect-free by construction — it builds a typed AST and
+# `keelson_core` expressions, and each lane renders it into its own dialect.
+property = ["dep:keelson-core", "dep:proptest"]
 
 [dependencies]
 # For `testing` only, and only for the `Dialect` / `Expression` traits.
@@ -55,6 +59,7 @@ keelson-exec = { workspace = true, optional = true }
 chrono = { workspace = true, optional = true }
 uuid = { workspace = true, optional = true }
 rust_decimal = { workspace = true, optional = true }
+proptest = { workspace = true, optional = true }
 pg_query.workspace = true
 mysql = { workspace = true, optional = true }
 postgres = { workspace = true, optional = true }

@@ -31,7 +31,7 @@ exhaustive = []
 keelson-core.workspace = true
 
 [dev-dependencies]
-keelson-sqlcheck = { path = "../keelson-sqlcheck", features = ["live"] }
+keelson-sqlcheck = { path = "../keelson-sqlcheck", features = ["live", "property"] }
 
 [lints]
 workspace = true

@@ -31,7 +31,7 @@ exhaustive = ["live-docker"]
 keelson-core.workspace = true
 
 [dev-dependencies]
-keelson-sqlcheck = { path = "../keelson-sqlcheck", features = ["live"] }
+keelson-sqlcheck = { path = "../keelson-sqlcheck", features = ["live", "property"] }
 # tests/{combinatorial,property}.rs inspect the parse tree directly (clause
 # presence, and no others) — that is pg_query's protobuf, which
 # keelson-sqlcheck deliberately does not re-export.
