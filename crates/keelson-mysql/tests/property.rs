@@ -1,0 +1,435 @@
+//! Property-based tests of recursive nesting — the MySQL lane.
+//!
+//! The third of the three (`keelson-psql/tests/property.rs` is the original and
+//! carries the design rationale; `keelson-sqlite/tests/property.rs` is the
+//! second). Same typed AST, same render-order conversion; what follows is only
+//! what MySQL makes different.
+//!
+//! # What is different
+//!
+//! **The placeholder carries no number.** MySQL's is a bare `?`, so "the
+//! numbering is `1..=n` in emission order" — the psql and sqlite lane's
+//! sharpest invariant — has nothing to say here. What survives is the half
+//! that actually matters and that a positional placeholder makes *harder* to
+//! see, not easier: the bound values must arrive in exactly the order the
+//! leaves rendered. With `$n` a mis-ordering is visible in the SQL; with `?`
+//! it is visible nowhere at all, and the query still prepares and still runs.
+//! This lane is the only place that is checked against random nesting.
+//!
+//! **`||` is not concatenation.** MySQL reads `||` as logical OR unless
+//! `PIPES_AS_CONCAT` is set, so the text generator emits `CONCAT(a, b)` where
+//! the other two lanes chain with `||`.
+//!
+//! **The grammar judge is advisory.** `sqlparser` is a generic parser wearing a
+//! MySQL dialect: it accepts PostgreSQL-only syntax and rejects valid
+//! multi-table `UPDATE`. It is still run — a rejection of a plain generated
+//! `SELECT` is worth looking at — but the judge that decides is the real
+//! MySQL 8.4 under `live-docker`, which is where this suite earns its keep:
+//!
+//! ```text
+//! cargo test -p keelson-mysql --features live-docker --test property
+//! ```
+//!
+//! **No clause-presence invariant**, for the same reason as the sqlite lane:
+//! clause presence is keelson-core's shared machinery and the psql lane proves
+//! it against a trustworthy parse tree. Here there is no trustworthy parse
+//! tree to assert against at all.
+//!
+//! # The invariants
+//!
+//! 1. **The grammar accepts it** (advisory), and **a real MySQL accepts it**
+//!    when one is compiled in.
+//! 2. **Binding order** — the arguments arrive in exactly the order the leaves
+//!    render, and there are exactly as many `?` in the SQL as there are
+//!    arguments.
+//! 3. **Determinism** — building twice, and building a clone, both reproduce
+//!    the same SQL and the same arguments.
+//!
+//! # The promotion convention
+//!
+//! Same as the other two: a failing case is promoted by hand into
+//! `mod promoted`, with its expected string derived from the MySQL reference
+//! manual's production, never from the builder.
+
+use keelson_mysql as mysql;
+use keelson_mysql::{
+    Chain, Expr, IntoExpr, Query, RawArg, case_, f, not, quote, raw, s, select, subquery, template,
+};
+use keelson_sqlcheck::property::{
+    BoolExpr, CmpOp, ColExpr, CountExpr, Ctx, FromAst, IntExpr, QueryAst, Scope, TEXT_LITERALS,
+    TextExpr, from_strat, levels, scope_of, table,
+};
+use keelson_sqlcheck::{Dialect, live};
+use proptest::prelude::*;
+use proptest::test_runner::FileFailurePersistence;
+
+// ===========================================================================
+// The shared schema, as data the generator can draw from
+// ===========================================================================
+
+// ===========================================================================
+// The typed expression AST the strategies generate
+// ===========================================================================
+
+// ===========================================================================
+// AST → builder conversion, recording the expected argument order
+// ===========================================================================
+
+fn int_expr(a: &IntExpr, sc: &Scope, ctx: &mut Ctx) -> Expr {
+    match a {
+        IntExpr::Col(i) => sc.int_col(*i),
+        IntExpr::Lit(n) => raw(n.to_string()),
+        IntExpr::Arg => ctx.int_arg(),
+        IntExpr::Add(l, r) => int_expr(l, sc, ctx).plus(int_expr(r, sc, ctx)),
+        IntExpr::Sub(l, r) => int_expr(l, sc, ctx).minus(int_expr(r, sc, ctx)),
+        IntExpr::Abs(e) => f("abs", int_expr(e, sc, ctx)).into_expr(),
+        IntExpr::Coalesce(l, r) => {
+            f("coalesce", (int_expr(l, sc, ctx), int_expr(r, sc, ctx))).into_expr()
+        }
+        IntExpr::Length(t) => f("length", text_expr(t, sc, ctx)).into_expr(),
+        IntExpr::Case(c, t, e) => {
+            let c = bool_expr(c, sc, ctx);
+            let t = int_expr(t, sc, ctx);
+            case_().when(c, t).else_(int_expr(e, sc, ctx))
+        }
+        IntExpr::Template(inner) => {
+            let v = ctx.int_raw_arg();
+            let e = int_expr(inner, sc, ctx);
+            template("(COALESCE(?, 0) + ?)", [v, RawArg::expr(e)])
+        }
+        IntExpr::CountSub(t, w) => {
+            let t = table(*t);
+            let sub_sc = Scope::of_table(t);
+            let mut q = mysql::select((
+                select::columns(f("count", "*")),
+                select::from(quote(t.name)),
+            ));
+            if let Some(w) = w {
+                q.apply(select::where_(bool_expr(w, &sub_sc, ctx)));
+            }
+            subquery(q)
+        }
+    }
+}
+
+fn text_expr(a: &TextExpr, sc: &Scope, ctx: &mut Ctx) -> Expr {
+    match a {
+        TextExpr::Col(i) => sc
+            .text_col(*i)
+            .unwrap_or_else(|| s(TEXT_LITERALS[*i as usize % TEXT_LITERALS.len()])),
+        TextExpr::Lit(i) => s(TEXT_LITERALS[*i as usize % TEXT_LITERALS.len()]),
+        TextExpr::Arg => ctx.text_arg(),
+        TextExpr::Concat(l, r) => {
+            f("concat", (text_expr(l, sc, ctx), text_expr(r, sc, ctx))).into_expr()
+        }
+        TextExpr::Lower(e) => f("lower", text_expr(e, sc, ctx)).into_expr(),
+        TextExpr::Upper(e) => f("upper", text_expr(e, sc, ctx)).into_expr(),
+        TextExpr::Coalesce(l, r) => {
+            f("coalesce", (text_expr(l, sc, ctx), text_expr(r, sc, ctx))).into_expr()
+        }
+        TextExpr::Case(c, t, e) => {
+            let c = bool_expr(c, sc, ctx);
+            let t = text_expr(t, sc, ctx);
+            case_().when(c, t).else_(text_expr(e, sc, ctx))
+        }
+    }
+}
+
+fn bool_expr(a: &BoolExpr, sc: &Scope, ctx: &mut Ctx) -> Expr {
+    match a {
+        BoolExpr::Leaf(i) => sc
+            .bool_col(*i)
+            .unwrap_or_else(|| raw(if i % 2 == 0 { "TRUE" } else { "FALSE" })),
+        BoolExpr::Cmp(op, l, r) => {
+            let le = int_expr(l, sc, ctx);
+            let re = int_expr(r, sc, ctx);
+            match op {
+                CmpOp::Eq => le.eq(re),
+                CmpOp::Ne => le.ne(re),
+                CmpOp::Lt => le.lt(re),
+                CmpOp::Lte => le.lte(re),
+                CmpOp::Gt => le.gt(re),
+                CmpOp::Gte => le.gte(re),
+            }
+        }
+        BoolExpr::TextEq(l, r) => text_expr(l, sc, ctx).eq(text_expr(r, sc, ctx)),
+        BoolExpr::Like(l, r) => text_expr(l, sc, ctx).like(text_expr(r, sc, ctx)),
+        BoolExpr::ColCmpArg(i) => sc.int_col(*i).gt(ctx.int_arg()),
+        BoolExpr::InList(i, items) => {
+            let lhs = sc.int_col(*i);
+            let items: Vec<Expr> = items.iter().map(|e| int_expr(e, sc, ctx)).collect();
+            lhs.in_(items)
+        }
+        BoolExpr::InSub {
+            col,
+            tab,
+            inner_col,
+            filter,
+        } => {
+            let lhs = sc.int_col(*col);
+            let t = table(*tab);
+            let sub_sc = Scope::of_table(t);
+            let mut q = mysql::select((
+                select::columns(sub_sc.int_col(*inner_col)),
+                select::from(quote(t.name)),
+            ));
+            if let Some(w) = filter {
+                q.apply(select::where_(bool_expr(w, &sub_sc, ctx)));
+            }
+            lhs.in_(mysql::query(q))
+        }
+        BoolExpr::Exists(tab, w) => {
+            let t = table(*tab);
+            let sub_sc = Scope::of_table(t);
+            let q = mysql::select((
+                select::columns(raw("1")),
+                select::from(quote(t.name)),
+                select::where_(bool_expr(w, &sub_sc, ctx)),
+            ));
+            Expr::prefix("EXISTS", subquery(q))
+        }
+        BoolExpr::And(l, r) => bool_expr(l, sc, ctx).and(bool_expr(r, sc, ctx)),
+        BoolExpr::Or(l, r) => bool_expr(l, sc, ctx).or(bool_expr(r, sc, ctx)),
+        BoolExpr::Not(e) => not(bool_expr(e, sc, ctx)),
+        BoolExpr::IsNull(e) => int_expr(e, sc, ctx).is_null(),
+        BoolExpr::Between(e, a, b) => {
+            let e = int_expr(e, sc, ctx);
+            let a = int_expr(a, sc, ctx);
+            e.between(a, int_expr(b, sc, ctx))
+        }
+    }
+}
+
+fn count_expr(a: &CountExpr, ctx: &mut Ctx) -> Expr {
+    match a {
+        CountExpr::Lit(n) => raw(n.to_string()),
+        CountExpr::Arg => ctx.int_arg(),
+    }
+}
+
+fn apply_from(q: &mut mysql::SelectQuery, from: &FromAst, depth: usize, ctx: &mut Ctx) {
+    match from {
+        FromAst::Table(i) => q.apply(select::from(quote(table(*i).name))),
+        FromAst::Derived(inner, filter) => {
+            // `SELECT * FROM inner [WHERE …]` — the default select list is `*`,
+            // so the derived table passes the base table's columns through and
+            // the outer scope's typing stays exact.
+            let inner_scope = scope_of(inner, depth + 1);
+            let mut sub = mysql::SelectQuery::default();
+            apply_from(&mut sub, inner, depth + 1, ctx);
+            if let Some(w) = filter {
+                sub.apply(select::where_(bool_expr(w, &inner_scope, ctx)));
+            }
+            q.apply(select::from(subquery(sub)).as_(format!("d{depth}")));
+        }
+    }
+}
+
+/// Build the `SelectQuery`, converting clause contents in render order so that
+/// `ctx.expected` ends up in placeholder order.
+fn build_select(ast: &QueryAst, ctx: &mut Ctx) -> mysql::SelectQuery {
+    let scope = scope_of(&ast.from, 0);
+    let mut q = mysql::SelectQuery::default();
+
+    for c in &ast.cols {
+        let e = match c {
+            ColExpr::I(i) => int_expr(i, &scope, ctx),
+            ColExpr::T(t) => text_expr(t, &scope, ctx),
+        };
+        q.apply(select::columns(e));
+    }
+
+    apply_from(&mut q, &ast.from, 0, ctx);
+
+    if let Some(w) = &ast.where_ {
+        q.apply(select::where_(bool_expr(w, &scope, ctx)));
+    }
+    if let Some((e, desc)) = &ast.order {
+        // `0 + e` rather than `e`: a bare integer literal in ORDER BY is a
+        // *positional* reference in MySQL too (SELECT, ORDER BY), and
+        // parentheses do not shield it. Folding it into an operator expression
+        // keeps it an expression.
+        let e = raw("0").plus(int_expr(e, &scope, ctx));
+        let chain = select::order_by(e);
+        q.apply(if *desc { chain.desc() } else { chain.asc() });
+    }
+    if let Some(l) = &ast.limit {
+        q.apply(select::limit(count_expr(l, ctx)));
+    }
+    if let Some(o) = &ast.offset {
+        q.apply(select::offset(count_expr(o, ctx)));
+    }
+    q
+}
+
+// ===========================================================================
+// Strategies — built bottom-up per depth so the three mutually recursive
+// types share sub-strategies instead of exploding combinatorially
+// ===========================================================================
+
+fn query_strat(depth: usize) -> BoxedStrategy<QueryAst> {
+    let lv = levels(depth);
+    let (i, t, b) = (
+        lv.int[depth].clone(),
+        lv.text[depth].clone(),
+        lv.bool_[depth].clone(),
+    );
+    let col = prop_oneof![
+        2 => i.clone().prop_map(ColExpr::I),
+        1 => t.prop_map(ColExpr::T),
+    ];
+    let count = prop_oneof![(0u8..50).prop_map(CountExpr::Lit), Just(CountExpr::Arg),];
+    // `OFFSET` without `LIMIT` is not a MySQL statement either — its
+    // limit-clause is `LIMIT n [OFFSET m]` — and keelson refuses to build one
+    // rather than inventing a row count. So the generator does not produce the
+    // shape: a refusal is correct behaviour, not a counterexample.
+    let limits = proptest::option::of((count.clone(), proptest::option::of(count))).prop_map(
+        |lo| match lo {
+            None => (None, None),
+            Some((l, o)) => (Some(l), o),
+        },
+    );
+    (
+        from_strat(b.clone()),
+        proptest::collection::vec(col, 1..=3),
+        proptest::option::of(b),
+        proptest::option::of((i, any::<bool>())),
+        limits,
+    )
+        .prop_map(|(from, cols, where_, order, (limit, offset))| QueryAst {
+            from,
+            cols,
+            where_,
+            order,
+            limit,
+            offset,
+        })
+        .boxed()
+}
+
+// ===========================================================================
+// The invariants
+// ===========================================================================
+
+/// How many placeholders the SQL holds. MySQL's is a bare `?`, and nothing
+/// else in a generated statement contains one — the literals are drawn from a
+/// fixed set that holds none, and identifiers are backquoted names from the
+/// schema — so counting is exact.
+fn placeholder_count(sql: &str) -> usize {
+    sql.bytes().filter(|b| *b == b'?').count()
+}
+
+/// Run every invariant against one generated tree.
+fn check_ast(ast: &QueryAst) -> Result<(), TestCaseError> {
+    let mut ctx = Ctx::default();
+    let q = build_select(ast, &mut ctx);
+
+    let (sql, args) = q
+        .build()
+        .map_err(|e| TestCaseError::fail(format!("build() failed: {e}\nast: {ast:?}")))?;
+
+    // Invariant 1a — the grammar. Advisory, and here that word has teeth: it
+    // is not a gate.
+    //
+    // The combinatorial suite can gate on sqlparser because every construct it
+    // drives is enumerated, so the places sqlparser is wrong are enumerable
+    // too and are declared as gaps. A generator produces shapes nobody listed,
+    // and sqlparser is wrong about some of them — `x IN ((SELECT …), e)` is
+    // valid MySQL (a parenthesised scalar sub-query is an ordinary element of
+    // an expression list) and sqlparser reads the open parenthesis as the
+    // start of a sub-query operand and demands the list end there. Gating on
+    // it would fail the suite for the parser's bug, and the shrinker would
+    // spend its budget minimising it.
+    //
+    // So the statement is recorded for the Tier D ledger either way, and the
+    // verdict is left to the engine below.
+    match keelson_sqlcheck::check(Dialect::Mysql, &sql) {
+        Ok(()) => {}
+        Err(_) => keelson_sqlcheck::record(Dialect::Mysql, &sql),
+    }
+
+    // Invariant 1b — the judge that decides: a real MySQL 8.4 `PREPARE`s it
+    // (`live-docker`). A panic here is caught by proptest and shrunk like any
+    // other failure.
+    if live::available().contains(&Dialect::Mysql) {
+        live::assert_valid(Dialect::Mysql, &sql);
+    }
+
+    // Invariant 2 — binding order. A positional placeholder cannot be
+    // checked for numbering, so the check is the one that a positional
+    // placeholder hides: the arguments must arrive in exactly the order the
+    // leaves rendered. Everything above still passes when two swap.
+    prop_assert_eq!(
+        placeholder_count(&sql),
+        args.len(),
+        "placeholder count differs from the argument count\nsql: {}",
+        sql
+    );
+    prop_assert_eq!(
+        &args,
+        &ctx.expected,
+        "arguments out of order against the render walk\nsql: {}",
+        sql
+    );
+
+    // Invariant 3 — determinism: a second build and a clone's build both
+    // reproduce the same SQL and arguments.
+    let (sql2, args2) = q.build().expect("second build");
+    prop_assert_eq!(&sql, &sql2, "two builds differ");
+    prop_assert_eq!(&args, &args2, "two builds bind differently");
+    let clone = q.clone();
+    let (sql3, args3) = clone.build().expect("clone build");
+    prop_assert_eq!(&sql, &sql3, "a clone renders differently");
+    prop_assert_eq!(&args, &args3, "a clone binds differently");
+
+    Ok(())
+}
+
+// ===========================================================================
+// The properties
+// ===========================================================================
+
+proptest! {
+    #![proptest_config(ProptestConfig {
+        cases: 256,
+        // Failures are promoted into `mod promoted` by hand (see the module
+        // doc), not replayed from a lossy seed file in the tree.
+        failure_persistence: Some(Box::new(FileFailurePersistence::Off)),
+        .. ProptestConfig::default()
+    })]
+
+    /// The whole statement: random clause subset, every clause holding a
+    /// random typed tree, sub-queries in the select list, `FROM`, and `WHERE`.
+    #[test]
+    fn a_generated_query_tree_holds_every_invariant(ast in query_strat(3)) {
+        check_ast(&ast)?;
+    }
+
+    /// Depth over breadth: one predicate, two levels deeper than the statement
+    /// property reaches, in the clause where expression nesting is richest.
+    #[test]
+    fn a_deeply_nested_predicate_keeps_its_placeholders_in_order(
+        w in levels(5).bool_.pop().unwrap(),
+        tab in any::<u8>(),
+        limit in proptest::option::of(Just(CountExpr::Arg)),
+    ) {
+        let ast = QueryAst {
+            from: FromAst::Table(tab),
+            cols: vec![ColExpr::I(IntExpr::Col(0))],
+            where_: Some(w),
+            order: None,
+            // A trailing `LIMIT ?` catches an inner counter that forgot to
+            // advance the outer one.
+            limit,
+            offset: None,
+        };
+        check_ast(&ast)?;
+    }
+}
+
+/// Failing cases found by the generator, promoted to hand-written regression
+/// tests with expectations **derived from the MySQL reference manual** (never
+/// from the builder). None yet. When one turns up, the shrunken tree from the
+/// proptest report gets rebuilt here explicitly, its expected SQL written from
+/// the cited production, and the test named after the bug.
+mod promoted {}
