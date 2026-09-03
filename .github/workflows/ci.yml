@@ -264,20 +264,12 @@ jobs:
         run: |
           docker pull postgres:17-alpine
           docker pull mysql:8.4
-      # Every crate that gates engine tests on a feature has to be named.
-      # `keelson-sqlcheck/live-docker` alone starts the containers and is what
-      # the dialect crates ask `live::available()` about at run time — but a
-      # crate whose tests are `#[cfg(feature = "live-docker")]` on its *own*
-      # feature compiles them out unless that feature is on, and a feature does
-      # not propagate from a dependency to its dependents. With only the judge's
-      # feature named, keelson-sqlx's nine PostgreSQL/MySQL transaction tests
-      # (and keelson-models', keelson-factory's, keelson-gen's) silently did not
-      # run. keelson-core is deliberately absent: its own `live-docker` cannot be
-      # switched on workspace-wide (see the comment in its manifest), and it
-      # needs nothing beyond the judge's.
-      - run: >
-          cargo test --workspace
-          --features keelson-sqlcheck/live-docker,keelson-sqlx/live-docker,keelson-models/live-docker,keelson-factory/live-docker,keelson-gen/live-docker,keelson-tokio-postgres/live-docker
+      # The feature list is the `test-engine` alias in `.cargo/config.toml`,
+      # which carries the reason every crate has to be named there. It used to
+      # be spelled out here and three more times in the docs; the failure mode
+      # of updating one copy and not the others is a green run that tested
+      # less than it claimed, and that has happened once already.
+      - run: cargo test-engine
       # testcontainers' reaper normally handles this; sweep anyway so a crashed
       # run can't leak containers into a reused runner environment.
       - name: Clean up testcontainers

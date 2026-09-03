@@ -112,11 +112,13 @@ feature is not needed: recording hooks the grammar judges, which run on a plain
 ### Running the engine tier locally
 
 ```sh
-cargo test --workspace --features \
-  keelson-sqlcheck/live-docker,keelson-sqlx/live-docker,\
-  keelson-models/live-docker,keelson-factory/live-docker,\
-  keelson-gen/live-docker,keelson-tokio-postgres/live-docker
+cargo test-engine
 ```
+
+`test-engine` is a cargo alias defined in `.cargo/config.toml`, and the list
+of features it passes lives there and nowhere else — writing it out in each
+place that runs it is how nine tests once stopped running without anyone
+noticing.
 
 **Every crate that gates engine tests on a feature has to be named.**
 `keelson-sqlcheck/live-docker` alone starts the containers, and it is what the
@@ -156,10 +158,7 @@ docker run -d --name keelson-live-mysql -e MYSQL_ALLOW_EMPTY_PASSWORD=1 \
 
 KEELSON_LIVE_PSQL_URL="postgresql://postgres:postgres@127.0.0.1:5433/postgres" \
 KEELSON_LIVE_MYSQL_URL="mysql://root@127.0.0.1:3307/test" \
-cargo test --workspace --features \
-  keelson-sqlcheck/live-docker,keelson-sqlx/live-docker,\
-  keelson-models/live-docker,keelson-factory/live-docker,\
-  keelson-gen/live-docker,keelson-tokio-postgres/live-docker
+cargo test-engine
 ```
 
 Each URL must name a database the tests may fill with the shared schema. The

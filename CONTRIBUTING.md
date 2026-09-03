@@ -45,11 +45,11 @@ cargo run -p keelson-sqlcheck --bin coverage-gate -- target/sqlcheck-record
 
 # The engine tier: real PostgreSQL 17 and MySQL 8.4 in containers. Needs Docker,
 # takes several minutes, and is what MySQL's correctness actually rests on.
-# Every crate that gates engine tests on a feature has to be named — a feature
-# does not propagate from a dependency to its dependents, so naming only the
-# judge's compiles the rest out.
-cargo test --workspace --features \
-  keelson-sqlcheck/live-docker,keelson-sqlx/live-docker,keelson-models/live-docker,keelson-factory/live-docker,keelson-gen/live-docker,keelson-tokio-postgres/live-docker
+# A cargo alias from .cargo/config.toml, where the feature list it passes is
+# written once — every crate that gates engine tests on a feature has to be
+# named, because a feature does not propagate from a dependency to its
+# dependents, and naming only the judge's compiles the rest out.
+cargo test-engine
 
 # Or one crate at a time, where its own feature is the whole story:
 cargo test -p keelson-sqlx --features live-docker

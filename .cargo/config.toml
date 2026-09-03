@@ -1,0 +1,28 @@
+# The engine tier's feature list, written once.
+#
+# Every crate that gates engine tests on a feature has to be named: a feature
+# does not propagate from a dependency to its dependents, so a crate whose
+# tests are `#[cfg(feature = "live-docker")]` on its *own* feature compiles
+# them out unless that feature is on. `keelson-sqlcheck/live-docker` alone
+# starts the containers — and the three dialect crates ask `live::available()`
+# at run time, so their judging switches on with the judge — but naming only
+# the judge's feature once silently skipped nine of keelson-sqlx's PostgreSQL
+# and MySQL transaction tests, and keelson-models', keelson-factory's and
+# keelson-gen's with them.
+#
+# That list used to be written out in four places: this repo's CI workflow,
+# twice in `docs/testing-tiers.md`, and again in `CONTRIBUTING.md`. Adding a
+# crate meant remembering all four, and the failure mode of forgetting one is
+# a green run that tested less than it claimed. They all say `cargo
+# test-engine` now, and the list lives here.
+#
+# keelson-core is deliberately absent: its own `live-docker` cannot be
+# switched on workspace-wide (see the comment in its manifest), and it needs
+# nothing beyond the judge's.
+[alias]
+test-engine = [
+    "test",
+    "--workspace",
+    "--features",
+    "keelson-sqlcheck/live-docker,keelson-sqlx/live-docker,keelson-models/live-docker,keelson-factory/live-docker,keelson-gen/live-docker,keelson-tokio-postgres/live-docker",
+]
