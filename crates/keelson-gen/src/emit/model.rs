@@ -42,6 +42,97 @@ use crate::rust_types::{is_copy, key_access, needs_copy_allow, parse_type};
 
 use super::Dial;
 
+/// The row struct: one field per column, plus `rel` when the model carries
+/// relations.
+fn row_struct(
+    m: &Model,
+    row: &proc_macro2::Ident,
+    serde_derive: &TokenStream,
+    has_rel: bool,
+) -> Result<TokenStream> {
+    let table = &m.table;
+    let mut row_fields = Vec::new();
+    for c in &m.columns {
+        let f = ident(&c.field);
+        let t = parse_type(&c.rust_type, &format!("column {table}.{}", c.db_name))?;
+        let t = if c.nullable {
+            quote!(Option<#t>)
+        } else {
+            quote!(#t)
+        };
+        row_fields.push(quote!(pub #f: #t));
+    }
+    if has_rel {
+        row_fields.push(quote! {
+            #[doc = " Relations, filled by `preload`/`then_load` mods; empty otherwise."]
+            pub rel: Rel
+        });
+    }
+    let row_doc = format!(" One row of `{table}`.");
+    let row_item = quote! {
+        #[doc = #row_doc]
+        #[derive(Debug, Clone, PartialEq #serde_derive)]
+        pub struct #row {
+            #(#row_fields,)*
+        }
+    };
+    Ok(row_item)
+}
+
+/// One `fn` per column returning its typed [`Column`](keelson_models::Column),
+/// and `all_columns()` — the select list every query starts from.
+fn column_fns(m: &Model) -> Result<(Vec<TokenStream>, TokenStream)> {
+    let table = &m.table;
+    let mut col_fns = Vec::new();
+    for c in &m.columns {
+        let f = ident(&c.field);
+        let t = parse_type(&c.rust_type, "column")?;
+        let n = &c.db_name;
+        col_fns.push(quote! {
+            pub fn #f() -> keelson_models::Column<#t> {
+                keelson_models::Column::new(#table, #n)
+            }
+        });
+    }
+    let all_columns_item = if m.columns.len() <= 16 {
+        let types = m
+            .columns
+            .iter()
+            .map(|c| {
+                let t = parse_type(&c.rust_type, "column")?;
+                Ok(quote!(keelson_models::Column<#t>))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let calls = m.columns.iter().map(|c| {
+            let f = ident(&c.field);
+            quote!(#f())
+        });
+        quote! {
+            #[allow(clippy::type_complexity)]
+            fn all_columns() -> (#(#types,)*) {
+                (#(#calls,)*)
+            }
+        }
+    } else {
+        // Past the 16-element tuple impls, the projection is a Vec<Expr> —
+        // same SQL, the per-column types stay on the column fns. Statements
+        // rather than a vec![] macro, because prettyplease flows macro
+        // tokens instead of formatting them.
+        let pushes = m.columns.iter().map(|c| {
+            let f = ident(&c.field);
+            quote!(all.push(#f().expr());)
+        });
+        quote! {
+            fn all_columns() -> Vec<keelson_core::expr::Expr> {
+                let mut all: Vec<keelson_core::expr::Expr> = Vec::new();
+                #(#pushes)*
+                all
+            }
+        }
+    };
+    Ok((col_fns, all_columns_item))
+}
+
 pub(crate) fn model_file(
     m: &Model,
     all: &[Model],
@@ -83,32 +174,7 @@ pub(crate) fn model_file(
     } else {
         quote!()
     };
-    let mut row_fields = Vec::new();
-    for c in &m.columns {
-        let f = ident(&c.field);
-        let t = parse_type(&c.rust_type, &format!("column {table}.{}", c.db_name))?;
-        let t = if c.nullable {
-            quote!(Option<#t>)
-        } else {
-            quote!(#t)
-        };
-        row_fields.push(quote!(pub #f: #t));
-    }
-    if has_rel {
-        row_fields.push(quote! {
-            #[doc = " Relations, filled by `preload`/`then_load` mods; empty otherwise."]
-            pub rel: Rel
-        });
-    }
-    let row_doc = format!(" One row of `{table}`.");
-    let row_item = quote! {
-        #[doc = #row_doc]
-        #[derive(Debug, Clone, PartialEq #serde_derive)]
-        pub struct #row {
-            #(#row_fields,)*
-        }
-    };
-
+    let row_item = row_struct(m, &row, &serde_derive, has_rel)?;
     // ── Rel ──
     let rel_item = if has_rel {
         let mut rel_fields = Vec::new();
@@ -253,54 +319,7 @@ pub(crate) fn model_file(
     };
 
     // ── column fns and all_columns ──
-    let mut col_fns = Vec::new();
-    for c in &m.columns {
-        let f = ident(&c.field);
-        let t = parse_type(&c.rust_type, "column")?;
-        let n = &c.db_name;
-        col_fns.push(quote! {
-            pub fn #f() -> keelson_models::Column<#t> {
-                keelson_models::Column::new(#table, #n)
-            }
-        });
-    }
-    let all_columns_item = if m.columns.len() <= 16 {
-        let types = m
-            .columns
-            .iter()
-            .map(|c| {
-                let t = parse_type(&c.rust_type, "column")?;
-                Ok(quote!(keelson_models::Column<#t>))
-            })
-            .collect::<Result<Vec<_>>>()?;
-        let calls = m.columns.iter().map(|c| {
-            let f = ident(&c.field);
-            quote!(#f())
-        });
-        quote! {
-            #[allow(clippy::type_complexity)]
-            fn all_columns() -> (#(#types,)*) {
-                (#(#calls,)*)
-            }
-        }
-    } else {
-        // Past the 16-element tuple impls, the projection is a Vec<Expr> —
-        // same SQL, the per-column types stay on the column fns. Statements
-        // rather than a vec![] macro, because prettyplease flows macro
-        // tokens instead of formatting them.
-        let pushes = m.columns.iter().map(|c| {
-            let f = ident(&c.field);
-            quote!(all.push(#f().expr());)
-        });
-        quote! {
-            fn all_columns() -> Vec<keelson_core::expr::Expr> {
-                let mut all: Vec<keelson_core::expr::Expr> = Vec::new();
-                #(#pushes)*
-                all
-            }
-        }
-    };
-
+    let (col_fns, all_columns_item) = column_fns(m)?;
     // ── View impl ──
     let after_select_item = if m.hooks.contains(&Hook::AfterSelect) {
         let doc = hook_doc(&config.hooks.module, table, "after_select");
@@ -547,28 +566,18 @@ const INTEGER_KEYS: &[&str] = &[
     "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "usize", "isize",
 ];
 
-/// The mutation surface for a dialect without `RETURNING` (MySQL): the
-/// `Insert` that inserts and then re-`SELECT`s by key, the keyed read-back
-/// query itself, and `Update`/`Delete` wrappers that offer `exec` and no
-/// `all`.
+/// `by_pk(...)`: the keyed read-back that stands in for `RETURNING`.
 ///
-/// The honesty this shape buys, and its cost, are recorded in
-/// `keelson-models/tests/spec_mysql.rs`: the read-back is a *second*
-/// statement, so it is not atomic with the `INSERT` and on a bare pool need
-/// not even share its connection — wrap the call in a transaction when that
-/// matters. `last_insert_id` itself is safe: it arrives in the `INSERT`'s own
-/// OK packet.
-fn no_returning_surface(
+/// A second statement, emitted as a function so its SQL is judged like any
+/// other. Returns the item and the parameter names, which the insert path
+/// then binds its captured key values to.
+fn by_pk_item(
     m: &Model,
     dial: &Dial,
-    marker: &proc_macro2::Ident,
-    row: &proc_macro2::Ident,
-) -> Result<TokenStream> {
+    pk_cols: &[&ModelColumn],
+) -> Result<(TokenStream, Vec<proc_macro2::Ident>)> {
     let krate = &dial.krate;
     let table = &m.table;
-    let pk_cols: Vec<&ModelColumn> = m.pk.iter().map(|i| &m.columns[*i]).collect();
-
-    // ── the keyed read-back ──
     let mut by_pk_params = Vec::new();
     let mut by_pk_filters = Vec::new();
     let mut key_names = Vec::new();
@@ -595,8 +604,21 @@ fn no_returning_surface(
             ))
         }
     };
+    Ok((by_pk_item, key_names))
+}
 
-    // ── capturing the key out of the setter, before it is consumed ──
+/// Reading the primary key out of the setter before the insert consumes it,
+/// and resolving what MySQL's `last_insert_id` can and cannot supply.
+///
+/// Returns the capture statements, the resolutions, and whether anything
+/// reads the insert's result — a composite key has no `last_insert_id`
+/// fallback, and an unused binding is a warning in the reader's crate.
+fn key_capture(
+    m: &Model,
+    pk_cols: &[&ModelColumn],
+    key_names: &[proc_macro2::Ident],
+) -> Result<(Vec<TokenStream>, Vec<TokenStream>, bool)> {
+    let table = &m.table;
     let mut captures = Vec::new();
     let mut resolves = Vec::new();
     let mut uses_last_insert_id = false;
@@ -643,7 +665,31 @@ fn no_returning_surface(
         };
         resolves.push(fallback);
     }
+    Ok((captures, resolves, uses_last_insert_id))
+}
 
+/// The mutation surface for a dialect without `RETURNING` (MySQL): the
+/// `Insert` that inserts and then re-`SELECT`s by key, the keyed read-back
+/// query itself, and `Update`/`Delete` wrappers that offer `exec` and no
+/// `all`.
+///
+/// The honesty this shape buys, and its cost, are recorded in
+/// `keelson-models/tests/spec_mysql.rs`: the read-back is a *second*
+/// statement, so it is not atomic with the `INSERT` and on a bare pool need
+/// not even share its connection — wrap the call in a transaction when that
+/// matters. `last_insert_id` itself is safe: it arrives in the `INSERT`'s own
+/// OK packet.
+fn no_returning_surface(
+    m: &Model,
+    dial: &Dial,
+    marker: &proc_macro2::Ident,
+    row: &proc_macro2::Ident,
+) -> Result<TokenStream> {
+    let krate = &dial.krate;
+    let table = &m.table;
+    let pk_cols: Vec<&ModelColumn> = m.pk.iter().map(|i| &m.columns[*i]).collect();
+    let (by_pk_item, key_names) = by_pk_item(m, dial, &pk_cols)?;
+    let (captures, resolves, uses_last_insert_id) = key_capture(m, &pk_cols, &key_names)?;
     // A composite key has no `last_insert_id` fallback, so nothing reads the
     // insert's result — and an unused binding is a warning in the user's
     // crate.
