@@ -108,23 +108,16 @@ pub mod then_load {
         super::super::post_tags::PostTags,
         i64,
     > {
-        keelson_models::ThenLoad::new(
-            |rows: &[super::Tag]| rows.iter().map(|r| r.id).collect(),
-            |keys, q| keelson_core::Mod::apply(
+        keelson_models::ThenLoad::new(keelson_models::Relation {
+            parent_key: |r: &super::Tag| Some(r.id),
+            child_key: |c: &super::super::post_tags::PostTag| Some(c.tag_id),
+            filter: |keys, q| keelson_core::Mod::apply(
                 super::super::post_tags::tag_id().in_(keys),
                 q,
             ),
-            |rows: &mut [super::Tag], related| {
-                keelson_models::attach_to_many(
-                    rows,
-                    related,
-                    |r| r.id,
-                    |c| c.tag_id,
-                    |r, cs| {
-                        r.rel.post_tags = cs;
-                    },
-                );
-            },
-        )
+            attach: keelson_models::Attach::Many(|r: &mut super::Tag, cs| {
+                r.rel.post_tags = cs;
+            }),
+        })
     }
 }

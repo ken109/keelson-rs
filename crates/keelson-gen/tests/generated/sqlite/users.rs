@@ -175,24 +175,17 @@ pub mod then_load {
         super::super::comments::Comments,
         i64,
     > {
-        keelson_models::ThenLoad::new(
-            |rows: &[super::User]| rows.iter().map(|r| r.id).collect(),
-            |keys, q| keelson_core::Mod::apply(
+        keelson_models::ThenLoad::new(keelson_models::Relation {
+            parent_key: |r: &super::User| Some(r.id),
+            child_key: |c: &super::super::comments::Comment| c.user_id,
+            filter: |keys, q| keelson_core::Mod::apply(
                 super::super::comments::user_id().in_(keys),
                 q,
             ),
-            |rows: &mut [super::User], related| {
-                keelson_models::attach_to_many(
-                    rows,
-                    related,
-                    |r| Some(r.id),
-                    |c| c.user_id,
-                    |r, cs| {
-                        r.rel.comments = cs;
-                    },
-                );
-            },
-        )
+            attach: keelson_models::Attach::Many(|r: &mut super::User, cs| {
+                r.rel.comments = cs;
+            }),
+        })
     }
     /// Load each row's `post_authors` (to-many), one keyed query per batch of keys — `.then(…)` hangs the next level of the path off this one.
     pub fn post_authors() -> keelson_models::ThenLoad<
@@ -200,24 +193,17 @@ pub mod then_load {
         super::super::post_authors::PostAuthors,
         i64,
     > {
-        keelson_models::ThenLoad::new(
-            |rows: &[super::User]| rows.iter().map(|r| r.id).collect(),
-            |keys, q| keelson_core::Mod::apply(
+        keelson_models::ThenLoad::new(keelson_models::Relation {
+            parent_key: |r: &super::User| Some(r.id),
+            child_key: |c: &super::super::post_authors::PostAuthor| c.user_id,
+            filter: |keys, q| keelson_core::Mod::apply(
                 super::super::post_authors::user_id().in_(keys),
                 q,
             ),
-            |rows: &mut [super::User], related| {
-                keelson_models::attach_to_many(
-                    rows,
-                    related,
-                    |r| Some(r.id),
-                    |c| c.user_id,
-                    |r, cs| {
-                        r.rel.post_authors = cs;
-                    },
-                );
-            },
-        )
+            attach: keelson_models::Attach::Many(|r: &mut super::User, cs| {
+                r.rel.post_authors = cs;
+            }),
+        })
     }
     /// Load each row's `posts` (to-many), one keyed query per batch of keys — `.then(…)` hangs the next level of the path off this one.
     pub fn posts() -> keelson_models::ThenLoad<
@@ -225,24 +211,17 @@ pub mod then_load {
         super::super::posts::Posts,
         i64,
     > {
-        keelson_models::ThenLoad::new(
-            |rows: &[super::User]| rows.iter().map(|r| r.id).collect(),
-            |keys, q| keelson_core::Mod::apply(
+        keelson_models::ThenLoad::new(keelson_models::Relation {
+            parent_key: |r: &super::User| Some(r.id),
+            child_key: |c: &super::super::posts::Post| Some(c.user_id),
+            filter: |keys, q| keelson_core::Mod::apply(
                 super::super::posts::user_id().in_(keys),
                 q,
             ),
-            |rows: &mut [super::User], related| {
-                keelson_models::attach_to_many(
-                    rows,
-                    related,
-                    |r| r.id,
-                    |c| c.user_id,
-                    |r, cs| {
-                        r.rel.posts = cs;
-                    },
-                );
-            },
-        )
+            attach: keelson_models::Attach::Many(|r: &mut super::User, cs| {
+                r.rel.posts = cs;
+            }),
+        })
     }
     /// Load each row's `user_emails` (to-one), one keyed query per batch of keys — `.then(…)` hangs the next level of the path off this one.
     pub fn user_emails() -> keelson_models::ThenLoad<
@@ -250,23 +229,16 @@ pub mod then_load {
         super::super::user_emails::UserEmails,
         i64,
     > {
-        keelson_models::ThenLoad::new(
-            |rows: &[super::User]| rows.iter().map(|r| r.id).collect(),
-            |keys, q| keelson_core::Mod::apply(
+        keelson_models::ThenLoad::new(keelson_models::Relation {
+            parent_key: |r: &super::User| Some(r.id),
+            child_key: |c: &super::super::user_emails::UserEmail| c.id,
+            filter: |keys, q| keelson_core::Mod::apply(
                 super::super::user_emails::id().in_(keys),
                 q,
             ),
-            |rows: &mut [super::User], related| {
-                keelson_models::attach_to_one(
-                    rows,
-                    related,
-                    |r| Some(r.id),
-                    |c| c.id,
-                    |r, c| {
-                        r.rel.user_emails = c.map(Box::new);
-                    },
-                );
-            },
-        )
+            attach: keelson_models::Attach::One(|r: &mut super::User, c| {
+                r.rel.user_emails = c.map(Box::new);
+            }),
+        })
     }
 }

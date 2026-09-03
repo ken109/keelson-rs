@@ -206,21 +206,17 @@ pub mod then_load {
         super::super::posts::Posts,
         i32,
     > {
-        keelson_models::ThenLoad::new(
-            |rows: &[super::PostTag]| rows.iter().map(|r| r.post_id).collect(),
-            |keys, q| keelson_core::Mod::apply(super::super::posts::id().in_(keys), q),
-            |rows: &mut [super::PostTag], related| {
-                keelson_models::attach_to_one(
-                    rows,
-                    related,
-                    |r| r.post_id,
-                    |c| c.id,
-                    |r, c| {
-                        r.rel.post = c.map(Box::new);
-                    },
-                );
-            },
-        )
+        keelson_models::ThenLoad::new(keelson_models::Relation {
+            parent_key: |r: &super::PostTag| Some(r.post_id),
+            child_key: |c: &super::super::posts::Post| Some(c.id),
+            filter: |keys, q| keelson_core::Mod::apply(
+                super::super::posts::id().in_(keys),
+                q,
+            ),
+            attach: keelson_models::Attach::One(|r: &mut super::PostTag, c| {
+                r.rel.post = c.map(Box::new);
+            }),
+        })
     }
     /// Load each row's `tag` (to-one), one keyed query per batch of keys — `.then(…)` hangs the next level of the path off this one.
     pub fn tag() -> keelson_models::ThenLoad<
@@ -228,20 +224,16 @@ pub mod then_load {
         super::super::tags::Tags,
         i32,
     > {
-        keelson_models::ThenLoad::new(
-            |rows: &[super::PostTag]| rows.iter().map(|r| r.tag_id).collect(),
-            |keys, q| keelson_core::Mod::apply(super::super::tags::id().in_(keys), q),
-            |rows: &mut [super::PostTag], related| {
-                keelson_models::attach_to_one(
-                    rows,
-                    related,
-                    |r| r.tag_id,
-                    |c| c.id,
-                    |r, c| {
-                        r.rel.tag = c.map(Box::new);
-                    },
-                );
-            },
-        )
+        keelson_models::ThenLoad::new(keelson_models::Relation {
+            parent_key: |r: &super::PostTag| Some(r.tag_id),
+            child_key: |c: &super::super::tags::Tag| Some(c.id),
+            filter: |keys, q| keelson_core::Mod::apply(
+                super::super::tags::id().in_(keys),
+                q,
+            ),
+            attach: keelson_models::Attach::One(|r: &mut super::PostTag, c| {
+                r.rel.tag = c.map(Box::new);
+            }),
+        })
     }
 }

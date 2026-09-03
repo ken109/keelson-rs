@@ -175,26 +175,17 @@ pub mod then_load {
         super::super::messages::Messages,
         i64,
     > {
-        keelson_models::ThenLoad::new(
-            |rows: &[super::Thread]| {
-                rows.iter().filter_map(|r| r.first_message_id).collect()
-            },
-            |keys, q| keelson_core::Mod::apply(
+        keelson_models::ThenLoad::new(keelson_models::Relation {
+            parent_key: |r: &super::Thread| r.first_message_id,
+            child_key: |c: &super::super::messages::Message| Some(c.id),
+            filter: |keys, q| keelson_core::Mod::apply(
                 super::super::messages::id().in_(keys),
                 q,
             ),
-            |rows: &mut [super::Thread], related| {
-                keelson_models::attach_to_one(
-                    rows,
-                    related,
-                    |r| r.first_message_id,
-                    |c| Some(c.id),
-                    |r, c| {
-                        r.rel.first_message = c.map(Box::new);
-                    },
-                );
-            },
-        )
+            attach: keelson_models::Attach::One(|r: &mut super::Thread, c| {
+                r.rel.first_message = c.map(Box::new);
+            }),
+        })
     }
     /// Load each row's `messages` (to-many), one keyed query per batch of keys — `.then(…)` hangs the next level of the path off this one.
     pub fn messages() -> keelson_models::ThenLoad<
@@ -202,23 +193,16 @@ pub mod then_load {
         super::super::messages::Messages,
         i64,
     > {
-        keelson_models::ThenLoad::new(
-            |rows: &[super::Thread]| rows.iter().map(|r| r.id).collect(),
-            |keys, q| keelson_core::Mod::apply(
+        keelson_models::ThenLoad::new(keelson_models::Relation {
+            parent_key: |r: &super::Thread| Some(r.id),
+            child_key: |c: &super::super::messages::Message| Some(c.thread_id),
+            filter: |keys, q| keelson_core::Mod::apply(
                 super::super::messages::thread_id().in_(keys),
                 q,
             ),
-            |rows: &mut [super::Thread], related| {
-                keelson_models::attach_to_many(
-                    rows,
-                    related,
-                    |r| r.id,
-                    |c| c.thread_id,
-                    |r, cs| {
-                        r.rel.messages = cs;
-                    },
-                );
-            },
-        )
+            attach: keelson_models::Attach::Many(|r: &mut super::Thread, cs| {
+                r.rel.messages = cs;
+            }),
+        })
     }
 }

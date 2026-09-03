@@ -29,7 +29,7 @@ mod model {
         use chrono::{DateTime, Utc};
         use keelson_core::expr::Expr;
         use keelson_exec::{ExecError, ExecFuture, Execute as _, Executor, FromRow, Row};
-        use keelson_models::{Column, ModelTable, Set, Table, ThenLoad, View, attach_to_many};
+        use keelson_models::{Attach, Column, ModelTable, Relation, Set, Table, ThenLoad, View};
         use keelson_psql::{Mod, arg, delete, insert, quote, select, update};
 
         /// The model marker `users::table()` hangs off. Carries no data — the
@@ -238,21 +238,14 @@ mod model {
             /// [`KEY_BATCH`](keelson_models::KEY_BATCH) keys. `.then(…)`
             /// loads a relation *of* those posts.
             pub fn posts() -> ThenLoad<Users, super::super::posts::Posts, i32> {
-                ThenLoad::new(
-                    |users: &[User]| users.iter().map(|u| u.id).collect(),
-                    |keys, q| super::super::posts::user_id().in_(keys).apply(q),
-                    |users: &mut [User], posts| {
-                        attach_to_many(
-                            users,
-                            posts,
-                            |u| u.id,
-                            |p| p.user_id,
-                            |u, ps| {
-                                u.rel.posts = ps;
-                            },
-                        );
-                    },
-                )
+                ThenLoad::new(Relation {
+                    parent_key: |u: &User| Some(u.id),
+                    child_key: |p: &super::super::posts::Post| Some(p.user_id),
+                    filter: |keys, q| super::super::posts::user_id().in_(keys).apply(q),
+                    attach: Attach::Many(|u: &mut User, ps| {
+                        u.rel.posts = ps;
+                    }),
+                })
             }
         }
     }
@@ -265,7 +258,8 @@ mod model {
         use keelson_core::mod_fn;
         use keelson_exec::{ExecError, FromRow, Row};
         use keelson_models::{
-            Column, ModelSelect, ModelTable, Set, Table, ThenLoad, View, attach_to_one, mapper_mod,
+            Attach, Column, ModelSelect, ModelTable, Relation, Set, Table, ThenLoad, View,
+            mapper_mod,
         };
         use keelson_psql::{Chain as _, Mod, delete, insert, quote, select, update};
 
@@ -489,21 +483,14 @@ mod model {
             /// Load each post's user (to-one), one keyed query per batch.
             /// `.then(…)` loads a relation *of* that user.
             pub fn user() -> ThenLoad<Posts, super::super::users::Users, i32> {
-                ThenLoad::new(
-                    |posts: &[Post]| posts.iter().map(|p| p.user_id).collect(),
-                    |keys, q| super::super::users::id().in_(keys).apply(q),
-                    |posts: &mut [Post], users| {
-                        attach_to_one(
-                            posts,
-                            users,
-                            |p| p.user_id,
-                            |u| u.id,
-                            |p, u| {
-                                p.rel.user = u.map(Box::new);
-                            },
-                        );
-                    },
-                )
+                ThenLoad::new(Relation {
+                    parent_key: |p: &Post| Some(p.user_id),
+                    child_key: |u: &super::super::users::User| Some(u.id),
+                    filter: |keys, q| super::super::users::id().in_(keys).apply(q),
+                    attach: Attach::One(|p: &mut Post, u| {
+                        p.rel.user = u.map(Box::new);
+                    }),
+                })
             }
         }
     }

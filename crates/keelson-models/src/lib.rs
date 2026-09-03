@@ -156,7 +156,7 @@ mod set;
 mod table;
 
 pub use column::{Column, Filter};
-pub use load::{IntoLoader, KEY_BATCH, ThenLoad, attach_to_many, attach_to_one};
+pub use load::{Attach, IntoLoader, KEY_BATCH, Relation, ThenLoad, attach_to_many, attach_to_one};
 pub use model::{Table, View};
 pub use mutate::{ModelDelete, ModelInsert, ModelUpdate};
 pub use select::{Loader, MapperMod, ModelSelect, hook, loader, mapper_mod};

@@ -137,20 +137,74 @@ impl<T> IntoLoader<T> for Loader<T> {
 /// One level of a load path: fetch `C` for a set of `P`, keyed, batched and
 /// deduplicated — plus the levels hanging off it.
 ///
+/// Where a level's children go on their parent, and how many of them.
+///
+/// The cardinality is the *runtime's* business — grouping one child per
+/// parent is a different fold from grouping several — so it is named here
+/// rather than left to a closure the generator writes twice.
+pub enum Attach<P: View, C: View> {
+    /// At most one child. It arrives unboxed; the setter is what writes it
+    /// into the row's `Option<Box<_>>` field.
+    One(fn(&mut P::Row, Option<C::Row>)),
+    /// Every child whose key matches.
+    Many(fn(&mut P::Row, Vec<C::Row>)),
+}
+
+impl<P: View, C: View> std::fmt::Debug for Attach<P, C> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Attach::One(_) => "Attach::One",
+            Attach::Many(_) => "Attach::Many",
+        })
+    }
+}
+
+/// What one relation *is*, as facts rather than as steps.
+///
+/// A generated then-load used to hand [`ThenLoad::new`] three closures: the
+/// parent keys, the child-query filter, and an attachment that then called
+/// [`attach_to_one`] or [`attach_to_many`] with two *more* key closures. The
+/// same key was extracted twice, once for the `IN` list and once for the
+/// grouping, and the generator carried a four-way match to write the first
+/// one — map or `filter_map`, cloning or not — that this shape removes: a
+/// key is `Option<K>` on both sides, and a `None` is a row that matches
+/// nothing.
+///
+/// What is left is what a relation actually is: which column on each side is
+/// the key, how to filter the child query by it, and whether a parent takes
+/// one child or many.
+pub struct Relation<P: View, C: View, K> {
+    /// One parent row's key, or `None` where the column is NULL.
+    pub parent_key: fn(&P::Row) -> Option<K>,
+    /// The same key on a child row.
+    pub child_key: fn(&C::Row) -> Option<K>,
+    /// Narrow the child query to one batch of keys.
+    pub filter: fn(Vec<K>, &mut ModelSelect<C>),
+    /// Where the children go.
+    pub attach: Attach<P, C>,
+}
+
+impl<P: View, C: View, K> std::fmt::Debug for Relation<P, C, K> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Relation")
+            .field("attach", &self.attach)
+            .finish_non_exhaustive()
+    }
+}
+
+/// One level of a load path: the child rows for a set of parents, fetched in
+/// one keyed query per batch.
+///
 /// Generated `then_load::…()` functions return one of these. It is a
 /// [`Mod`] over the parent's [`ModelSelect`], so it drops into a query tuple
 /// like any other mod; [`then`](ThenLoad::then) is what makes it a path
 /// rather than a single level.
 ///
-/// The three function pointers are the model-specific half — which keys to
-/// take off the parents, how to filter the child query by them, how to
-/// attach the results — and they are function pointers rather than closures
-/// because generated code has nothing to capture, which keeps this type
-/// `Send + Sync` without a bound in sight.
+/// The model-specific half is a [`Relation`], whose members are function
+/// pointers rather than closures because generated code has nothing to
+/// capture — which keeps this type `Send + Sync` without a bound in sight.
 pub struct ThenLoad<P: View, C: View, K> {
-    keys: fn(&[P::Row]) -> Vec<K>,
-    key_filter: fn(Vec<K>, &mut ModelSelect<C>),
-    attach: fn(&mut [P::Row], Vec<C::Row>),
+    rel: Relation<P, C, K>,
     shape: Vec<Shape<C>>,
     nested: Vec<Loader<C::Row>>,
     batch: usize,
@@ -170,19 +224,15 @@ impl<P, C, K> ThenLoad<P, C, K>
 where
     P: View,
     C: View,
-    K: Ord + Clone + Send + Sync + 'static,
+    // A to-one child shared by two parents is attached to both, so it is
+    // cloned once per extra parent. Every generated row derives `Clone`.
+    C::Row: Clone,
+    K: Ord + Clone + Eq + Hash + Send + Sync + 'static,
 {
-    /// Assemble a level. Generated code calls this; the three arguments are
-    /// the parent keys, the child-query filter and the attachment.
-    pub fn new(
-        keys: fn(&[P::Row]) -> Vec<K>,
-        key_filter: fn(Vec<K>, &mut ModelSelect<C>),
-        attach: fn(&mut [P::Row], Vec<C::Row>),
-    ) -> Self {
+    /// Assemble a level from what the relation is. Generated code calls this.
+    pub fn new(rel: Relation<P, C, K>) -> Self {
         ThenLoad {
-            keys,
-            key_filter,
-            attach,
+            rel,
             shape: Vec::new(),
             nested: Vec::new(),
             batch: KEY_BATCH,
@@ -234,14 +284,22 @@ where
     }
 
     async fn run(&self, db: &dyn Executor, parents: &mut [P::Row]) -> Result<(), ExecError> {
-        let keys = distinct((self.keys)(parents));
+        // A parent whose key is NULL matches no child, so it never reaches the
+        // `IN` list. It still reaches the attachment, where its `None` key
+        // finds nothing — which is the same answer, arrived at once.
+        let keys = distinct(
+            parents
+                .iter()
+                .filter_map(|r| (self.rel.parent_key)(r))
+                .collect(),
+        );
         if keys.is_empty() {
             return Ok(());
         }
         let mut children: Vec<C::Row> = Vec::new();
         for chunk in keys.chunks(self.batch) {
             let mut q = ModelTable::<C>::new().query(());
-            (self.key_filter)(chunk.to_vec(), &mut q);
+            (self.rel.filter)(chunk.to_vec(), &mut q);
             for shape in &self.shape {
                 shape(&mut q);
             }
@@ -253,7 +311,11 @@ where
         for deeper in &self.nested {
             deeper(db, &mut children).await?;
         }
-        (self.attach)(parents, children);
+        let (parent_key, child_key) = (self.rel.parent_key, self.rel.child_key);
+        match &self.rel.attach {
+            Attach::One(set) => attach_to_one(parents, children, parent_key, child_key, *set),
+            Attach::Many(set) => attach_to_many(parents, children, parent_key, child_key, *set),
+        }
         Ok(())
     }
 }
@@ -271,7 +333,10 @@ impl<P, C, K> IntoLoader<P::Row> for ThenLoad<P, C, K>
 where
     P: View,
     C: View,
-    K: Ord + Clone + Send + Sync + 'static,
+    // A to-one child shared by two parents is attached to both, so it is
+    // cloned once per extra parent. Every generated row derives `Clone`.
+    C::Row: Clone,
+    K: Ord + Clone + Eq + Hash + Send + Sync + 'static,
 {
     fn into_loader(self) -> Loader<P::Row> {
         let level = Arc::new(self);
@@ -286,7 +351,10 @@ impl<P, C, K> Mod<ModelSelect<P>> for ThenLoad<P, C, K>
 where
     P: View,
     C: View,
-    K: Ord + Clone + Send + Sync + 'static,
+    // A to-one child shared by two parents is attached to both, so it is
+    // cloned once per extra parent. Every generated row derives `Clone`.
+    C::Row: Clone,
+    K: Ord + Clone + Eq + Hash + Send + Sync + 'static,
 {
     fn apply(self, q: &mut ModelSelect<P>) {
         q.add_loader(self.into_loader());

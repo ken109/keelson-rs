@@ -263,21 +263,17 @@ pub mod then_load {
         super::super::users::Users,
         i32,
     > {
-        keelson_models::ThenLoad::new(
-            |rows: &[super::Post]| rows.iter().map(|r| r.user_id).collect(),
-            |keys, q| keelson_core::Mod::apply(super::super::users::id().in_(keys), q),
-            |rows: &mut [super::Post], related| {
-                keelson_models::attach_to_one(
-                    rows,
-                    related,
-                    |r| r.user_id,
-                    |c| c.id,
-                    |r, c| {
-                        r.rel.user = c.map(Box::new);
-                    },
-                );
-            },
-        )
+        keelson_models::ThenLoad::new(keelson_models::Relation {
+            parent_key: |r: &super::Post| Some(r.user_id),
+            child_key: |c: &super::super::users::User| Some(c.id),
+            filter: |keys, q| keelson_core::Mod::apply(
+                super::super::users::id().in_(keys),
+                q,
+            ),
+            attach: keelson_models::Attach::One(|r: &mut super::Post, c| {
+                r.rel.user = c.map(Box::new);
+            }),
+        })
     }
     /// Load each row's `authorship` (to-one), one keyed query per batch of keys — `.then(…)` hangs the next level of the path off this one.
     pub fn authorship() -> keelson_models::ThenLoad<
@@ -285,24 +281,17 @@ pub mod then_load {
         super::super::post_authors::PostAuthors,
         i32,
     > {
-        keelson_models::ThenLoad::new(
-            |rows: &[super::Post]| rows.iter().map(|r| r.id).collect(),
-            |keys, q| keelson_core::Mod::apply(
+        keelson_models::ThenLoad::new(keelson_models::Relation {
+            parent_key: |r: &super::Post| Some(r.id),
+            child_key: |c: &super::super::post_authors::PostAuthor| c.post_id,
+            filter: |keys, q| keelson_core::Mod::apply(
                 super::super::post_authors::post_id().in_(keys),
                 q,
             ),
-            |rows: &mut [super::Post], related| {
-                keelson_models::attach_to_one(
-                    rows,
-                    related,
-                    |r| Some(r.id),
-                    |c| c.post_id,
-                    |r, c| {
-                        r.rel.authorship = c.map(Box::new);
-                    },
-                );
-            },
-        )
+            attach: keelson_models::Attach::One(|r: &mut super::Post, c| {
+                r.rel.authorship = c.map(Box::new);
+            }),
+        })
     }
     /// Load each row's `comments` (to-many), one keyed query per batch of keys — `.then(…)` hangs the next level of the path off this one.
     pub fn comments() -> keelson_models::ThenLoad<
@@ -310,24 +299,17 @@ pub mod then_load {
         super::super::comments::Comments,
         i32,
     > {
-        keelson_models::ThenLoad::new(
-            |rows: &[super::Post]| rows.iter().map(|r| r.id).collect(),
-            |keys, q| keelson_core::Mod::apply(
+        keelson_models::ThenLoad::new(keelson_models::Relation {
+            parent_key: |r: &super::Post| Some(r.id),
+            child_key: |c: &super::super::comments::Comment| Some(c.post_id),
+            filter: |keys, q| keelson_core::Mod::apply(
                 super::super::comments::post_id().in_(keys),
                 q,
             ),
-            |rows: &mut [super::Post], related| {
-                keelson_models::attach_to_many(
-                    rows,
-                    related,
-                    |r| r.id,
-                    |c| c.post_id,
-                    |r, cs| {
-                        r.rel.comments = cs;
-                    },
-                );
-            },
-        )
+            attach: keelson_models::Attach::Many(|r: &mut super::Post, cs| {
+                r.rel.comments = cs;
+            }),
+        })
     }
     /// Load each row's `post_tags` (to-many), one keyed query per batch of keys — `.then(…)` hangs the next level of the path off this one.
     pub fn post_tags() -> keelson_models::ThenLoad<
@@ -335,23 +317,16 @@ pub mod then_load {
         super::super::post_tags::PostTags,
         i32,
     > {
-        keelson_models::ThenLoad::new(
-            |rows: &[super::Post]| rows.iter().map(|r| r.id).collect(),
-            |keys, q| keelson_core::Mod::apply(
+        keelson_models::ThenLoad::new(keelson_models::Relation {
+            parent_key: |r: &super::Post| Some(r.id),
+            child_key: |c: &super::super::post_tags::PostTag| Some(c.post_id),
+            filter: |keys, q| keelson_core::Mod::apply(
                 super::super::post_tags::post_id().in_(keys),
                 q,
             ),
-            |rows: &mut [super::Post], related| {
-                keelson_models::attach_to_many(
-                    rows,
-                    related,
-                    |r| r.id,
-                    |c| c.post_id,
-                    |r, cs| {
-                        r.rel.post_tags = cs;
-                    },
-                );
-            },
-        )
+            attach: keelson_models::Attach::Many(|r: &mut super::Post, cs| {
+                r.rel.post_tags = cs;
+            }),
+        })
     }
 }

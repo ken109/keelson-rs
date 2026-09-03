@@ -42,17 +42,6 @@ use crate::rust_types::{is_copy, key_access, needs_copy_allow, parse_type};
 
 use super::Dial;
 
-/// The same access with an `Option` mismatch bridged: when only one side of
-/// an attachment key is nullable, the non-null side wraps in `Some`.
-fn key_access_leveled(recv: TokenStream, c: &ModelColumn, other_nullable: bool) -> TokenStream {
-    let access = key_access(recv, c);
-    if !c.nullable && other_nullable {
-        quote!(Some(#access))
-    } else {
-        access
-    }
-}
-
 pub(crate) fn model_file(
     m: &Model,
     all: &[Model],
@@ -997,18 +986,29 @@ fn then_load_item(
     let fn_name = ident(name);
     let omod = ident(&other.table);
     let omarker = ident(&other.marker);
+    let orow = ident(&other.row);
     let child_fn = ident(&child.field);
     let kty = parse_type(&parent.rust_type, "relation key")?;
-    let key_f = ident(&parent.field);
+    let parent_f = ident(&parent.field);
+    let child_f = ident(&child.field);
 
-    let collect = match (parent.nullable, is_copy(&parent.rust_type)) {
-        (false, true) => quote!(rows.iter().map(|r| r.#key_f).collect()),
-        (false, false) => quote!(rows.iter().map(|r| r.#key_f.clone()).collect()),
-        (true, true) => quote!(rows.iter().filter_map(|r| r.#key_f).collect()),
-        (true, false) => quote!(rows.iter().filter_map(|r| r.#key_f.clone()).collect()),
+    // A key is `Option<K>` on both sides, so a nullable column is passed
+    // through and a `NOT NULL` one is wrapped. That is the whole of the
+    // nullability bridging: a `None` matches nothing, on either side.
+    let key_of = |c: &ModelColumn, recv: TokenStream, f: &proc_macro2::Ident| {
+        let read = if is_copy(&c.rust_type) {
+            quote!(#recv.#f)
+        } else {
+            quote!(#recv.#f.clone())
+        };
+        if c.nullable {
+            read
+        } else {
+            quote!(Some(#read))
+        }
     };
-    let parent_key = key_access_leveled(quote!(r), parent, child.nullable);
-    let child_key = key_access_leveled(quote!(c), child, parent.nullable);
+    let parent_key = key_of(parent, quote!(r), &parent_f);
+    let child_key = key_of(child, quote!(c), &child_f);
     let allow = if needs_copy_allow(&parent.rust_type) || needs_copy_allow(&child.rust_type) {
         quote!(#[allow(clippy::clone_on_copy)])
     } else {
@@ -1019,30 +1019,18 @@ fn then_load_item(
         (
             "to-many",
             quote! {
-                keelson_models::attach_to_many(
-                    rows,
-                    related,
-                    |r| #parent_key,
-                    |c| #child_key,
-                    |r, cs| {
-                        r.rel.#fn_name = cs;
-                    },
-                );
+                keelson_models::Attach::Many(|r: &mut super::#row, cs| {
+                    r.rel.#fn_name = cs;
+                })
             },
         )
     } else {
         (
             "to-one",
             quote! {
-                keelson_models::attach_to_one(
-                    rows,
-                    related,
-                    |r| #parent_key,
-                    |c| #child_key,
-                    |r, c| {
-                        r.rel.#fn_name = c.map(Box::new);
-                    },
-                );
+                keelson_models::Attach::One(|r: &mut super::#row, c| {
+                    r.rel.#fn_name = c.map(Box::new);
+                })
             },
         )
     };
@@ -1059,16 +1047,15 @@ fn then_load_item(
             super::super::#omod::#omarker,
             #kty,
         > {
-            keelson_models::ThenLoad::new(
-                |rows: &[super::#row]| #collect,
-                |keys, q| keelson_core::Mod::apply(
+            keelson_models::ThenLoad::new(keelson_models::Relation {
+                parent_key: |r: &super::#row| #parent_key,
+                child_key: |c: &super::super::#omod::#orow| #child_key,
+                filter: |keys, q| keelson_core::Mod::apply(
                     super::super::#omod::#child_fn().in_(keys),
                     q,
                 ),
-                |rows: &mut [super::#row], related| {
-                    #attach
-                },
-            )
+                attach: #attach,
+            })
         }
     })
 }
