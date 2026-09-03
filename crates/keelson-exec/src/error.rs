@@ -1,6 +1,7 @@
 use std::fmt;
 
 use crate::executor::Family;
+use crate::transaction::TxConflictError;
 
 /// Everything that can go wrong while executing a statement.
 ///
@@ -8,6 +9,11 @@ use crate::executor::Family;
 /// carry the column they happened in, because "which column" is the question a
 /// failing read always raises first. Driver failures are boxed rather than
 /// enumerated: their shapes belong to the backend crates.
+///
+/// The one driver failure that is *not* boxed is a concurrency conflict.
+/// Whether to retry is the most consequential question a caller asks of an
+/// error here, and the answer is the same on every engine — so it is a variant
+/// a `match` can reach, not a `Box` a caller has to downcast.
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum ExecError {
@@ -55,6 +61,17 @@ pub enum ExecError {
         family: Family,
     },
 
+    /// The engine refused the work because something else held what it
+    /// needed: a serialization failure, a deadlock, a lock timeout, a busy
+    /// database. Every one of them means the same thing to a caller — retry
+    /// the transaction from the top — which is why this is a variant rather
+    /// than one more boxed driver error.
+    ///
+    /// [`TxConflict::of`](crate::TxConflict::of) reads it out of any
+    /// [`ExecError`]; matching on it directly is the same answer without the
+    /// call.
+    Conflict(TxConflictError),
+
     /// The driver reported a failure — connection, protocol, server error.
     Driver(Box<dyn std::error::Error + Send + Sync>),
 
@@ -99,6 +116,7 @@ impl fmt::Display for ExecError {
             ExecError::UnsupportedValue { type_name, family } => {
                 write!(f, "cannot bind a {type_name} value on {family}")
             }
+            ExecError::Conflict(e) => write!(f, "{e}"),
             ExecError::Driver(e) => write!(f, "driver error: {e}"),
             ExecError::Other(msg) => f.write_str(msg),
         }
@@ -109,6 +127,7 @@ impl std::error::Error for ExecError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             ExecError::Build(e) | ExecError::Decode { source: e, .. } => Some(e),
+            ExecError::Conflict(e) => std::error::Error::source(e),
             ExecError::Driver(e) => Some(e.as_ref()),
             _ => None,
         }

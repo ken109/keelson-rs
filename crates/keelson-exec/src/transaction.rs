@@ -633,7 +633,7 @@ impl TxConflict {
     /// caller — retry the transaction from the top.
     pub fn of(e: &ExecError) -> Option<TxConflict> {
         match e {
-            ExecError::Driver(d) => d.downcast_ref::<TxConflictError>().map(|c| c.kind),
+            ExecError::Conflict(c) => Some(c.kind),
             _ => None,
         }
     }
@@ -685,10 +685,13 @@ impl TxConflictError {
         &self.code
     }
 
-    /// Wrap into the error the executor traits speak. This is the one
-    /// construction [`TxConflict::of`] recognises.
+    /// Wrap into the error the executor traits speak.
+    ///
+    /// [`ExecError::Conflict`], not a boxed driver error: a caller decides
+    /// whether to retry by matching, and used to have to reach for
+    /// `downcast_ref` to ask the one question this error exists to answer.
     pub fn into_exec_error(self) -> ExecError {
-        ExecError::Driver(Box::new(self))
+        ExecError::Conflict(self)
     }
 }
 
@@ -1466,6 +1469,15 @@ mod tests {
         assert!(e.to_string().contains("40001"), "{e}");
         assert!(std::error::Error::source(&e).is_some());
         assert_eq!(TxConflict::of(&ExecError::RowNotFound), None);
+        // The question the error exists to answer, asked by matching rather
+        // than by downcasting a boxed driver error.
+        let retry = matches!(
+            e,
+            ExecError::Conflict(ref c) if c.kind() == TxConflict::Serialization
+        );
+        assert!(retry, "a conflict must be reachable with a plain match");
+        // The driver error it was classified out of is still underneath.
+        assert!(matches!(e, ExecError::Conflict(ref c) if c.code() == "40001"));
     }
 
     /// Both PostgreSQL backends read this one table, so the codes it names
