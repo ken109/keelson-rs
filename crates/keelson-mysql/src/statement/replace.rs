@@ -94,32 +94,10 @@ impl IntoExprList for ReplaceQuery {
     }
 }
 
-impl HasHints for ReplaceQuery {
-    fn hints_mut(&mut self) -> &mut Hints {
-        &mut self.hints
-    }
-}
-
-impl HasModifiers for ReplaceQuery {
-    fn modifiers_mut(&mut self) -> &mut Modifiers {
-        &mut self.modifiers
-    }
-}
-
-impl HasTableRef for ReplaceQuery {
-    fn table_ref_mut(&mut self) -> &mut TableRef {
-        &mut self.table
-    }
-}
-
-impl HasValues for ReplaceQuery {
-    fn values_mut(&mut self) -> &mut Values {
-        &mut self.values
-    }
-}
-
-impl HasSet for ReplaceQuery {
-    fn set_mut(&mut self) -> &mut Set {
-        &mut self.set
-    }
-}
+keelson_core::impl_clause_accessors!(ReplaceQuery {
+    HasHints     => hints_mut:     Hints     = hints,
+    HasModifiers => modifiers_mut: Modifiers = modifiers,
+    HasTableRef  => table_ref_mut: TableRef  = table,
+    HasValues    => values_mut:    Values    = values,
+    HasSet       => set_mut:       Set       = set,
+});

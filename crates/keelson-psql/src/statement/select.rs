@@ -178,92 +178,20 @@ impl IntoExprList for SelectQuery {
     }
 }
 
-impl HasWith for SelectQuery {
-    fn with_mut(&mut self) -> &mut With {
-        &mut self.with
-    }
-}
-
-impl HasSelectList for SelectQuery {
-    fn select_list_mut(&mut self) -> &mut SelectList {
-        &mut self.select_list
-    }
-}
-
-impl HasTableRef for SelectQuery {
-    fn table_ref_mut(&mut self) -> &mut TableRef {
-        &mut self.from
-    }
-}
-
-impl HasExtraTables for SelectQuery {
-    fn extra_tables_mut(&mut self) -> &mut Vec<TableRef> {
-        &mut self.extra_from
-    }
-}
-
-impl HasJoins for SelectQuery {
-    fn joins_mut(&mut self) -> &mut Vec<Join> {
-        &mut self.from.joins
-    }
-}
-
-impl HasWhere for SelectQuery {
-    fn where_mut(&mut self) -> &mut Where {
-        &mut self.where_
-    }
-}
-
-impl HasGroupBy for SelectQuery {
-    fn group_by_mut(&mut self) -> &mut GroupBy {
-        &mut self.group_by
-    }
-}
-
-impl HasHaving for SelectQuery {
-    fn having_mut(&mut self) -> &mut Having {
-        &mut self.having
-    }
-}
-
-impl HasWindows for SelectQuery {
-    fn windows_mut(&mut self) -> &mut Windows {
-        &mut self.windows
-    }
-}
-
-impl HasOrderBy for SelectQuery {
-    fn order_by_mut(&mut self) -> &mut OrderBy {
-        &mut self.order_by
-    }
-}
-
-impl HasLimit for SelectQuery {
-    fn limit_mut(&mut self) -> &mut Limit {
-        &mut self.limit
-    }
-}
-
-impl HasOffset for SelectQuery {
-    fn offset_mut(&mut self) -> &mut Offset {
-        &mut self.offset
-    }
-}
-
-impl HasFetch for SelectQuery {
-    fn fetch_mut(&mut self) -> &mut Fetch {
-        &mut self.fetch
-    }
-}
-
-impl HasLocks for SelectQuery {
-    fn locks_mut(&mut self) -> &mut Locks {
-        &mut self.locks
-    }
-}
-
-impl HasCombines for SelectQuery {
-    fn combines_mut(&mut self) -> &mut Combines {
-        &mut self.combines
-    }
-}
+keelson_core::impl_clause_accessors!(SelectQuery {
+    HasWith        => with_mut:         With          = with,
+    HasSelectList  => select_list_mut:  SelectList    = select_list,
+    HasTableRef    => table_ref_mut:    TableRef      = from,
+    HasExtraTables => extra_tables_mut: Vec<TableRef> = extra_from,
+    HasJoins       => joins_mut:        Vec<Join>     = from.joins,
+    HasWhere       => where_mut:        Where         = where_,
+    HasGroupBy     => group_by_mut:     GroupBy       = group_by,
+    HasHaving      => having_mut:       Having        = having,
+    HasWindows     => windows_mut:      Windows       = windows,
+    HasOrderBy     => order_by_mut:     OrderBy       = order_by,
+    HasLimit       => limit_mut:        Limit         = limit,
+    HasOffset      => offset_mut:       Offset        = offset,
+    HasFetch       => fetch_mut:        Fetch         = fetch,
+    HasLocks       => locks_mut:        Locks         = locks,
+    HasCombines    => combines_mut:     Combines      = combines,
+});

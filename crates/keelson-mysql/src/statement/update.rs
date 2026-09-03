@@ -127,62 +127,15 @@ impl IntoExprList for UpdateQuery {
     }
 }
 
-impl HasWith for UpdateQuery {
-    fn with_mut(&mut self) -> &mut With {
-        &mut self.with
-    }
-}
-
-impl HasHints for UpdateQuery {
-    fn hints_mut(&mut self) -> &mut Hints {
-        &mut self.hints
-    }
-}
-
-impl HasModifiers for UpdateQuery {
-    fn modifiers_mut(&mut self) -> &mut Modifiers {
-        &mut self.modifiers
-    }
-}
-
-impl HasTargetTable for UpdateQuery {
-    fn target_table_mut(&mut self) -> &mut TableRef {
-        &mut self.table
-    }
-}
-
-impl HasExtraTables for UpdateQuery {
-    fn extra_tables_mut(&mut self) -> &mut Vec<TableRef> {
-        &mut self.extra_tables
-    }
-}
-
-impl HasJoins for UpdateQuery {
-    fn joins_mut(&mut self) -> &mut Vec<Join> {
-        &mut self.table.joins
-    }
-}
-
-impl HasSet for UpdateQuery {
-    fn set_mut(&mut self) -> &mut Set {
-        &mut self.set
-    }
-}
-
-impl HasWhere for UpdateQuery {
-    fn where_mut(&mut self) -> &mut Where {
-        &mut self.where_
-    }
-}
-
-impl HasOrderBy for UpdateQuery {
-    fn order_by_mut(&mut self) -> &mut OrderBy {
-        &mut self.order_by
-    }
-}
-
-impl HasLimit for UpdateQuery {
-    fn limit_mut(&mut self) -> &mut Limit {
-        &mut self.limit
-    }
-}
+keelson_core::impl_clause_accessors!(UpdateQuery {
+    HasWith        => with_mut:         With          = with,
+    HasHints       => hints_mut:        Hints         = hints,
+    HasModifiers   => modifiers_mut:    Modifiers     = modifiers,
+    HasTargetTable => target_table_mut: TableRef      = table,
+    HasExtraTables => extra_tables_mut: Vec<TableRef> = extra_tables,
+    HasJoins       => joins_mut:        Vec<Join>     = table.joins,
+    HasSet         => set_mut:          Set           = set,
+    HasWhere       => where_mut:        Where         = where_,
+    HasOrderBy     => order_by_mut:     OrderBy       = order_by,
+    HasLimit       => limit_mut:        Limit         = limit,
+});

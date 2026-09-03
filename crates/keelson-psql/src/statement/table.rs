@@ -127,50 +127,13 @@ impl IntoExprList for TableQuery {
     }
 }
 
-impl HasWith for TableQuery {
-    fn with_mut(&mut self) -> &mut With {
-        &mut self.with
-    }
-}
-
-impl HasTableRef for TableQuery {
-    fn table_ref_mut(&mut self) -> &mut TableRef {
-        &mut self.table
-    }
-}
-
-impl HasOrderBy for TableQuery {
-    fn order_by_mut(&mut self) -> &mut OrderBy {
-        &mut self.order_by
-    }
-}
-
-impl HasLimit for TableQuery {
-    fn limit_mut(&mut self) -> &mut Limit {
-        &mut self.limit
-    }
-}
-
-impl HasOffset for TableQuery {
-    fn offset_mut(&mut self) -> &mut Offset {
-        &mut self.offset
-    }
-}
-
-impl HasFetch for TableQuery {
-    fn fetch_mut(&mut self) -> &mut Fetch {
-        &mut self.fetch
-    }
-}
-
-impl HasLocks for TableQuery {
-    fn locks_mut(&mut self) -> &mut Locks {
-        &mut self.locks
-    }
-}
-
-impl HasCombines for TableQuery {
-    fn combines_mut(&mut self) -> &mut Combines {
-        &mut self.combines
-    }
-}
+keelson_core::impl_clause_accessors!(TableQuery {
+    HasWith     => with_mut:      With     = with,
+    HasTableRef => table_ref_mut: TableRef = table,
+    HasOrderBy  => order_by_mut:  OrderBy  = order_by,
+    HasLimit    => limit_mut:     Limit    = limit,
+    HasOffset   => offset_mut:    Offset   = offset,
+    HasFetch    => fetch_mut:     Fetch    = fetch,
+    HasLocks    => locks_mut:     Locks    = locks,
+    HasCombines => combines_mut:  Combines = combines,
+});

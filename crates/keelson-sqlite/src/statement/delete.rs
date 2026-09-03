@@ -87,26 +87,9 @@ impl IntoExprList for DeleteQuery {
     }
 }
 
-impl HasWith for DeleteQuery {
-    fn with_mut(&mut self) -> &mut With {
-        &mut self.with
-    }
-}
-
-impl HasTargetTable for DeleteQuery {
-    fn target_table_mut(&mut self) -> &mut TableRef {
-        &mut self.table
-    }
-}
-
-impl HasWhere for DeleteQuery {
-    fn where_mut(&mut self) -> &mut Where {
-        &mut self.where_
-    }
-}
-
-impl HasReturning for DeleteQuery {
-    fn returning_mut(&mut self) -> &mut Returning {
-        &mut self.returning
-    }
-}
+keelson_core::impl_clause_accessors!(DeleteQuery {
+    HasWith        => with_mut:         With      = with,
+    HasTargetTable => target_table_mut: TableRef  = table,
+    HasWhere       => where_mut:        Where     = where_,
+    HasReturning   => returning_mut:    Returning = returning,
+});

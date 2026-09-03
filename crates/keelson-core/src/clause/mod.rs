@@ -172,6 +172,56 @@ fn write_quoted_list(
     w.push_str(suffix);
 }
 
+/// Implement the `Has*` clause-accessor traits for a statement, one line each.
+///
+/// Every one of them is the same five lines — `impl HasX for Q { fn x_mut(&mut
+/// self) -> &mut X { &mut self.field } }` — and the three dialect crates
+/// between them had a hundred and fifty. They carry no reasoning: the whole
+/// content of one is *which field of this statement is that clause*, which is
+/// exactly what a line here says.
+///
+/// ```
+/// use keelson_core::clause::{HasLimit, HasWhere, Limit, Where};
+///
+/// #[derive(Default)]
+/// struct MyQuery {
+///     where_: Where,
+///     limit: Limit,
+/// }
+///
+/// keelson_core::impl_clause_accessors!(MyQuery {
+///     HasWhere => where_mut: Where = where_,
+///     HasLimit => limit_mut: Limit = limit,
+/// });
+///
+/// let mut q = MyQuery::default();
+/// let _: &mut Where = q.where_mut();
+/// ```
+///
+/// The trait and type names resolve in the calling module, so a dialect's own
+/// accessor trait — `HasExtraTables`, `HasHints` — goes in the same list as
+/// the ones from here, and nothing has to be imported that was not already.
+/// A nested field path works too (`from.joins`), which is how a statement
+/// whose joins hang off its `FROM` item reaches them.
+///
+/// The alternative was a derive macro reading `#[clause]` attributes on the
+/// fields. It was not taken: it would put keelson-macros between every
+/// dialect crate and its statements, to say the same thing in a place where
+/// the field's *type* no longer names the trait it satisfies. Here the pair
+/// is written out, and a wrong one does not compile.
+#[macro_export]
+macro_rules! impl_clause_accessors {
+    ($q:ty { $($trait_:ident => $method:ident: $ty:ty = $($field:ident).+),+ $(,)? }) => {
+        $(
+            impl $trait_ for $q {
+                fn $method(&mut self) -> &mut $ty {
+                    &mut self.$($field).+
+                }
+            }
+        )+
+    };
+}
+
 #[cfg(test)]
 mod tests {
     use keelson_sqlcheck::testing::{assert_frag_sql, assert_stmt_sql};

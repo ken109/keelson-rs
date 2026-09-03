@@ -83,26 +83,9 @@ impl IntoExprList for TableQuery {
     }
 }
 
-impl HasTableRef for TableQuery {
-    fn table_ref_mut(&mut self) -> &mut TableRef {
-        &mut self.table
-    }
-}
-
-impl HasOrderBy for TableQuery {
-    fn order_by_mut(&mut self) -> &mut OrderBy {
-        &mut self.order_by
-    }
-}
-
-impl HasLimit for TableQuery {
-    fn limit_mut(&mut self) -> &mut Limit {
-        &mut self.limit
-    }
-}
-
-impl HasOffset for TableQuery {
-    fn offset_mut(&mut self) -> &mut Offset {
-        &mut self.offset
-    }
-}
+keelson_core::impl_clause_accessors!(TableQuery {
+    HasTableRef => table_ref_mut: TableRef = table,
+    HasOrderBy  => order_by_mut:  OrderBy  = order_by,
+    HasLimit    => limit_mut:     Limit    = limit,
+    HasOffset   => offset_mut:    Offset   = offset,
+});

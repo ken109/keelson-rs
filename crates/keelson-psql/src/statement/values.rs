@@ -143,44 +143,12 @@ impl IntoExprList for ValuesQuery {
     }
 }
 
-impl HasWith for ValuesQuery {
-    fn with_mut(&mut self) -> &mut With {
-        &mut self.with
-    }
-}
-
-impl HasValues for ValuesQuery {
-    fn values_mut(&mut self) -> &mut Values {
-        &mut self.values
-    }
-}
-
-impl HasOrderBy for ValuesQuery {
-    fn order_by_mut(&mut self) -> &mut OrderBy {
-        &mut self.order_by
-    }
-}
-
-impl HasLimit for ValuesQuery {
-    fn limit_mut(&mut self) -> &mut Limit {
-        &mut self.limit
-    }
-}
-
-impl HasOffset for ValuesQuery {
-    fn offset_mut(&mut self) -> &mut Offset {
-        &mut self.offset
-    }
-}
-
-impl HasFetch for ValuesQuery {
-    fn fetch_mut(&mut self) -> &mut Fetch {
-        &mut self.fetch
-    }
-}
-
-impl HasCombines for ValuesQuery {
-    fn combines_mut(&mut self) -> &mut Combines {
-        &mut self.combines
-    }
-}
+keelson_core::impl_clause_accessors!(ValuesQuery {
+    HasWith     => with_mut:     With     = with,
+    HasValues   => values_mut:   Values   = values,
+    HasOrderBy  => order_by_mut: OrderBy  = order_by,
+    HasLimit    => limit_mut:    Limit    = limit,
+    HasOffset   => offset_mut:   Offset   = offset,
+    HasFetch    => fetch_mut:    Fetch    = fetch,
+    HasCombines => combines_mut: Combines = combines,
+});

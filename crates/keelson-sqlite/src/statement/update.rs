@@ -131,56 +131,14 @@ impl IntoExprList for UpdateQuery {
     }
 }
 
-impl HasWith for UpdateQuery {
-    fn with_mut(&mut self) -> &mut With {
-        &mut self.with
-    }
-}
-
-impl HasOr for UpdateQuery {
-    fn or_mut(&mut self) -> &mut Option<Or> {
-        &mut self.or
-    }
-}
-
-impl HasTargetTable for UpdateQuery {
-    fn target_table_mut(&mut self) -> &mut TableRef {
-        &mut self.table
-    }
-}
-
-impl HasSet for UpdateQuery {
-    fn set_mut(&mut self) -> &mut Set {
-        &mut self.set
-    }
-}
-
-impl HasTableRef for UpdateQuery {
-    fn table_ref_mut(&mut self) -> &mut TableRef {
-        &mut self.from
-    }
-}
-
-impl HasExtraTables for UpdateQuery {
-    fn extra_tables_mut(&mut self) -> &mut Vec<TableRef> {
-        &mut self.extra_from
-    }
-}
-
-impl HasJoins for UpdateQuery {
-    fn joins_mut(&mut self) -> &mut Vec<Join> {
-        &mut self.from.joins
-    }
-}
-
-impl HasWhere for UpdateQuery {
-    fn where_mut(&mut self) -> &mut Where {
-        &mut self.where_
-    }
-}
-
-impl HasReturning for UpdateQuery {
-    fn returning_mut(&mut self) -> &mut Returning {
-        &mut self.returning
-    }
-}
+keelson_core::impl_clause_accessors!(UpdateQuery {
+    HasWith        => with_mut:         With          = with,
+    HasOr          => or_mut:           Option<Or>    = or,
+    HasTargetTable => target_table_mut: TableRef      = table,
+    HasSet         => set_mut:          Set           = set,
+    HasTableRef    => table_ref_mut:    TableRef      = from,
+    HasExtraTables => extra_tables_mut: Vec<TableRef> = extra_from,
+    HasJoins       => joins_mut:        Vec<Join>     = from.joins,
+    HasWhere       => where_mut:        Where         = where_,
+    HasReturning   => returning_mut:    Returning     = returning,
+});

@@ -100,20 +100,8 @@ impl IntoExprList for ValuesQuery {
     }
 }
 
-impl HasValues for ValuesQuery {
-    fn values_mut(&mut self) -> &mut Values {
-        &mut self.values
-    }
-}
-
-impl HasOrderBy for ValuesQuery {
-    fn order_by_mut(&mut self) -> &mut OrderBy {
-        &mut self.order_by
-    }
-}
-
-impl HasLimit for ValuesQuery {
-    fn limit_mut(&mut self) -> &mut Limit {
-        &mut self.limit
-    }
-}
+keelson_core::impl_clause_accessors!(ValuesQuery {
+    HasValues  => values_mut:   Values  = values,
+    HasOrderBy => order_by_mut: OrderBy = order_by,
+    HasLimit   => limit_mut:    Limit   = limit,
+});

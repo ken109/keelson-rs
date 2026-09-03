@@ -133,23 +133,11 @@ impl IntoExprList for MergeQuery {
     }
 }
 
-impl HasWith for MergeQuery {
-    fn with_mut(&mut self) -> &mut With {
-        &mut self.with
-    }
-}
-
-impl HasTargetTable for MergeQuery {
-    fn target_table_mut(&mut self) -> &mut TableRef {
-        &mut self.target
-    }
-}
-
-impl HasTableRef for MergeQuery {
-    fn table_ref_mut(&mut self) -> &mut TableRef {
-        &mut self.source
-    }
-}
+keelson_core::impl_clause_accessors!(MergeQuery {
+    HasWith        => with_mut:         With     = with,
+    HasTargetTable => target_table_mut: TableRef = target,
+    HasTableRef    => table_ref_mut:    TableRef = source,
+});
 
 impl HasJoins for MergeQuery {
     fn joins_mut(&mut self) -> &mut Vec<Join> {
@@ -161,11 +149,9 @@ impl HasJoins for MergeQuery {
     }
 }
 
-impl HasReturning for MergeQuery {
-    fn returning_mut(&mut self) -> &mut Returning {
-        &mut self.returning
-    }
-}
+keelson_core::impl_clause_accessors!(MergeQuery {
+    HasReturning => returning_mut: Returning = returning,
+});
 
 /// One `WHEN … THEN …` clause of a [`MergeQuery`].
 #[derive(Debug, Clone)]

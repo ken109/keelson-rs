@@ -126,11 +126,9 @@ impl Function {
     }
 }
 
-impl HasOrderBy for Function {
-    fn order_by_mut(&mut self) -> &mut OrderBy {
-        &mut self.order_by
-    }
-}
+keelson_core::impl_clause_accessors!(Function {
+    HasOrderBy => order_by_mut: OrderBy = order_by,
+});
 
 impl Expression for Function {
     fn write_sql(&self, w: &mut SqlWriter<'_>) {

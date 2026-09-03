@@ -109,32 +109,10 @@ impl IntoExprList for InsertQuery {
     }
 }
 
-impl HasWith for InsertQuery {
-    fn with_mut(&mut self) -> &mut With {
-        &mut self.with
-    }
-}
-
-impl HasTableRef for InsertQuery {
-    fn table_ref_mut(&mut self) -> &mut TableRef {
-        &mut self.table
-    }
-}
-
-impl HasValues for InsertQuery {
-    fn values_mut(&mut self) -> &mut Values {
-        &mut self.values
-    }
-}
-
-impl HasConflict for InsertQuery {
-    fn conflict_mut(&mut self) -> &mut Conflict {
-        &mut self.conflict
-    }
-}
-
-impl HasReturning for InsertQuery {
-    fn returning_mut(&mut self) -> &mut Returning {
-        &mut self.returning
-    }
-}
+keelson_core::impl_clause_accessors!(InsertQuery {
+    HasWith      => with_mut:      With      = with,
+    HasTableRef  => table_ref_mut: TableRef  = table,
+    HasValues    => values_mut:    Values    = values,
+    HasConflict  => conflict_mut:  Conflict  = conflict,
+    HasReturning => returning_mut: Returning = returning,
+});

@@ -161,29 +161,12 @@ impl IntoExprList for InsertQuery {
     }
 }
 
-impl HasHints for InsertQuery {
-    fn hints_mut(&mut self) -> &mut Hints {
-        &mut self.hints
-    }
-}
-
-impl HasModifiers for InsertQuery {
-    fn modifiers_mut(&mut self) -> &mut Modifiers {
-        &mut self.modifiers
-    }
-}
-
-impl HasTableRef for InsertQuery {
-    fn table_ref_mut(&mut self) -> &mut TableRef {
-        &mut self.table
-    }
-}
-
-impl HasValues for InsertQuery {
-    fn values_mut(&mut self) -> &mut Values {
-        &mut self.values
-    }
-}
+keelson_core::impl_clause_accessors!(InsertQuery {
+    HasHints     => hints_mut:     Hints     = hints,
+    HasModifiers => modifiers_mut: Modifiers = modifiers,
+    HasTableRef  => table_ref_mut: TableRef  = table,
+    HasValues    => values_mut:    Values    = values,
+});
 
 /// The `INSERT … SET` row source, *not* the `ON DUPLICATE KEY UPDATE` list —
 /// see [`HasDuplicateKeyUpdate`].
@@ -193,14 +176,7 @@ impl HasSet for InsertQuery {
     }
 }
 
-impl HasRowAlias for InsertQuery {
-    fn row_alias_mut(&mut self) -> &mut RowAlias {
-        &mut self.row_alias
-    }
-}
-
-impl HasDuplicateKeyUpdate for InsertQuery {
-    fn duplicate_key_update_mut(&mut self) -> &mut Set {
-        &mut self.duplicate_key_update
-    }
-}
+keelson_core::impl_clause_accessors!(InsertQuery {
+    HasRowAlias           => row_alias_mut:            RowAlias = row_alias,
+    HasDuplicateKeyUpdate => duplicate_key_update_mut: Set      = duplicate_key_update,
+});

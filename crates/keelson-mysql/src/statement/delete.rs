@@ -145,23 +145,11 @@ impl IntoExprList for DeleteQuery {
     }
 }
 
-impl HasWith for DeleteQuery {
-    fn with_mut(&mut self) -> &mut With {
-        &mut self.with
-    }
-}
-
-impl HasHints for DeleteQuery {
-    fn hints_mut(&mut self) -> &mut Hints {
-        &mut self.hints
-    }
-}
-
-impl HasModifiers for DeleteQuery {
-    fn modifiers_mut(&mut self) -> &mut Modifiers {
-        &mut self.modifiers
-    }
-}
+keelson_core::impl_clause_accessors!(DeleteQuery {
+    HasWith      => with_mut:      With      = with,
+    HasHints     => hints_mut:     Hints     = hints,
+    HasModifiers => modifiers_mut: Modifiers = modifiers,
+});
 
 impl HasDeleteTables for DeleteQuery {
     fn delete_tables_mut(&mut self) -> &mut Vec<TableRef> {
@@ -173,38 +161,11 @@ impl HasDeleteTables for DeleteQuery {
     }
 }
 
-impl HasTableRef for DeleteQuery {
-    fn table_ref_mut(&mut self) -> &mut TableRef {
-        &mut self.using
-    }
-}
-
-impl HasExtraTables for DeleteQuery {
-    fn extra_tables_mut(&mut self) -> &mut Vec<TableRef> {
-        &mut self.extra_using
-    }
-}
-
-impl HasJoins for DeleteQuery {
-    fn joins_mut(&mut self) -> &mut Vec<Join> {
-        &mut self.using.joins
-    }
-}
-
-impl HasWhere for DeleteQuery {
-    fn where_mut(&mut self) -> &mut Where {
-        &mut self.where_
-    }
-}
-
-impl HasOrderBy for DeleteQuery {
-    fn order_by_mut(&mut self) -> &mut OrderBy {
-        &mut self.order_by
-    }
-}
-
-impl HasLimit for DeleteQuery {
-    fn limit_mut(&mut self) -> &mut Limit {
-        &mut self.limit
-    }
-}
+keelson_core::impl_clause_accessors!(DeleteQuery {
+    HasTableRef    => table_ref_mut:    TableRef      = using,
+    HasExtraTables => extra_tables_mut: Vec<TableRef> = extra_using,
+    HasJoins       => joins_mut:        Vec<Join>     = using.joins,
+    HasWhere       => where_mut:        Where         = where_,
+    HasOrderBy     => order_by_mut:     OrderBy       = order_by,
+    HasLimit       => limit_mut:        Limit         = limit,
+});

@@ -99,44 +99,12 @@ impl IntoExprList for DeleteQuery {
     }
 }
 
-impl HasWith for DeleteQuery {
-    fn with_mut(&mut self) -> &mut With {
-        &mut self.with
-    }
-}
-
-impl HasTargetTable for DeleteQuery {
-    fn target_table_mut(&mut self) -> &mut TableRef {
-        &mut self.table
-    }
-}
-
-impl HasTableRef for DeleteQuery {
-    fn table_ref_mut(&mut self) -> &mut TableRef {
-        &mut self.using
-    }
-}
-
-impl HasExtraTables for DeleteQuery {
-    fn extra_tables_mut(&mut self) -> &mut Vec<TableRef> {
-        &mut self.extra_using
-    }
-}
-
-impl HasJoins for DeleteQuery {
-    fn joins_mut(&mut self) -> &mut Vec<Join> {
-        &mut self.using.joins
-    }
-}
-
-impl HasWhere for DeleteQuery {
-    fn where_mut(&mut self) -> &mut Where {
-        &mut self.where_
-    }
-}
-
-impl HasReturning for DeleteQuery {
-    fn returning_mut(&mut self) -> &mut Returning {
-        &mut self.returning
-    }
-}
+keelson_core::impl_clause_accessors!(DeleteQuery {
+    HasWith        => with_mut:         With          = with,
+    HasTargetTable => target_table_mut: TableRef      = table,
+    HasTableRef    => table_ref_mut:    TableRef      = using,
+    HasExtraTables => extra_tables_mut: Vec<TableRef> = extra_using,
+    HasJoins       => joins_mut:        Vec<Join>     = using.joins,
+    HasWhere       => where_mut:        Where         = where_,
+    HasReturning   => returning_mut:    Returning     = returning,
+});
