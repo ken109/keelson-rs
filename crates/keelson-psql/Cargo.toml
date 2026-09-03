@@ -38,5 +38,11 @@ keelson-sqlcheck = { path = "../keelson-sqlcheck", features = ["live", "property
 pg_query.workspace = true
 proptest.workspace = true
 
+[package.metadata.docs.rs]
+# `sql!` is behind `macros`, so without this the docs.rs page for this crate
+# omits the one item the README leads with. `live-docker`/`exhaustive` are test
+# tiers, not surface, and are left off.
+features = ["macros"]
+
 [lints]
 workspace = true

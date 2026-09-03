@@ -85,6 +85,7 @@
 //! what the counter fixes.
 
 #![warn(missing_docs)]
+#![forbid(unsafe_code)]
 
 mod dialect;
 mod extras;

@@ -1,5 +1,6 @@
 #![doc = include_str!("../README.md")]
 #![warn(missing_docs)]
+#![forbid(unsafe_code)]
 
 // ---------------------------------------------------------------------------
 // The crates, re-exported under their short names.

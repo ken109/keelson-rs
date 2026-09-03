@@ -19,8 +19,8 @@ categories = ["database"]
 macros = ["keelson-core/macros"]
 # Adds the containerised server engines to the test judge. SQLite itself is a
 # library, so `cargo test` already runs both the lemon-rs grammar tier *and* a
-# real SQLite through keelson-sqlcheck's `live`; this feature only exists so the
-# whole workspace can be tested with one flag.
+# real SQLite through keelson-sqlcheck's `live`; this feature only exists so this
+# crate can be named alongside the others in the workspace-wide engine run.
 live-docker = ["keelson-sqlcheck/live-docker"]
 # Widens the combinatorial suite (`tests/combinatorial.rs`) from one representative
 # variant per clause to every variant — join kinds, compound operators, ordering
@@ -32,6 +32,13 @@ keelson-core.workspace = true
 
 [dev-dependencies]
 keelson-sqlcheck = { path = "../keelson-sqlcheck", features = ["live", "property"] }
+proptest.workspace = true
+
+[package.metadata.docs.rs]
+# `sql!` is behind `macros`, so without this the docs.rs page for this crate
+# omits the one item the README leads with. `live-docker`/`exhaustive` are test
+# tiers, not surface, and are left off.
+features = ["macros"]
 
 [lints]
 workspace = true

@@ -21,11 +21,14 @@ testing = []
 #
 #   cargo test -p keelson-core --features live-docker
 #
-# Workspace-wide, name the judge's feature instead — or as well:
+# Workspace-wide, name the judge's feature instead — this crate's tests ask
+# `live::available()` at run time, so the judge's feature is all they need:
 #
-#   cargo test --workspace --features keelson-sqlcheck/live-docker
+#   cargo test --workspace --features keelson-sqlcheck/live-docker,...
 #
-# because this crate's dependency on keelson-sqlcheck is a dev-dependency cycle,
+# (the full list is in docs/testing-tiers.md — crates that gate engine tests on
+# their own feature must each be named). This crate's own feature must not be in
+# it, because its dependency on keelson-sqlcheck is a dev-dependency cycle,
 # and a feature cannot propagate around one when keelson-sqlcheck is also being
 # built as a package in its own right: it ends up with `live-docker` switched on
 # and the optional dependencies it implies switched off, and does not compile.

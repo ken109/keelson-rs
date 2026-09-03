@@ -96,6 +96,7 @@
 //! (`user_id(k)` / `user(&u)`) or uses `create`, where the chain is made.
 
 #![warn(missing_docs)]
+#![forbid(unsafe_code)]
 
 mod faker;
 mod parent;

@@ -92,6 +92,13 @@ futures-util = { version = "0.3", default-features = false, features = ["std"] }
 [workspace.lints.rust]
 missing_debug_implementations = "warn"
 unreachable_pub = "warn"
+# keelson has no reason to reach for `unsafe`: it renders strings, binds values
+# and awaits a driver. `deny` rather than `forbid` here because exactly one
+# member does need it — keelson-sqlcheck's `atexit` container sweep, which is
+# `publish = false` and takes a local `#[allow]` at the site with its SAFETY
+# note. Every *published* crate additionally carries `#![forbid(unsafe_code)]`
+# in its lib.rs, so the shipped surface cannot take that escape hatch at all.
+unsafe_code = "deny"
 
 [workspace.lints.clippy]
 todo = "warn"

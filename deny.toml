@@ -1,0 +1,98 @@
+# cargo-deny — the supply-chain gate.
+#
+# keelson is a library other people's builds pull in, so its dependency tree is
+# part of its published surface: an advisory against something four levels down
+# is still a thing a consumer inherits, and a licence that is not compatible
+# with this repo's MIT is still a thing they have to comply with. Neither is
+# visible in `cargo build`, so both are checked here and in CI (the `supply
+# chain` job in .github/workflows/ci.yml).
+#
+# Run it locally the same way CI does:
+#
+#     cargo install cargo-deny --locked
+#     cargo deny check
+#
+# `advisories` and `licenses` are the two that gate. `bans` is deliberately
+# advisory-only: duplicate versions are a fact of a tree this size (syn 1 and 2
+# coexist wherever a proc-macro dependency has not moved), and failing on them
+# would make an unrelated upgrade someone else's emergency.
+
+[graph]
+# Every target keelson claims to build for. Left at "all targets" rather than a
+# list, because the dialect crates are pure Rust and the drivers' platform
+# splits (ring, libsqlite3-sys) are exactly what a narrow list would hide.
+all-features = true
+
+[advisories]
+# RustSec, on the whole tree. `deny` is the default for `vulnerability` in
+# cargo-deny 0.16+; these two are the ones with a default worth overriding.
+yanked = "deny"
+unmaintained = "workspace"
+# An entry here is a decision, and it needs three things written next to it:
+# what the advisory is, what this workspace's exposure to it actually is, and
+# what would let the entry be removed. "We looked and it was noisy" is not one
+# of the three.
+ignore = [
+    # RUSTSEC-2023-0071 — the Marvin attack: `rsa` is not constant-time, so an
+    # attacker who can observe the timing of RSA operations over the network
+    # may be able to recover the private key.
+    #
+    # Reached through sqlx-mysql, which uses `rsa` for MySQL's
+    # `caching_sha2_password` / `sha256_password` public-key password exchange.
+    # It is therefore *live* for a MySQL connection that authenticates over an
+    # untrusted network without TLS — this is not a "we are not affected" entry.
+    #
+    # There is no patched release to move to: upstream says so in the advisory,
+    # and rsa 0.10 is still pre-release. Nothing in this workspace can fix it,
+    # and failing every build until someone else does would only teach people to
+    # pass --ignore. The mitigation belongs to the deployment: connect to MySQL
+    # over TLS, which is what stops the timing from being observable.
+    #
+    # Remove this the moment sqlx ships a version resolving `rsa` to a
+    # constant-time release.
+    "RUSTSEC-2023-0071",
+]
+
+[licenses]
+# The permissive set, plus the two special forms this tree actually contains:
+# Unicode-3.0 (the ICU data behind idna/unicode-ident) and the LLVM exception
+# (the compiler-builtins family). Anything not listed is a build failure rather
+# than a warning — a licence nobody reviewed is the case this file exists for.
+allow = [
+    "0BSD",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "ISC",
+    "MIT",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+# A dual-licensed crate is evaluated as the cheapest branch that is allowed, so
+# `MIT OR Apache-2.0 OR LGPL-2.1-or-later` resolves to MIT and never drags the
+# LGPL branch in. Confidence at the default 0.8: lower invites a misread licence
+# file to pass as something it is not.
+confidence-threshold = 0.8
+
+[bans]
+# Advisory, not a gate — see the header. `skip`/`deny` entries belong here when
+# a specific duplicate is worth arguing about; none is today.
+multiple-versions = "warn"
+# A `*` version is a real problem in a published manifest — it resolves to
+# whatever exists at build time. Every one in this workspace is a path-only
+# intra-workspace dev-dependency, which `cargo package` strips from the packaged
+# manifest and no consumer ever resolves, so those are exempted rather than the
+# check being switched off.
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+# crates.io and nothing else. A git dependency in a published crate is a
+# dependency `cargo publish` would refuse anyway; catching it here means it
+# fails on the pull request instead of at the release.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

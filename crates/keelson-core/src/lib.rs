@@ -73,6 +73,7 @@
 //! [`clause`] traits defined here. The whole map, and one dependency line for
 //! it, is the [keelson](https://docs.rs/keelson) facade crate.
 #![warn(missing_docs)]
+#![forbid(unsafe_code)]
 
 pub mod clause;
 mod dialect;

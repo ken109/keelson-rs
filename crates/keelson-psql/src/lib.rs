@@ -67,6 +67,7 @@
 //! their own, because the counter belongs to the writer.
 
 #![warn(missing_docs)]
+#![forbid(unsafe_code)]
 
 mod dialect;
 mod extras;

@@ -19,9 +19,10 @@
 # every push for that reason, not only at release time: the bump lands as an
 # ordinary commit, so the mistake is catchable long before a tag exists.
 #
-# `keelson-sqlcheck` is the deliberate exception: it is `publish = false`, and a
-# version beside its path would demand it exist on crates.io. It must stay
-# path-only, so an accidental version there is an error too.
+# `keelson-sqlcheck` and `keelson-tokio-postgres` are the deliberate exceptions:
+# both are `publish = false`, and a version beside the path would demand they
+# exist on crates.io. They must stay path-only, so an accidental version there
+# is an error too.
 
 set -euo pipefail
 
@@ -34,6 +35,10 @@ import sys, re, pathlib, tomllib
 
 expected = sys.argv[1] if len(sys.argv) > 1 else ""
 problems = []
+
+# The `publish = false` members that other crates name by path. They must stay
+# path-only; see docs/publishing.md.
+UNPUBLISHED = {"keelson-sqlcheck", "keelson-tokio-postgres"}
 
 manifest = tomllib.loads(pathlib.Path("Cargo.toml").read_text())
 version = manifest["workspace"]["package"]["version"]
@@ -55,10 +60,10 @@ for name, spec in sorted(deps.items()):
         continue
 
     declared = spec.get("version")
-    if name == "keelson-sqlcheck":
-        # publish = false, dev-dependency only: cargo strips a path-only
-        # dev-dependency from a packaged manifest, and a version here would
-        # require it on crates.io. See docs/publishing.md.
+    if name in UNPUBLISHED:
+        # publish = false: cargo strips a path-only dev-dependency from a
+        # packaged manifest, and a version here would require the crate to
+        # exist on crates.io. See docs/publishing.md.
         if declared is not None:
             problems.append(
                 f"{name} must stay path-only (it is publish = false), but declares version {declared!r}"
@@ -84,7 +89,7 @@ if problems:
         print(f"  - {p}", file=sys.stderr)
     sys.exit(1)
 
-print(f"version consistency: ok — workspace, {sum(1 for n in deps if n.startswith('keelson') and n != 'keelson-sqlcheck')} intra-workspace deps and CHANGELOG all say {version}")
+print(f"version consistency: ok — workspace, {sum(1 for n in deps if n.startswith('keelson') and n not in UNPUBLISHED)} intra-workspace deps and CHANGELOG all say {version}")
 PY
 
 # The lockfile has to already agree, or the published crates resolve differently

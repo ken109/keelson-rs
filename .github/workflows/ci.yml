@@ -1,4 +1,6 @@
-# keelson CI — the same three gates the repo enforces locally, wired into Actions.
+# keelson CI — the gates the repo enforces locally, wired into Actions.
+#
+# Everything here is runnable by hand; CONTRIBUTING.md lists the commands.
 #
 # Job layout (all parallel):
 #   version       the workspace speaks one version, in the manifest, in every
@@ -27,6 +29,19 @@
 #                 (docs/testing-tiers.md, Tier D). Runs the suite a second time
 #                 because recording is env-var-gated; parallel with `fast`, so it
 #                 adds no wall-clock.
+#   supply-chain  `cargo deny check`: an advisory or a non-permissive licence
+#                 anywhere in the tree is a thing consumers inherit, and neither
+#                 is visible in `cargo build`. Seconds, no toolchain of ours.
+#                 The rules and the reasoning are in deny.toml; Dependabot
+#                 (.github/dependabot.yml) is what makes the tree move once a
+#                 fix exists upstream.
+#   coverage      `cargo llvm-cov`, reported and never gated. The construct
+#                 coverage gate below proves every declared SQL construct was
+#                 exercised; this answers the different question of which *Rust*
+#                 lines never ran, which is where an unreachable branch or an
+#                 untested error path shows up. Deliberately not a threshold: a
+#                 number that fails the build is a number people write tests to
+#                 move rather than tests to find bugs with.
 #   msrv          `cargo check --workspace --locked` on the `rust-version`
 #                 declared in Cargo.toml (read from the manifest at run time, so
 #                 the job can never drift from what the workspace claims).
@@ -136,11 +151,18 @@ jobs:
       - name: keelson feature matrix
         run: ./scripts/feature-matrix.sh
       # What crates.io would receive, built in isolation from its own tarball.
-      # The two `--exclude`s are the publish=false members, which
+      # The `--exclude`s are the publish=false members, which
       # `cargo package --workspace` would otherwise package anyway; see
       # docs/publishing.md.
       - name: package the publishable set
-        run: cargo package --workspace --exclude keelson-sqlcheck --exclude keelson-examples --exclude keelson-facade-consumer --allow-dirty
+        run: >
+          cargo package --workspace
+          --exclude keelson-sqlcheck
+          --exclude keelson-examples
+          --exclude keelson-facade-consumer
+          --exclude keelson-benches
+          --exclude keelson-tokio-postgres
+          --allow-dirty
 
   coverage-gate:
     name: sqlcheck coverage gate (Tier D)
@@ -157,6 +179,44 @@ jobs:
         run: KEELSON_SQLCHECK_RECORD="$GITHUB_WORKSPACE/target/sqlcheck-record" cargo test --workspace
       - name: Replay recording against the construct manifests
         run: cargo run -p keelson-sqlcheck --bin coverage-gate -- target/sqlcheck-record
+
+  supply-chain:
+    name: supply chain (cargo-deny)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      # The action ships its own cargo-deny binary, so this needs no toolchain
+      # and no build. `check` runs every section deny.toml configures.
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+
+  coverage:
+    name: line coverage (reported, not gated)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      # No engine tier here: this measures the lanes every contributor can run,
+      # so the number means the same thing locally as it does in CI.
+      - name: Measure
+        run: cargo llvm-cov --workspace --lcov --output-path lcov.info
+      - name: Summarise into the job log
+        run: cargo llvm-cov report --summary-only
+      # Kept as an artifact rather than sent to a coverage service: the number
+      # is for whoever is reading a pull request, and a third party is a
+      # dependency this repo has no reason to take on.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lcov
+          path: lcov.info
+          retention-days: 14
 
   msrv:
     name: MSRV check (Cargo.toml rust-version)
@@ -204,7 +264,20 @@ jobs:
         run: |
           docker pull postgres:17-alpine
           docker pull mysql:8.4
-      - run: cargo test --workspace --features keelson-sqlcheck/live-docker
+      # Every crate that gates engine tests on a feature has to be named.
+      # `keelson-sqlcheck/live-docker` alone starts the containers and is what
+      # the dialect crates ask `live::available()` about at run time — but a
+      # crate whose tests are `#[cfg(feature = "live-docker")]` on its *own*
+      # feature compiles them out unless that feature is on, and a feature does
+      # not propagate from a dependency to its dependents. With only the judge's
+      # feature named, keelson-sqlx's nine PostgreSQL/MySQL transaction tests
+      # (and keelson-models', keelson-factory's, keelson-gen's) silently did not
+      # run. keelson-core is deliberately absent: its own `live-docker` cannot be
+      # switched on workspace-wide (see the comment in its manifest), and it
+      # needs nothing beyond the judge's.
+      - run: >
+          cargo test --workspace
+          --features keelson-sqlcheck/live-docker,keelson-sqlx/live-docker,keelson-models/live-docker,keelson-factory/live-docker,keelson-gen/live-docker,keelson-tokio-postgres/live-docker
       # testcontainers' reaper normally handles this; sweep anyway so a crashed
       # run can't leak containers into a reused runner environment.
       - name: Clean up testcontainers

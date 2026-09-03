@@ -237,6 +237,7 @@
 //! reasons of its own and cannot catch it.
 
 #![warn(missing_docs)]
+#![forbid(unsafe_code)]
 
 mod attr;
 mod bind;

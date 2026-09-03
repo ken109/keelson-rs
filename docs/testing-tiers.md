@@ -18,7 +18,7 @@ trusted.
 | ---- | ------------------- | -------------- |
 | A — intent | does each construct render as the SQL *we meant*? | each dialect's `tests/grammar_*.rs` |
 | B — combinatorial | do constructs still hold together in combination? | each dialect's `tests/combinatorial.rs` |
-| C — property | do randomly-shaped query trees uphold the invariants? | `keelson-psql/tests/property.rs` |
+| C — property | do randomly-shaped query trees uphold the invariants? | each dialect's `tests/property.rs` |
 | D — coverage gate | did A–C actually exercise everything we declare? | `keelson-sqlcheck/src/coverage.rs` + `coverage/` |
 
 ## Tier A — intent
@@ -47,6 +47,19 @@ available) plus the structural invariants: placeholder numbering matches the
 argument vector, building twice is deterministic, clones build identically.
 Shapes no human would think to write; shrinking turns a failure into a minimal
 counterexample.
+
+One lane per dialect, and the differences between them are the dialects':
+
+| lane | acceptance judge | what the placeholder invariant can say |
+| ---- | ---------------- | -------------------------------------- |
+| `keelson-psql` | libpg_query, always; PostgreSQL 17 under `live-docker`. Also asserts the parse tree holds exactly the clauses asked for. | `$n` numbered `1..=n` in emission order, **and** the values bound in render order |
+| `keelson-sqlite` | lemon-rs, always; a real in-process SQLite, always — no Docker | the same, over `?n` |
+| `keelson-mysql` | MySQL 8.4 under `live-docker`. sqlparser is run and recorded but **does not gate**: it is wrong about shapes a generator finds (`x IN ((SELECT …), e)`) that no enumerated list would declare as a gap | the values bound in render order — a bare `?` has no number to check, which is exactly why this lane is the one that has to check the order |
+
+The psql lane owns the clause-presence assertion because it is the only one
+with a parse tree worth asserting against; clause presence is keelson-core's
+shared machinery, so proving it once is proving it. What is per-dialect — the
+rendering and the placeholder numbering — is checked in all three.
 
 ## Tier D — the coverage gate
 
@@ -99,8 +112,27 @@ feature is not needed: recording hooks the grammar judges, which run on a plain
 ### Running the engine tier locally
 
 ```sh
-cargo test --workspace --features keelson-sqlcheck/live-docker
+cargo test --workspace --features \
+  keelson-sqlcheck/live-docker,keelson-sqlx/live-docker,\
+  keelson-models/live-docker,keelson-factory/live-docker,\
+  keelson-gen/live-docker,keelson-tokio-postgres/live-docker
 ```
+
+**Every crate that gates engine tests on a feature has to be named.**
+`keelson-sqlcheck/live-docker` alone starts the containers, and it is what the
+three dialect crates ask `live::available()` about at run time — so their
+engine judging switches on with the judge. But a crate whose tests are
+`#[cfg(feature = "live-docker")]` on its *own* feature compiles them out unless
+that feature is on, and a feature does not propagate from a dependency to its
+dependents. Naming only the judge silently skips keelson-sqlx's nine
+PostgreSQL/MySQL transaction tests, and keelson-models', keelson-factory's and
+keelson-gen's live suites with them.
+
+`keelson-core/live-docker` is deliberately not in that list: it cannot be
+switched on workspace-wide (the dev-dependency cycle is explained in that
+crate's manifest), and its tests need nothing beyond the judge's feature. One
+crate at a time, its own feature is the whole story — `cargo test -p
+keelson-sqlx --features live-docker`.
 
 Each test binary starts one PostgreSQL and one MySQL container on first use
 and removes them when it exits — via an `atexit` hook for normal exit and the
@@ -124,7 +156,10 @@ docker run -d --name keelson-live-mysql -e MYSQL_ALLOW_EMPTY_PASSWORD=1 \
 
 KEELSON_LIVE_PSQL_URL="postgresql://postgres:postgres@127.0.0.1:5433/postgres" \
 KEELSON_LIVE_MYSQL_URL="mysql://root@127.0.0.1:3307/test" \
-cargo test --workspace --features keelson-sqlcheck/live-docker
+cargo test --workspace --features \
+  keelson-sqlcheck/live-docker,keelson-sqlx/live-docker,\
+  keelson-models/live-docker,keelson-factory/live-docker,\
+  keelson-gen/live-docker,keelson-tokio-postgres/live-docker
 ```
 
 Each URL must name a database the tests may fill with the shared schema. The

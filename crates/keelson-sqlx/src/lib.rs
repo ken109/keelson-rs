@@ -28,6 +28,7 @@
 //! from a generated model. The whole map is the [keelson](https://docs.rs/keelson) facade
 //! crate.
 #![warn(missing_docs)]
+#![forbid(unsafe_code)]
 
 #[cfg(feature = "mysql")]
 pub mod mysql;

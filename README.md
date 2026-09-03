@@ -126,6 +126,13 @@ Each layer depends only on the ones below it, and each is usable on its own.
 |---|---|---|
 | 1 | **Query builder.** Statement starters (`select`, `insert`, `update`, `delete`, `merge`) filled in by *mods* — values that modify a statement. A tuple of mods is a mod, so composition never runs out of arity. Raw SQL is an expression anywhere. | `keelson-core`, `keelson-psql`, `keelson-mysql`, `keelson-sqlite` |
 | 2 | **Execution.** An object-safe `Executor` (a pool, a connection, a transaction, `&dyn Executor`), the `Execute` verbs on every query (`fetch_all`, `fetch_one`, `fetch_scalar`, `execute`), lifetime-free transactions with savepoints and per-transaction isolation levels, and row decoding that names the column that failed. | `keelson-exec` + a backend: `keelson-sqlx` |
+
+That layer's *driver-free* claim is checked rather than asserted: the workspace
+carries a second, unpublished backend over `tokio-postgres`
+([`crates/keelson-tokio-postgres`](https://github.com/ken109/keelson-rs/tree/main/crates/keelson-tokio-postgres))
+whose only job is to fail to compile if keelson-exec's traits ever stop being
+general. Its engine tests are written against `&dyn Executor` and `&dyn Begin`
+and never name it.
 | 3 | **Models.** A typed shell per table or view: `users::age()` is one `Column<i64>` that is the expression, the filter origin and the alias carrier at once; a three-state `Setter` distinguishes *unset* from `NULL`; hooks are trait methods; relations load by same-query preload or by chained, batched then-loads. Plus the test-data half: factories with auto-created parent chains, sequence-based uniqueness and a seedable faker. | `keelson-models`, `keelson-factory` |
 | 4 | **Generation.** `keelson-gen` introspects a live schema and writes the models and the factories as `.rs` files you commit. It also compiles hand-written `.sql` files into typed modules — with each query usable *either* as a query of its own *or* as a mod merged flat into a model query. | `keelson-gen` |
 
@@ -249,6 +256,28 @@ cargo install keelson-gen
 keelson-gen --config keelson.toml --url "$DATABASE_URL"
 ```
 
+`--check` is the same run with the writing removed: it renders, compares
+against what is committed, prints what differs and exits non-zero. Committed
+generated code that no longer matches its schema still *compiles*, so `cargo
+build` cannot be the thing that notices — this can be:
+
+```sh
+keelson-gen --config keelson.toml --url "$DATABASE_URL" --check
+```
+
+And with `snapshot = "schema.snapshot.json"` in the config, the generator
+writes the introspected schema beside the generated code and reads it back when
+no `--url` is given. A CI job can then answer `--check` — and a contributor can
+regenerate — with no database in reach:
+
+```sh
+keelson-gen --config keelson.toml --check      # offline: the snapshot is the schema
+```
+
+The snapshot is a generated file like the `.rs` files are: refreshed by the same
+run, reviewed in the same diff, and reported as drift by a `--check` against a
+live database if somebody forgot to commit it.
+
 ## Examples
 
 [`examples/`](https://github.com/ken109/keelson-rs/tree/main/examples) holds
@@ -278,7 +307,8 @@ Use a migration tool you already trust — [`sqlx migrate`](https://github.com/l
 [Atlas](https://atlasgo.io), [refinery](https://github.com/rust-db/refinery),
 Flyway, or your framework's — then re-run `keelson-gen`. The intended loop is:
 *migrate → regenerate → compile*, where the compiler is what tells you which
-call sites the schema change broke.
+call sites the schema change broke — and `keelson-gen --check` is what tells
+you the regenerate step was skipped.
 
 This is a deliberate scope decision, not a gap waiting to be filled: schema
 migration is a solved problem with mature tools whose value is in their history
@@ -297,7 +327,8 @@ owning.
   grammar judges, the construct-coverage gate, and an engine tier that runs
   every dialect's suite against containerised PostgreSQL and MySQL. CI runs all
   of them on every pull request, plus an MSRV check on the declared
-  `rust-version`.
+  `rust-version` and a `cargo deny` pass over the dependency tree's advisories
+  and licences.
 - **Unsupported is loud.** Where keelson cannot do something honestly it says
   so at build time or in a typed error — MySQL has no `RETURNING`, so a
   generated MySQL model has no `update(...).all()`; SQLite cannot run
@@ -317,6 +348,14 @@ owning.
 Each crate's `src/lib.rs` carries its own architecture documentation — the
 decisions and the alternatives that were rejected — and that is the intended
 place to read before changing one.
+
+## Contributing
+
+[CONTRIBUTING.md](https://github.com/ken109/keelson-rs/blob/main/CONTRIBUTING.md)
+has the gates, what a change is expected to carry, and how to run each testing
+tier locally. Security issues go through
+[SECURITY.md](https://github.com/ken109/keelson-rs/blob/main/SECURITY.md)
+rather than the issue tracker.
 
 ## License
 

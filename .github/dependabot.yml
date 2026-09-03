@@ -1,0 +1,51 @@
+# Dependabot — the other half of the supply-chain gate.
+#
+# deny.toml says which advisories and licences are acceptable in the tree that
+# exists; this is what makes the tree move. Both are needed: an advisory with a
+# fix published upstream is only fixed here once something bumps the lockfile.
+#
+# Weekly rather than daily, and grouped rather than one PR per crate: this
+# workspace has ~450 transitive dependencies, and a stream of single-crate PRs
+# is a stream nobody reads. The groups below are the review units — patch bumps
+# together (read the changelog, merge), majors alone (they are API work).
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "04:00"
+      timezone: Etc/UTC
+    # After the weekly CI cron (03:17 Monday), so a bump lands against a run
+    # that has just proved main green — a red PR is then the bump's fault.
+    open-pull-requests-limit: 5
+    groups:
+      # Everything semver-compatible, in one PR. This is the one that should be
+      # boring to merge.
+      compatible:
+        update-types: ["minor", "patch"]
+    ignore:
+      # `rusqlite` is pinned to 0.32 by the `links = "sqlite3"` rule — only one
+      # libsqlite3-sys may exist in the graph, and sqlx 0.8's sqlite driver
+      # requires ^0.30. The pin is explained in the workspace manifest; a PR
+      # bumping it is a PR that cannot build, so do not open one.
+      - dependency-name: rusqlite
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+    commit-message:
+      prefix: "deps"
+    labels: ["dependencies"]
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "04:00"
+      timezone: Etc/UTC
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "ci"
+    labels: ["dependencies"]

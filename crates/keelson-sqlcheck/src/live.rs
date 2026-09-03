@@ -52,6 +52,9 @@ pub const MYSQL_URL_ENV: &str = "KEELSON_LIVE_MYSQL_URL";
 /// container id, through the `docker` CLI, because no async runtime is alive
 /// that late.
 #[cfg(feature = "live-docker")]
+// The workspace denies `unsafe_code`; this is the whole exception, and it is
+// in a `publish = false` test-support crate. The SAFETY note is at the call.
+#[allow(unsafe_code)]
 mod exit_cleanup {
     use std::sync::{Mutex, Once};
 

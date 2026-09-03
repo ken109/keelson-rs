@@ -6,8 +6,9 @@ cut.
 
 ## The crates
 
-Eleven crates ship. Three members do not: `keelson-sqlcheck`,
-`keelson-examples`, and `keelson-facade-consumer`.
+Eleven crates ship. Five members do not: `keelson-sqlcheck`,
+`keelson-examples`, `keelson-facade-consumer`, `keelson-benches` and
+`keelson-tokio-postgres`.
 
 | crate | ships | what a user gets from it |
 | --- | --- | --- |
@@ -23,6 +24,8 @@ Eleven crates ship. Three members do not: `keelson-sqlcheck`,
 | `keelson-macros` | yes | the derives; reached through `keelson-core`'s `macros` feature |
 | `keelson-gen` | yes | Layer 4 — the generator, installed as a CLI |
 | `keelson-sqlcheck` | **no** (`publish = false`) | the test judge: grammar parsers and real engines |
+| `keelson-benches` | **no** (`publish = false`) | the criterion benchmarks for `Query::build()` |
+| `keelson-tokio-postgres` | **no** (`publish = false`) | the second Layer 2 backend, which exists to prove there can be one |
 
 `keelson-sqlcheck` is deliberately unpublished. It exists to judge keelson's own
 output, it depends on three parsers and a container runtime, and it reads the
@@ -38,6 +41,22 @@ dev-dependencies, the examples crate takes them because generated code names
 them directly, and even an integration test inside the facade inherits the
 facade's own dependencies. 0.1.0 shipped with both derives unusable from that
 seat because nothing here sat in it.
+
+`keelson-benches` (`benches/`) is a member so that `cargo clippy --workspace
+--all-targets` lints it and it cannot rot; it is a member *of its own*, rather
+than a `benches/` directory inside each dialect crate, so that criterion never
+appears in a published crate's dev-dependency graph. Nothing a consumer
+resolves, and nothing the MSRV job has to accommodate.
+
+`keelson-tokio-postgres` is unpublished for a reason worth stating plainly: it
+is a *proof*, not a product. Its job is to be a second implementor of
+keelson-exec's traits, so that "the execution layer is driver-free" is checked
+by the compiler rather than asserted — with one backend, an accidental sqlx
+assumption in keelson-exec would sit there unnoticed. It has no connection
+pool, no feature matrix and no compatibility promise, and publishing it would
+turn all three into someone's expectation. If a production tokio-postgres
+backend is ever wanted, it starts from this file and grows the parts this one
+deliberately skipped.
 
 ## Dependency order
 
@@ -92,7 +111,13 @@ dependencies carry `version` beside `path`, which `cargo package` requires.
 ## Verifying a package before publishing
 
 ```sh
-cargo package --workspace --exclude keelson-sqlcheck --exclude keelson-examples --exclude keelson-facade-consumer --allow-dirty
+cargo package --workspace \
+  --exclude keelson-sqlcheck \
+  --exclude keelson-examples \
+  --exclude keelson-facade-consumer \
+  --exclude keelson-benches \
+  --exclude keelson-tokio-postgres \
+  --allow-dirty
 ```
 
 This packages each crate into `target/package/*.crate` and then *builds* each
@@ -106,8 +131,9 @@ The `--exclude`s are not optional: `cargo package --workspace` packages
 the `include_str!` reason above; `keelson-examples` and
 `keelson-facade-consumer` both depend on `keelson` by path alone —
 deliberately, since they exist to compile against *this* checkout and there is
-no released version for them to name. Excluding the three verifies exactly the
-set that would be published.
+no released version for them to name, and `keelson-benches` and
+`keelson-tokio-postgres` do the same with the crates they sit on. Excluding the
+five verifies exactly the set that would be published.
 
 Every published crate carries `description`, `license`, `repository` and
 `authors`; the first three are what crates.io rejects an upload for.
@@ -121,7 +147,13 @@ artifacts and fail on a symbol that is plainly there — or, worse, pass on one
 that is not. The fix is a clean target directory:
 
 ```sh
-CARGO_TARGET_DIR=$(mktemp -d) cargo package --workspace --exclude keelson-sqlcheck --exclude keelson-examples --exclude keelson-facade-consumer --allow-dirty
+CARGO_TARGET_DIR=$(mktemp -d) cargo package --workspace \
+  --exclude keelson-sqlcheck \
+  --exclude keelson-examples \
+  --exclude keelson-facade-consumer \
+  --exclude keelson-benches \
+  --exclude keelson-tokio-postgres \
+  --allow-dirty
 ```
 
 CI is unaffected — a fresh runner has nothing to reuse — and so is the real

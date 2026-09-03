@@ -145,6 +145,7 @@
 //!   the generator's output.
 
 #![warn(missing_docs)]
+#![forbid(unsafe_code)]
 
 mod column;
 mod delegate;

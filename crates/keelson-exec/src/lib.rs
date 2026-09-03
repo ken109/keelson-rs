@@ -75,6 +75,7 @@
 //! execute through `&dyn Executor` and therefore through whatever backend the
 //! application picked. The whole map is the [keelson](https://docs.rs/keelson) facade crate.
 #![warn(missing_docs)]
+#![forbid(unsafe_code)]
 
 mod bind;
 mod error;
