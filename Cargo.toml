@@ -6,7 +6,12 @@ resolver = "3"
 # `tests/facade-consumer` depends on the `keelson` facade and nothing else,
 # which is the one dependency shape no other member has — and the one the
 # README advertises. It is `publish = false`.
-members = ["crates/*", "examples", "tests/facade-consumer"]
+# `benches` holds the criterion benchmarks for `Query::build()`. A member of its
+# own rather than a `benches/` directory inside each dialect crate, so criterion
+# stays out of the published crates' dev-dependency graphs entirely — nothing a
+# consumer resolves, and nothing the MSRV job has to accommodate. Also
+# `publish = false`.
+members = ["benches", "crates/*", "examples", "tests/facade-consumer"]
 
 [workspace.package]
 version = "0.1.1"
@@ -30,6 +35,9 @@ keelson-macros = { path = "crates/keelson-macros", version = "0.1.1" }
 keelson-models = { path = "crates/keelson-models", version = "0.1.1" }
 keelson-sqlcheck = { path = "crates/keelson-sqlcheck" }
 keelson-sqlx = { path = "crates/keelson-sqlx", version = "0.1.1" }
+# publish = false, like keelson-sqlcheck: path-only, so nothing demands it exist
+# on crates.io.
+keelson-tokio-postgres = { path = "crates/keelson-tokio-postgres" }
 keelson-mysql = { path = "crates/keelson-mysql", version = "0.1.1" }
 keelson-psql = { path = "crates/keelson-psql", version = "0.1.1" }
 keelson-sqlite = { path = "crates/keelson-sqlite", version = "0.1.1" }

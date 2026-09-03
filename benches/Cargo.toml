@@ -1,0 +1,30 @@
+[package]
+name = "keelson-benches"
+description = "Build-time benchmarks for keelson's query builders. Not published."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[lib]
+# The empty library is not a benchmark target; without this, `cargo bench`
+# runs it first with libtest's argument parser and rejects criterion's flags.
+bench = false
+
+[dependencies]
+keelson-mysql.workspace = true
+keelson-psql.workspace = true
+keelson-sqlite.workspace = true
+
+[dev-dependencies]
+criterion = { version = "0.5", default-features = false }
+
+[[bench]]
+name = "build"
+harness = false
+
+[lints]
+workspace = true

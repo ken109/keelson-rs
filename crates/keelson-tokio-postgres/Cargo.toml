@@ -1,0 +1,56 @@
+[package]
+name = "keelson-tokio-postgres"
+description = "A second Layer 2 backend, over tokio-postgres. Exists to prove the execution layer is driver-free; not published."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+# Not published — see the crate docs. This is a proof, not a product: it has no
+# pool, no feature matrix and no compatibility promise, and shipping it would
+# make all three someone's expectation.
+publish = false
+
+[features]
+# The engine-tier tests: a real PostgreSQL 17 through keelson-sqlcheck's
+# container (and the `KEELSON_LIVE_PSQL_URL` override).
+#
+#   cargo test -p keelson-tokio-postgres --features live-docker
+live-docker = ["keelson-sqlcheck/live-docker"]
+
+[dependencies]
+# Every mapped type this backend covers is on unconditionally. keelson-sqlx
+# gates them because a published crate must not make its users pay for a type
+# they never bind; this one has no users, and a feature matrix here would be
+# surface that exists only to be maintained.
+keelson-core = { path = "../keelson-core", features = ["chrono", "uuid", "json"] }
+keelson-exec.workspace = true
+
+# Already in the tree: `postgres` (keelson-gen's introspection driver) is a
+# blocking wrapper *around* tokio-postgres, so this backend adds a dependency
+# edge and no new package.
+tokio-postgres = { version = "0.7", features = [
+    "with-chrono-0_4",
+    "with-uuid-1",
+    "with-serde_json-1",
+] }
+tokio = { workspace = true, features = ["rt", "sync"] }
+futures-util.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+keelson-psql.workspace = true
+# `conformance` is the round-trip floor every backend runs. This crate exists
+# to check that keelson-exec's contract holds over a driver that is not sqlx;
+# running a *thinner* suite than the sqlx backend would undercut that, and
+# before this it was running seven types where the shared suite runs twelve.
+# The one type it does not carry is named at the call site, not here — a
+# feature would unify across the workspace and reach the other backends.
+keelson-sqlcheck = { path = "../keelson-sqlcheck", features = ["conformance"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true
