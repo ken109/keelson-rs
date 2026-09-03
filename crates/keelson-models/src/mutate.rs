@@ -4,7 +4,7 @@ use keelson_core::Mod;
 use keelson_exec::{ExecError, ExecResult, Execute as _, Executor, FromRow, Row};
 
 use crate::Table;
-use crate::delegate::delegate_clause;
+use crate::delegate::delegate_clauses;
 
 fn decode_rows<T: FromRow>(rows: Vec<Row>) -> Result<Vec<T>, ExecError> {
     rows.into_iter().map(|mut r| T::from_row(&mut r)).collect()
@@ -190,125 +190,24 @@ impl<M: Table> ModelDelete<M> {
 }
 
 // UPDATE: everything an `UPDATE` can carry across the three dialects.
-delegate_clause!(
-    ModelUpdate,
-    Table,
-    Update,
-    HasWith,
-    with_mut,
-    keelson_core::clause::With
-);
-delegate_clause!(
-    ModelUpdate,
-    Table,
-    Update,
-    HasTableRef,
-    table_ref_mut,
-    keelson_core::clause::TableRef
-);
-delegate_clause!(
-    ModelUpdate,
-    Table,
-    Update,
-    HasJoins,
-    joins_mut,
-    Vec<keelson_core::clause::Join>
-);
-delegate_clause!(
-    ModelUpdate,
-    Table,
-    Update,
-    HasWhere,
-    where_mut,
-    keelson_core::clause::Where
-);
-delegate_clause!(
-    ModelUpdate,
-    Table,
-    Update,
-    HasOrderBy,
-    order_by_mut,
-    keelson_core::clause::OrderBy
-);
-delegate_clause!(
-    ModelUpdate,
-    Table,
-    Update,
-    HasLimit,
-    limit_mut,
-    keelson_core::clause::Limit
-);
-delegate_clause!(
-    ModelUpdate,
-    Table,
-    Update,
-    HasSet,
-    set_mut,
-    keelson_core::clause::Set
-);
-delegate_clause!(
-    ModelUpdate,
-    Table,
-    Update,
-    HasReturning,
-    returning_mut,
-    keelson_core::clause::Returning
-);
+delegate_clauses!(ModelUpdate, Table, Update, {
+    HasWith      => with_mut:      keelson_core::clause::With,
+    HasTableRef  => table_ref_mut: keelson_core::clause::TableRef,
+    HasJoins     => joins_mut:     Vec<keelson_core::clause::Join>,
+    HasWhere     => where_mut:     keelson_core::clause::Where,
+    HasOrderBy   => order_by_mut:  keelson_core::clause::OrderBy,
+    HasLimit     => limit_mut:     keelson_core::clause::Limit,
+    HasSet       => set_mut:       keelson_core::clause::Set,
+    HasReturning => returning_mut: keelson_core::clause::Returning,
+});
 
 // DELETE.
-delegate_clause!(
-    ModelDelete,
-    Table,
-    Delete,
-    HasWith,
-    with_mut,
-    keelson_core::clause::With
-);
-delegate_clause!(
-    ModelDelete,
-    Table,
-    Delete,
-    HasTableRef,
-    table_ref_mut,
-    keelson_core::clause::TableRef
-);
-delegate_clause!(
-    ModelDelete,
-    Table,
-    Delete,
-    HasJoins,
-    joins_mut,
-    Vec<keelson_core::clause::Join>
-);
-delegate_clause!(
-    ModelDelete,
-    Table,
-    Delete,
-    HasWhere,
-    where_mut,
-    keelson_core::clause::Where
-);
-delegate_clause!(
-    ModelDelete,
-    Table,
-    Delete,
-    HasOrderBy,
-    order_by_mut,
-    keelson_core::clause::OrderBy
-);
-delegate_clause!(
-    ModelDelete,
-    Table,
-    Delete,
-    HasLimit,
-    limit_mut,
-    keelson_core::clause::Limit
-);
-delegate_clause!(
-    ModelDelete,
-    Table,
-    Delete,
-    HasReturning,
-    returning_mut,
-    keelson_core::clause::Returning
-);
+delegate_clauses!(ModelDelete, Table, Delete, {
+    HasWith      => with_mut:      keelson_core::clause::With,
+    HasTableRef  => table_ref_mut: keelson_core::clause::TableRef,
+    HasJoins     => joins_mut:     Vec<keelson_core::clause::Join>,
+    HasWhere     => where_mut:     keelson_core::clause::Where,
+    HasOrderBy   => order_by_mut:  keelson_core::clause::OrderBy,
+    HasLimit     => limit_mut:     keelson_core::clause::Limit,
+    HasReturning => returning_mut: keelson_core::clause::Returning,
+});

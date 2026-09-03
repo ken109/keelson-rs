@@ -5,7 +5,7 @@ use keelson_core::{Dialect, Expression, Mod, Query, QueryExtensions, QueryType, 
 use keelson_exec::{ExecError, ExecFuture, ExecHook, Execute as _, Executor, FromRow, Row};
 
 use crate::View;
-use crate::delegate::delegate_clause;
+use crate::delegate::delegate_clauses;
 
 /// The mapper-mod payload, pinned: after the base row struct is decoded, each
 /// mapper mod reads *more* of the same [`Row`] into the struct — the prefixed
@@ -220,115 +220,19 @@ impl<M: View> QueryExtensions<ExecHook, Loader<M::Row>, MapperMod<M::Row>> for M
     }
 }
 
-delegate_clause!(
-    ModelSelect,
-    View,
-    Select,
-    HasWith,
-    with_mut,
-    keelson_core::clause::With
-);
-delegate_clause!(
-    ModelSelect,
-    View,
-    Select,
-    HasSelectList,
-    select_list_mut,
-    keelson_core::clause::SelectList
-);
-delegate_clause!(
-    ModelSelect,
-    View,
-    Select,
-    HasTableRef,
-    table_ref_mut,
-    keelson_core::clause::TableRef
-);
-delegate_clause!(
-    ModelSelect,
-    View,
-    Select,
-    HasJoins,
-    joins_mut,
-    Vec<keelson_core::clause::Join>
-);
-delegate_clause!(
-    ModelSelect,
-    View,
-    Select,
-    HasWhere,
-    where_mut,
-    keelson_core::clause::Where
-);
-delegate_clause!(
-    ModelSelect,
-    View,
-    Select,
-    HasGroupBy,
-    group_by_mut,
-    keelson_core::clause::GroupBy
-);
-delegate_clause!(
-    ModelSelect,
-    View,
-    Select,
-    HasHaving,
-    having_mut,
-    keelson_core::clause::Having
-);
-delegate_clause!(
-    ModelSelect,
-    View,
-    Select,
-    HasWindows,
-    windows_mut,
-    keelson_core::clause::Windows
-);
-delegate_clause!(
-    ModelSelect,
-    View,
-    Select,
-    HasOrderBy,
-    order_by_mut,
-    keelson_core::clause::OrderBy
-);
-delegate_clause!(
-    ModelSelect,
-    View,
-    Select,
-    HasLimit,
-    limit_mut,
-    keelson_core::clause::Limit
-);
-delegate_clause!(
-    ModelSelect,
-    View,
-    Select,
-    HasOffset,
-    offset_mut,
-    keelson_core::clause::Offset
-);
-delegate_clause!(
-    ModelSelect,
-    View,
-    Select,
-    HasFetch,
-    fetch_mut,
-    keelson_core::clause::Fetch
-);
-delegate_clause!(
-    ModelSelect,
-    View,
-    Select,
-    HasLocks,
-    locks_mut,
-    keelson_core::clause::Locks
-);
-delegate_clause!(
-    ModelSelect,
-    View,
-    Select,
-    HasCombines,
-    combines_mut,
-    keelson_core::clause::Combines
-);
+delegate_clauses!(ModelSelect, View, Select, {
+    HasWith       => with_mut:        keelson_core::clause::With,
+    HasSelectList => select_list_mut: keelson_core::clause::SelectList,
+    HasTableRef   => table_ref_mut:   keelson_core::clause::TableRef,
+    HasJoins      => joins_mut:       Vec<keelson_core::clause::Join>,
+    HasWhere      => where_mut:       keelson_core::clause::Where,
+    HasGroupBy    => group_by_mut:    keelson_core::clause::GroupBy,
+    HasHaving     => having_mut:      keelson_core::clause::Having,
+    HasWindows    => windows_mut:     keelson_core::clause::Windows,
+    HasOrderBy    => order_by_mut:    keelson_core::clause::OrderBy,
+    HasLimit      => limit_mut:       keelson_core::clause::Limit,
+    HasOffset     => offset_mut:      keelson_core::clause::Offset,
+    HasFetch      => fetch_mut:       keelson_core::clause::Fetch,
+    HasLocks      => locks_mut:       keelson_core::clause::Locks,
+    HasCombines   => combines_mut:    keelson_core::clause::Combines,
+});

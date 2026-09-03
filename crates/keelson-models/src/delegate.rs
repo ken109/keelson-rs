@@ -24,4 +24,19 @@ macro_rules! delegate_clause {
     };
 }
 
+/// The same, for the whole list of clauses one wrapper delegates.
+///
+/// The wrapper, its bound and its associated query type are the same for
+/// every clause a wrapper forwards, so writing them once per list instead of
+/// once per clause is what turns twenty-nine eight-line invocations into two
+/// readable tables.
+macro_rules! delegate_clauses {
+    ($wrapper:ident, $bound:ident, $assoc:ident, {
+        $($trait_:ident => $method:ident: $ret:ty),+ $(,)?
+    }) => {
+        $($crate::delegate::delegate_clause!($wrapper, $bound, $assoc, $trait_, $method, $ret);)+
+    };
+}
+
 pub(crate) use delegate_clause;
+pub(crate) use delegate_clauses;
