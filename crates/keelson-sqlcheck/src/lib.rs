@@ -46,10 +46,10 @@
 #[cfg(feature = "conformance")]
 pub mod conformance;
 pub mod coverage;
+pub mod live;
 /// The random-query generator Tier C's per-dialect lanes share.
 #[cfg(feature = "property")]
 pub mod property;
-pub mod live;
 pub mod record;
 #[cfg(feature = "testing")]
 pub mod testing;

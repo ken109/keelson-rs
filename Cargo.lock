@@ -1708,16 +1708,21 @@ dependencies = [
 name = "keelson-sqlcheck"
 version = "0.1.1"
 dependencies = [
+ "chrono",
  "keelson-core",
+ "keelson-exec",
  "mysql",
  "pg_query",
  "postgres",
+ "proptest",
  "rusqlite",
+ "rust_decimal",
  "serde_json",
  "sqlite3-parser",
  "sqlparser",
  "testcontainers",
  "testcontainers-modules",
+ "uuid",
 ]
 
 [[package]]
