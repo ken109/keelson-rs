@@ -158,12 +158,10 @@ impl RawConnection for RawConn {
 /// `NOWAIT` raise). Everything else stays an opaque driver error.
 fn driver_err(e: sqlx::Error) -> ExecError {
     if let sqlx::Error::Database(db) = &e {
-        let kind = match db.code().as_deref() {
-            Some("40001") => Some(TxConflict::Serialization),
-            Some("40P01") => Some(TxConflict::Deadlock),
-            Some("55P03") => Some(TxConflict::LockTimeout),
-            _ => None,
-        };
+        let kind = db
+            .code()
+            .as_deref()
+            .and_then(TxConflict::from_postgres_sqlstate);
         if let Some(kind) = kind {
             let code = db.code().unwrap_or_default().into_owned();
             let message = db.message().to_owned();

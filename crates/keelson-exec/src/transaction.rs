@@ -607,6 +607,27 @@ impl TxConflict {
         }
     }
 
+    /// Classify a PostgreSQL `SQLSTATE`.
+    ///
+    /// `40001` serialization_failure, `40P01` deadlock_detected, `55P03`
+    /// lock_not_available (what `lock_timeout` and `NOWAIT` raise). Anything
+    /// else stays an opaque driver error.
+    ///
+    /// Here rather than in a backend because there is more than one
+    /// PostgreSQL backend, and the two disagreeing about what counts as a
+    /// conflict would mean the same workload retried on one and gave up on
+    /// the other. Both used to carry this table, with a comment in each
+    /// saying it matched the other one. The classification is made from what
+    /// the *server* sent, so nothing driver-specific belongs in it.
+    pub fn from_postgres_sqlstate(code: &str) -> Option<TxConflict> {
+        match code {
+            "40001" => Some(TxConflict::Serialization),
+            "40P01" => Some(TxConflict::Deadlock),
+            "55P03" => Some(TxConflict::LockTimeout),
+            _ => None,
+        }
+    }
+
     /// Classify an error: `Some` when a backend reported a concurrency
     /// conflict, `None` otherwise. Every variant means the same thing to a
     /// caller — retry the transaction from the top.
@@ -1445,6 +1466,28 @@ mod tests {
         assert!(e.to_string().contains("40001"), "{e}");
         assert!(std::error::Error::source(&e).is_some());
         assert_eq!(TxConflict::of(&ExecError::RowNotFound), None);
+    }
+
+    /// Both PostgreSQL backends read this one table, so the codes it names
+    /// are the definition of "retry" rather than something two crates keep in
+    /// step by hand.
+    #[test]
+    fn the_postgres_sqlstates_that_mean_retry() {
+        for (code, want) in [
+            ("40001", TxConflict::Serialization),
+            ("40P01", TxConflict::Deadlock),
+            ("55P03", TxConflict::LockTimeout),
+        ] {
+            assert_eq!(
+                TxConflict::from_postgres_sqlstate(code),
+                Some(want),
+                "{code}"
+            );
+        }
+        // A unique violation is a bug in the workload, not contention: it
+        // fails again on every retry.
+        assert_eq!(TxConflict::from_postgres_sqlstate("23505"), None);
+        assert_eq!(TxConflict::from_postgres_sqlstate(""), None);
     }
 
     #[test]
