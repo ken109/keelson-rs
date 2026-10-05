@@ -8,6 +8,44 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 — with the pre-1.0 caveat that a `0.x` minor bump is allowed to break.
 
+## [0.2.1] — 2026-10-05
+
+A patch: no source file under `crates/` changed. What moved is the lockfile and
+the dependency ranges of the two crates that carry a parser, so the published
+manifests of `keelson-macros` and `keelson-gen` now name different versions
+than 0.2.0's did. No public API is added, removed or changed.
+
+### Changed
+
+- **`syn` 2 → 3 and `prettyplease` 0.2 → 0.3**, in `keelson-macros` (the
+  derives and each dialect's `sql!`) and `keelson-gen` (which parses and
+  formats the code it writes). Both are implementation details: no `syn` or
+  `prettyplease` type appears in a public signature.
+
+- **`toml` 0.8 → 1.1**, in `keelson-gen`'s config loader. The accepted
+  `keelson.toml` syntax is unchanged.
+
+- **`criterion` 0.5 → 0.8** for the `Query::build()` benchmarks. Dev-only, in
+  the unpublished `keelson-benches`; nothing a consumer resolves.
+
+- **Compatible dependency updates** in the lockfile and the dev-dependencies:
+  `pg_query` 6.1 → 6.2, `trybuild` 1.0.118 → 1.0.121, `uuid` 1.24 → 1.26,
+  `rust_decimal` 1.42 → 1.43 and `futures-util` 0.3.33 → 0.3.34. The
+  workflows' own actions moved too (`actions/checkout` 4 → 7,
+  `actions/upload-artifact` 4 → 7).
+
+### Fixed
+
+- **`rustls` and `rustls-webpki` moved past RUSTSEC-2026-0285** in the
+  lockfile (`rustls` 0.23.43 → 0.23.45, `rustls-webpki` 0.103.13 → 0.103.15),
+  a dev-only path through `testcontainers`, so `cargo deny` advisories passes
+  again. Nothing a consumer of a published crate resolves.
+
+- **The `commit_inside_within` compile-fail snapshot follows rustc 1.99.** The
+  compiler now prints the full path in the note under E0507, and the
+  `trybuild` snapshot had pinned the old wording. The diagnostic being tested
+  is unchanged.
+
 ## [0.2.0] — 2026-09-03
 
 A `0.x` minor, and it breaks: `ThenLoad::new` takes a `Relation` rather than
@@ -297,6 +335,7 @@ version is the point at which it became installable.
   container runtime, and reads the repository's `tests/schema/` through
   `include_str!`.
 
+[0.2.1]: https://github.com/ken109/keelson-rs/releases/tag/v0.2.1
 [0.2.0]: https://github.com/ken109/keelson-rs/releases/tag/v0.2.0
 [0.1.1]: https://github.com/ken109/keelson-rs/releases/tag/v0.1.1
 [0.1.0]: https://github.com/ken109/keelson-rs/releases/tag/v0.1.0

@@ -1629,7 +1629,7 @@ dependencies = [
 
 [[package]]
 name = "keelson"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "keelson",
  "keelson-core",
@@ -1645,7 +1645,7 @@ dependencies = [
 
 [[package]]
 name = "keelson-benches"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "criterion",
  "keelson-mysql",
@@ -1655,7 +1655,7 @@ dependencies = [
 
 [[package]]
 name = "keelson-core"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "chrono",
  "keelson-core",
@@ -1669,7 +1669,7 @@ dependencies = [
 
 [[package]]
 name = "keelson-examples"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "chrono",
  "keelson",
@@ -1687,7 +1687,7 @@ dependencies = [
 
 [[package]]
 name = "keelson-exec"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "keelson-core",
  "keelson-exec",
@@ -1697,7 +1697,7 @@ dependencies = [
 
 [[package]]
 name = "keelson-facade-consumer"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "keelson",
  "tokio",
@@ -1705,7 +1705,7 @@ dependencies = [
 
 [[package]]
 name = "keelson-factory"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "chrono",
  "keelson-core",
@@ -1720,7 +1720,7 @@ dependencies = [
 
 [[package]]
 name = "keelson-gen"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "chrono",
  "keelson-core",
@@ -1750,7 +1750,7 @@ dependencies = [
 
 [[package]]
 name = "keelson-macros"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "keelson-core",
  "keelson-exec",
@@ -1767,7 +1767,7 @@ dependencies = [
 
 [[package]]
 name = "keelson-models"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "chrono",
  "keelson-core",
@@ -1782,7 +1782,7 @@ dependencies = [
 
 [[package]]
 name = "keelson-mysql"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "keelson-core",
  "keelson-sqlcheck",
@@ -1791,7 +1791,7 @@ dependencies = [
 
 [[package]]
 name = "keelson-psql"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "keelson-core",
  "keelson-sqlcheck",
@@ -1801,7 +1801,7 @@ dependencies = [
 
 [[package]]
 name = "keelson-sqlcheck"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "chrono",
  "keelson-core",
@@ -1822,7 +1822,7 @@ dependencies = [
 
 [[package]]
 name = "keelson-sqlite"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "keelson-core",
  "keelson-sqlcheck",
@@ -1831,7 +1831,7 @@ dependencies = [
 
 [[package]]
 name = "keelson-sqlx"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "chrono",
  "futures-util",
@@ -1851,7 +1851,7 @@ dependencies = [
 
 [[package]]
 name = "keelson-tokio-postgres"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "chrono",
  "futures-util",
