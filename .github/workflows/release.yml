@@ -63,7 +63,7 @@ jobs:
     outputs:
       version: ${{ steps.read.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Strip the v and check it is a version
         id: read
         env:
@@ -109,7 +109,7 @@ jobs:
       # OIDC token that crates.io exchanges for a short-lived registry token.
       id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
@@ -142,7 +142,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Check crates.io and docs.rs, and write the summary
         env:
