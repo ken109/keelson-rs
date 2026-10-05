@@ -70,7 +70,10 @@
 //! `SelectList`, which was designed for this), and registers a mapper mod
 //! that reads `"user.id"`-style columns back — `Row`'s by-name access is what
 //! makes the prefix trick work. *Then-load* is a second query keyed by the
-//! first's keys, to-one and to-many, attached by
+//! first's keys: a generated mod hands [`ThenLoad`] a [`Relation`] — which
+//! column is the key on each side, how to filter the child query by it, and
+//! an [`Attach`] saying whether a parent takes one child or many — and the
+//! runtime does the batching and the grouping, through
 //! [`attach_to_one`]/[`attach_to_many`].
 //!
 //! **Nested loads are chained values, not paths in a string.** A then-load is

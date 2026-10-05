@@ -132,15 +132,20 @@ jobs:
       # gate and not just a second compile. No services: SQLite in a temp file.
       - run: ./scripts/run-examples.sh
       # `cargo package` and trybuild each build a project *inside* `target/`,
-      # and Swatinem/rust-cache's cleanup probes every directory it walks for
-      # the two nested-target layouts it knows (`<dir>/tests/target` and
-      # `<dir>/tests/trybuild`). Where those are absent the `opendir` rejects
-      # asynchronously, past the action's own `try`, and each one surfaces as a
-      # red error annotation on a run that passed — forty-four of them on this
-      # workflow. Neither tree is worth keeping: `target/package` is
-      # `cargo package` output and `target/tests` is trybuild scratch, both
-      # rebuilt from nothing every run. Removing them leaves nothing to probe.
-      # Every job that caches and produces either one does this.
+      # and Swatinem/rust-cache cleans the target directory it *restores*,
+      # probing every directory it walks for the two nested-target layouts it
+      # knows (`<dir>/tests/target` and `<dir>/tests/trybuild`). Where those
+      # are absent the `opendir` rejects asynchronously, past the action's own
+      # `try` — the call is not awaited — so the rejection is unhandled and
+      # GitHub renders it as an error annotation on a run that passed. Two per
+      # packaged crate, forty-four on this workflow.
+      #
+      # The lever is the *save*, not the restore: keep them out of the cache
+      # and the next run has nothing to walk. Neither is worth caching anyway —
+      # `target/package` is `cargo package` output and `target/tests` is
+      # trybuild scratch, both rebuilt from nothing every run. Every job that
+      # caches and produces either one does this, and it takes one run to take
+      # effect, because the run that adds it still restores the old cache.
       - name: Drop the nested target trees before the cache is saved
         if: always()
         run: rm -rf target/tests target/package
@@ -239,6 +244,10 @@ jobs:
           name: lcov
           path: lcov.info
           retention-days: 14
+      # See the `fast` job: nothing to probe, nothing to annotate.
+      - name: Drop the nested target trees before the cache is saved
+        if: always()
+        run: rm -rf target/tests target/package
 
   msrv:
     name: MSRV check (Cargo.toml rust-version)

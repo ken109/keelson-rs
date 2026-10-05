@@ -370,11 +370,25 @@ the driver error as its `source`. keelson-sqlx classifies by code, never by
 message text: PostgreSQL SQLSTATE `40001`/`40P01`/`55P03`, MySQL error numbers
 `1213`/`1205` (SQLSTATE is only a category there), SQLite's `SQLITE_BUSY`/
 `SQLITE_LOCKED` primary result codes. Every variant means the same thing to a
-caller — retry the transaction from the top. Rejected: a new `ExecError`
-variant, which is where this belongs long-term; the reopening condition is a
-consumer that wants to `match` rather than call `TxConflict::of`, at which
-point the variant lands in `ExecError` (it is `#[non_exhaustive]` for exactly
-this) and `of` becomes its accessor.
+caller — retry the transaction from the top.
+
+**Reopened, 2026-09-03, on its own stated condition.** This originally
+rejected a new `ExecError` variant and wrote down what would bring it back: a
+consumer that wants to `match` rather than call `TxConflict::of`. That is
+every consumer — whether to retry is the most consequential question anyone
+asks of an execution error, and it was the one answer behind a
+`downcast_ref`, to a type that is keelson's own. `ExecError::Conflict(
+TxConflictError)` is that variant; the enum was `#[non_exhaustive]` for
+exactly this, so it is additive. `TxConflict::of` still answers for code that
+would rather ask than match, and the driver error the conflict was classified
+out of is still the `source`, so nothing is lost by classifying.
+
+The SQLSTATE table has one home for the same reason the classification has:
+there is more than one PostgreSQL backend now, and two of them disagreeing
+about what counts as a conflict would mean the same workload retried on one
+and given up on on the other. `TxConflict::from_postgres_sqlstate` is that
+table. MySQL's error numbers and SQLite's result codes stay in their
+backends, each with one caller.
 
 **Tested as behaviour, not as strings.** The statement text is pinned by unit
 tests in keelson-exec (derived from each engine's `BEGIN`/`SET TRANSACTION`
