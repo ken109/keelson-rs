@@ -69,7 +69,7 @@ proc-macro2 = "1"
 quote = "1"
 syn = { version = "2", default-features = false, features = ["full", "parsing", "printing", "clone-impls", "proc-macro"] }
 prettyplease = "0.2"
-toml = "0.8"
+toml = "1.1"
 trybuild = "1"
 
 # Optional first-class Value types (keelson-core's "chrono"/"uuid"/"decimal"
