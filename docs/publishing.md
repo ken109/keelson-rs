@@ -237,8 +237,24 @@ The realistic cause is crates.io's rate limit; it is severe for *new* crate
 names (a burst of about five, then roughly one per ten minutes, which is what
 the first release spent an hour on) and mild for new versions of existing
 crates. The `summary` job exists for this: it lists what landed and prints the
-`cargo publish -p <crate> --locked` lines to finish the rest by hand, in
-dependency order.
+dispatch that finishes the rest.
+
+Finish a partial publish with a `workflow_dispatch` that names what is missing,
+in dependency order:
+
+```sh
+gh workflow run release.yml -f crates='keelson'
+```
+
+It goes through the workflow rather than a laptop because a crate can be set to
+accept new versions only through Trusted Publishing, and then a local
+`cargo publish -p` is refused with a 403 (`keelson` is). The invariant that a
+publish corresponds to a Release still holds: before the gates run, the workflow
+checks that a published Release exists for the manifest's version and that
+`crates/`, `Cargo.toml` and `Cargo.lock` are the tag's, so dispatch from a commit
+whose sources have not moved since the tag (workflow and docs changes are fine).
+A crate already on the registry at that version is refused, not re-uploaded.
+With `crates` empty a dispatch is still the rehearsal described below.
 
 ### Trusted Publishing
 

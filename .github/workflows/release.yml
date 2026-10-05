@@ -32,19 +32,39 @@
 # rejects each with "already uploaded". So this workflow does not retry, and
 # re-running it will not fix a partial publish. The `summary` job runs on
 # failure precisely so the state is legible: it prints which crates landed and
-# the exact `cargo publish -p <crate>` lines to finish the rest by hand.
+# the exact dispatch to finish the rest.
+#
+# **Finishing a partial publish** is a `workflow_dispatch` with `crates` set. It
+# has to go through this workflow, not a laptop: a crate can be configured to
+# accept new versions only through Trusted Publishing, and then a local
+# `cargo publish -p` is refused with a 403 (`keelson` is, and a timeout waiting
+# for the index in `cargo publish --workspace` once left it as the one crate
+# missing from 0.2.1). The invariant that a publish corresponds to a Release is
+# kept by checking, before the gates run, that the Release and tag for the
+# manifest's version exist and that the sources are the tag's; and a crate that
+# is already on the registry at that version is refused rather than re-uploaded.
 
 name: Release
 
 on:
   release:
     types: [published]
-  # Rehearsal. Runs everything a real release runs — including the OIDC exchange
-  # with crates.io, which is the part that no local check can reach — but stops
-  # at `--dry-run` and uploads nothing. A dispatch can never publish: a publish
-  # has to correspond to a Release, and this is the only way to prove the
-  # trusted-publishing setup without spending a version to find out.
   workflow_dispatch:
+    inputs:
+      crates:
+        description: >-
+          Finish a partial publish: the crates still missing from crates.io at the
+          manifest's version, space-separated, in dependency order. Requires a
+          published Release for that version and sources identical to its tag.
+          Leave empty for a rehearsal, which uploads nothing.
+        required: false
+        default: ""
+        type: string
+  # With `crates` empty this is the rehearsal. It runs everything a real release
+  # runs — including the OIDC exchange with crates.io, which is the part that no
+  # local check can reach — but stops at `--dry-run` and uploads nothing. It is
+  # the only way to prove the trusted-publishing setup without spending a
+  # version to find out.
 
 # Never cancel a run that might be mid-upload: a cancelled publish is exactly
 # the partial state described above.
@@ -69,13 +89,42 @@ jobs:
         env:
           TAG: ${{ github.event.release.tag_name }}
           EVENT: ${{ github.event_name }}
+          CRATES: ${{ inputs.crates }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
         run: |
           if [ "$EVENT" = "workflow_dispatch" ]; then
             # A rehearsal has no tag, so the manifest is the only version there
             # is — which makes the gates' version check trivially true, and that
             # is fine: the point of a rehearsal is the handshake, not the tag.
             version=$(python3 -c "import tomllib,pathlib; print(tomllib.loads(pathlib.Path('Cargo.toml').read_text())['workspace']['package']['version'])")
-            echo "rehearsal for $version (from the manifest) — nothing will be uploaded"
+            if [ -z "$CRATES" ]; then
+              echo "rehearsal for $version (from the manifest) — nothing will be uploaded"
+            else
+              # Finishing a partial publish. It must still correspond to a
+              # Release, and what is uploaded must be what the tag holds.
+              if ! printf '%s' "$CRATES" | grep -Eq '^[a-z0-9-]+( [a-z0-9-]+)*$'; then
+                echo "::error::crates must be crate names separated by single spaces, got '$CRATES'"
+                exit 1
+              fi
+              if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+                echo "::error::manifest version '$version' is not a version"
+                exit 1
+              fi
+              if ! gh api "repos/$REPO/releases/tags/v$version" --jq '.draft' | grep -qx false; then
+                echo "::error::no published Release for v$version — a publish has to correspond to one"
+                exit 1
+              fi
+              git fetch --quiet --depth=1 origin "refs/tags/v$version:refs/tags/v$version"
+              # Only the crates, the manifest and the lockfile end up in what is
+              # uploaded; the workflow files and docs may have moved on since.
+              if ! git diff --quiet "refs/tags/v$version" HEAD -- crates Cargo.toml Cargo.lock; then
+                echo "::error::crates/, Cargo.toml or Cargo.lock differ from v$version — dispatch from a commit whose sources are the tag's"
+                git diff --stat "refs/tags/v$version" HEAD -- crates Cargo.toml Cargo.lock
+                exit 1
+              fi
+              echo "finishing $CRATES at $version — the Release exists and the sources match v$version"
+            fi
           else
             version="${TAG#v}"
             # Pre-release tags (v0.2.0-rc.1) are allowed: this crate is pre-1.0 and
@@ -124,8 +173,26 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
           EVENT: ${{ github.event_name }}
+          CRATES: ${{ inputs.crates }}
+          VERSION: ${{ needs.tag.outputs.version }}
         run: |
-          if [ "$EVENT" = "workflow_dispatch" ]; then
+          if [ "$EVENT" = "workflow_dispatch" ] && [ -n "$CRATES" ]; then
+            # Finishing a partial publish. Refuse a crate that is already on the
+            # registry at this version: cargo would re-upload it and crates.io
+            # would reject it, and a typo should cost nothing.
+            UA="keelson-release (github.com/ken109/keelson-rs)"
+            for c in $CRATES; do
+              if curl -sf --max-time 20 -A "$UA" "https://crates.io/api/v1/crates/$c/$VERSION" -o /dev/null; then
+                echo "::error::$c $VERSION is already on crates.io — nothing to finish for it"
+                exit 1
+              fi
+            done
+            # In the order given, which is dependency order. One at a time, so a
+            # failure leaves a legible state rather than a half-resolved workspace.
+            for c in $CRATES; do
+              cargo publish -p "$c" --locked
+            done
+          elif [ "$EVENT" = "workflow_dispatch" ]; then
             echo "rehearsal: the crates.io token was issued, so the trusted publisher"
             echo "for this repository / workflow / environment matched. Stopping short"
             echo "of the upload."
@@ -137,8 +204,10 @@ jobs:
   summary:
     name: report what landed
     needs: [tag, publish]
-    # Nothing was uploaded in a rehearsal, so there is no landing to report.
-    if: always() && needs.tag.result == 'success' && github.event_name != 'workflow_dispatch'
+    # Nothing was uploaded in a rehearsal, so there is no landing to report. A
+    # dispatch that finishes a partial publish did upload, and is checked the
+    # same way.
+    if: always() && needs.tag.result == 'success' && (github.event_name != 'workflow_dispatch' || inputs.crates != '')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -203,11 +272,13 @@ jobs:
             echo "### ${#missing[@]} crate(s) did not publish"
             echo ""
             echo "Re-running this workflow will **not** fix it: \`cargo publish --workspace\`"
-            echo "does not skip versions already on the registry. Finish from a clean"
-            echo "checkout of the tag, in this order:"
+            echo "does not skip versions already on the registry. Finish with a dispatch"
+            echo "that names only what is missing. The list below is alphabetical; give"
+            echo "them in dependency order (docs/publishing.md has it). A crate that"
+            echo "accepts Trusted Publishing only cannot be finished from a laptop:"
             echo ""
             echo '```sh'
-            for c in "${missing[@]}"; do echo "cargo publish -p $c --locked"; done
+            echo "gh workflow run release.yml -f crates='${missing[*]}'"
             echo '```'
             echo ""
             echo "crates.io rate-limits *new* crate names to roughly one per ten minutes"
