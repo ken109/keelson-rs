@@ -45,7 +45,7 @@ keelson-sqlite = { path = "crates/keelson-sqlite", version = "0.2.1" }
 pg_query = "6"
 proptest = "1"
 regex = "1"
-mysql = "27"
+mysql = "28"
 postgres = "0.19"
 # Held at 0.32 by the `links = "sqlite3"` rule: only one libsqlite3-sys can
 # exist in the graph, sqlx 0.8's sqlite driver requires ^0.30, and rusqlite
